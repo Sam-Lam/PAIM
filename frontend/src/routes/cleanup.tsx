@@ -79,7 +79,7 @@ export function CleanupPage() {
     }
   };
 
-  const anyTruncated = report?.classes.some((c) => c.truncated) ?? false;
+  const anyTruncated = report?.classes?.some((c) => c.truncated) ?? false;
 
   return (
     <div>
@@ -118,7 +118,7 @@ export function CleanupPage() {
         </Card>
       ) : report ? (
         <div className="space-y-5">
-          <ClassGrid classes={report.classes} />
+          <ClassGrid classes={report.classes ?? []} />
 
           <Recommendation report={report} />
 
@@ -135,7 +135,7 @@ export function CleanupPage() {
           <div>
             <h2 className="mb-2 text-xs font-semibold tracking-wide text-zinc-500 uppercase">Files by classification</h2>
             <div className="space-y-2">
-              {report.classes
+              {(report.classes ?? [])
                 .filter((c) => c.count > 0)
                 .map((c) => (
                   <ClassFileList key={c.class} stat={c} />
@@ -239,7 +239,7 @@ function Recommendation({ report }: { report: CleanupReportDTO }) {
 function ClassFileList({ stat }: { stat: ClassStatDTO }) {
   const [open, setOpen] = useState(false);
   const meta = metaFor(stat.class);
-  const shown = stat.files.slice(0, MAX_ROWS);
+  const shown = (stat.files ?? []).slice(0, MAX_ROWS);
   const hidden = stat.count - shown.length;
   return (
     <div className="overflow-hidden rounded-lg border border-zinc-800 bg-zinc-900/60">

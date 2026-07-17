@@ -78,7 +78,7 @@ export function ImportPage() {
   const refreshInterrupted = useCallback(async () => {
     try {
       const page = await HistoryService.ListSessions(1, 50);
-      setInterrupted(page.items.filter((s) => s.status === "interrupted" || s.status === "paused"));
+      setInterrupted((page.items ?? []).filter((s) => s.status === "interrupted" || s.status === "paused"));
     } catch {
       // non-fatal
     }
@@ -120,14 +120,14 @@ export function ImportPage() {
 
   const buildOptions = useCallback(
     () =>
-      new ImportOptions({
+      ({
         root,
         destinationRoot: mode === "copy" ? masterRoot : root,
         eventName: eventName.trim(),
         mode,
         reorganize: mode === "adopt" && reorganize,
         sourceId: "",
-      }),
+      }) satisfies ImportOptions,
     [root, mode, masterRoot, eventName, reorganize],
   );
 

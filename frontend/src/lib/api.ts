@@ -15,7 +15,7 @@ export {
   SourcesService,
 } from "../../bindings/github.com/autolinepro/paim/internal/services";
 
-export {
+export type {
   AssetDTO,
   BackupJobDTO,
   BackupProgress,

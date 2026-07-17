@@ -107,7 +107,7 @@ export function DashboardPage() {
 
           {/* Library growth */}
           <Card title="Library Growth" subtitle="Assets added per month (last 12 months)">
-            <LibraryGrowthChart data={stats.libraryGrowth} />
+            <LibraryGrowthChart data={stats.libraryGrowth ?? []} />
           </Card>
 
           {/* Sources row */}
@@ -120,11 +120,11 @@ export function DashboardPage() {
                 </Link>
               }
             >
-              <SourceList sources={stats.recentSources} empty="No sources connected yet." />
+              <SourceList sources={stats.recentSources ?? []} empty="No sources connected yet." />
             </Card>
 
             <Card title="Safe To Erase" subtitle="Sources fully archived and backed up">
-              <SourceList sources={stats.safeToEraseSources} empty="No sources are safe to erase yet." showSafe />
+              <SourceList sources={stats.safeToEraseSources ?? []} empty="No sources are safe to erase yet." showSafe />
             </Card>
           </div>
 
@@ -138,11 +138,11 @@ export function DashboardPage() {
             }
             flush
           >
-            {stats.recentActivity.length === 0 ? (
+            {(stats.recentActivity ?? []).length === 0 ? (
               <EmptyState title="No recent activity" description="Import or backup activity will show up here." />
             ) : (
               <ul className="divide-y divide-zinc-800/60">
-                {stats.recentActivity.map((entry) => (
+                {(stats.recentActivity ?? []).map((entry) => (
                   <li key={entry.id} className="flex items-start gap-3 px-4 py-2.5">
                     <span className={`mt-1.5 h-2 w-2 flex-none rounded-full ${levelDot(entry.level)}`} />
                     <div className="min-w-0 flex-1">

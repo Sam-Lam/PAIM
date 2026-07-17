@@ -75,16 +75,15 @@ export function SettingsPage() {
     setSaving(true);
     setRootError(null);
     try {
-      const saved = await SettingsService.Update(
-        new Settings({
-          masterLibraryRoot: form.masterLibraryRoot.trim(),
-          importConcurrency: clampInt(form.importConcurrency, 1),
-          backupWorkers: clampInt(form.backupWorkers, 1),
-          maxRetries: clampInt(form.maxRetries, 0),
-          defaultEventName: form.defaultEventName.trim(),
-          metadataAvailable,
-        }),
-      );
+      const payload: Settings = {
+        masterLibraryRoot: form.masterLibraryRoot.trim(),
+        importConcurrency: clampInt(form.importConcurrency, 1),
+        backupWorkers: clampInt(form.backupWorkers, 1),
+        maxRetries: clampInt(form.maxRetries, 0),
+        defaultEventName: form.defaultEventName.trim(),
+        metadataAvailable,
+      };
+      const saved = await SettingsService.Update(payload);
       setForm({
         masterLibraryRoot: saved.masterLibraryRoot,
         importConcurrency: saved.importConcurrency,
