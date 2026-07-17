@@ -1,0 +1,14 @@
+[{
+  "SourceFile": "/videos/IMG_0002.MOV",
+  "Make": "Apple",
+  "Model": "iPhone 15 Pro",
+  "CreateDate": "2026:07:04 09:20:00",
+  "ImageWidth": 1920,
+  "ImageHeight": 1080,
+  "Orientation": 1,
+  "Duration": 12.5,
+  "VideoFrameRate": 29.97,
+  "CompressorID": "hvc1",
+  "CompressorName": "HEVC",
+  "ContentIdentifier": "E1B2C3D4-1234-5678-9ABC-DEF012345678"
+}]

@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>BusProtocol</key>
+	<string></string>
+	<key>DeviceBlockSize</key>
+	<integer>4096</integer>
+	<key>DeviceNode</key>
+	<string></string>
+	<key>Ejectable</key>
+	<false/>
+	<key>FilesystemName</key>
+	<string>SMB (SMB/CIFS)</string>
+	<key>FilesystemType</key>
+	<string>smbfs</string>
+	<key>FilesystemUserVisibleName</key>
+	<string>SMB (SMB/CIFS)</string>
+	<key>FreeSpace</key>
+	<integer>3200000000000</integer>
+	<key>Internal</key>
+	<false/>
+	<key>IORegistryEntryName</key>
+	<string></string>
+	<key>MediaName</key>
+	<string></string>
+	<key>MountPoint</key>
+	<string>/Volumes/photos</string>
+	<key>Removable</key>
+	<false/>
+	<key>RemovableMedia</key>
+	<false/>
+	<key>TotalSize</key>
+	<integer>8000000000000</integer>
+	<key>VolumeName</key>
+	<string>photos</string>
+</dict>
+</plist>

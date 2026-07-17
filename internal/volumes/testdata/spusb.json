@@ -1,0 +1,65 @@
+{
+  "SPUSBDataType" : [
+    {
+      "_name" : "USB31Bus",
+      "host_controller" : "AppleT8103USBXHCI",
+      "_items" : [
+        {
+          "_name" : "USB3.1 Hub",
+          "bcd_device" : "1.14",
+          "manufacturer" : "VIA Labs, Inc.",
+          "product_id" : "0x0817",
+          "vendor_id" : "0x2109  (VIA Labs, Inc.)",
+          "_items" : [
+            {
+              "_name" : "Portable SSD T7",
+              "bcd_device" : "1.00",
+              "manufacturer" : "Samsung",
+              "product_id" : "0x4001",
+              "serial_num" : "S5R9NS0T123456X",
+              "vendor_id" : "0x04e8  (Samsung Electronics Co., Ltd.)",
+              "Media" : [
+                {
+                  "_name" : "Samsung PSSD T7 Media",
+                  "bsd_name" : "disk4",
+                  "size" : "1 TB",
+                  "size_in_bytes" : 1000555581440,
+                  "volumes" : [
+                    {
+                      "_name" : "T7",
+                      "bsd_name" : "disk4s1",
+                      "file_system" : "APFS",
+                      "size" : "1 TB"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "_name" : "Generic USB SD Reader",
+          "bcd_device" : "1.00",
+          "manufacturer" : "Generic",
+          "product_id" : "0x5406",
+          "serial_num" : "000000264001",
+          "vendor_id" : "0x0bda  (Realtek Semiconductor Corp.)",
+          "Media" : [
+            {
+              "_name" : "Generic STORAGE DEVICE Media",
+              "bsd_name" : "disk6",
+              "size" : "64 GB",
+              "volumes" : [
+                {
+                  "_name" : "EOS_DIGITAL",
+                  "bsd_name" : "disk6s1",
+                  "file_system" : "ExFAT"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

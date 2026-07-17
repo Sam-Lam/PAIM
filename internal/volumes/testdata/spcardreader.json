@@ -1,0 +1,29 @@
+{
+  "SPCardReaderDataType" : [
+    {
+      "_name" : "spcardreader",
+      "bcd_device" : "8.20",
+      "product_id" : "0x8406",
+      "vendor_id" : "0x05ac  (Apple Inc.)",
+      "_items" : [
+        {
+          "_name" : "EOS_DIGITAL",
+          "bsd_name" : "disk5",
+          "mechanism" : "Whole",
+          "partitions" : [
+            {
+              "_name" : "EOS_DIGITAL",
+              "bsd_name" : "disk5s1",
+              "size" : "64 GB",
+              "volume_uuid" : "0F8A6C21-D3E4-4F5A-9B7C-1122AABBCCDD"
+            }
+          ],
+          "removable_media" : "yes",
+          "serial_num" : "SDCARD-CANON-987654",
+          "size" : "64 GB",
+          "size_in_bytes" : 63999836160
+        }
+      ]
+    }
+  ]
+}

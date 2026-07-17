@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>BusProtocol</key>
+	<string>Secure Digital</string>
+	<key>Content</key>
+	<string>Windows_FAT_32</string>
+	<key>DeviceBlockSize</key>
+	<integer>512</integer>
+	<key>DeviceIdentifier</key>
+	<string>disk5s1</string>
+	<key>DeviceNode</key>
+	<string>/dev/disk5s1</string>
+	<key>Ejectable</key>
+	<true/>
+	<key>FilesystemName</key>
+	<string>ExFAT</string>
+	<key>FilesystemType</key>
+	<string>exfat</string>
+	<key>FilesystemUserVisibleName</key>
+	<string>ExFAT</string>
+	<key>FreeSpace</key>
+	<integer>51000000000</integer>
+	<key>Internal</key>
+	<false/>
+	<key>IORegistryEntryName</key>
+	<string>EOS_DIGITAL</string>
+	<key>MediaName</key>
+	<string>SDXC Card Media</string>
+	<key>MountPoint</key>
+	<string>/Volumes/EOS_DIGITAL</string>
+	<key>ParentWholeDisk</key>
+	<string>disk5</string>
+	<key>PartitionUUID</key>
+	<string>4A1B2C3D-1111-2222-3333-444455556666</string>
+	<key>Removable</key>
+	<true/>
+	<key>RemovableMedia</key>
+	<true/>
+	<key>TotalSize</key>
+	<integer>63999836160</integer>
+	<key>VolumeName</key>
+	<string>EOS_DIGITAL</string>
+	<key>VolumeUUID</key>
+	<string>0F8A6C21-D3E4-4F5A-9B7C-1122AABBCCDD</string>
+</dict>
+</plist>

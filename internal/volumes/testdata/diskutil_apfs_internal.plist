@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>APFSContainerFree</key>
+	<integer>57007001600</integer>
+	<key>BusProtocol</key>
+	<string>Apple Fabric</string>
+	<key>Content</key>
+	<string>41504653-0000-11AA-AA11-00306543ECAC</string>
+	<key>DeviceBlockSize</key>
+	<integer>4096</integer>
+	<key>DeviceIdentifier</key>
+	<string>disk3s5</string>
+	<key>DeviceNode</key>
+	<string>/dev/disk3s5</string>
+	<key>DiskUUID</key>
+	<string>3EB5D8E7-560B-4438-A020-AD7E1E0DA1F5</string>
+	<key>Ejectable</key>
+	<false/>
+	<key>FilesystemName</key>
+	<string>APFS</string>
+	<key>FilesystemType</key>
+	<string>apfs</string>
+	<key>FreeSpace</key>
+	<integer>0</integer>
+	<key>Internal</key>
+	<true/>
+	<key>IORegistryEntryName</key>
+	<string>Data</string>
+	<key>MediaName</key>
+	<string></string>
+	<key>MountPoint</key>
+	<string>/System/Volumes/Data</string>
+	<key>ParentWholeDisk</key>
+	<string>disk3</string>
+	<key>Removable</key>
+	<false/>
+	<key>RemovableMedia</key>
+	<false/>
+	<key>TotalSize</key>
+	<integer>494384795648</integer>
+	<key>VolumeName</key>
+	<string>Macintosh HD - Data</string>
+	<key>VolumeUUID</key>
+	<string>C0FFEE00-1234-5678-9ABC-DEF012345678</string>
+</dict>
+</plist>

@@ -125,6 +125,46 @@ already exist as verified assets — so a crash mid-copy never duplicates import
 `.paim-partial-*` files under the destination root are deleted on resume (they were never
 recorded as assets).
 
+## Initialize (in-place adoption) — internal/importer, Mode = adopt
+
+Motivation: a user's existing library often lives on the very drive that will become the
+Master Library. Copy-importing it would double storage on that drive and burn unnecessary
+writes. Initialize registers existing files as archived assets **without copying**.
+
+- The user selects an existing folder tree (typically the Master Library root itself or a
+  folder inside/becoming it). Same scan + dry-run flow as import; the dry run additionally
+  shows "Will adopt in place" and (if reorganize is enabled) the planned moves.
+- `ImportMode` enum on the pipeline: `copy` (normal import) | `adopt` (initialize).
+  ImportSession.Notes records the mode; session counters work identically.
+- Per file in adopt mode:
+  1. Quick hash → duplicate detection exactly as in copy mode. In-library duplicates are
+     **flagged** (DuplicateOfAssetID) and still registered — never deleted, never skipped
+     silently; the Duplicate Manager handles them later.
+  2. Metadata extraction as normal.
+  3. **No copy.** Asset.CurrentArchivePath = the file's existing path (or its new path
+     after an optional reorganize move).
+  4. Verification semantics without a copy: compute the **full BLAKE3 hash** and store it
+     as the integrity baseline (FullHash always populated in adopt mode), then mark
+     VerificationStatus=verified. This baseline is what backup verification and future
+     bit-rot / cleanup checks compare against. Log that verification was "in-place
+     baseline" rather than copy-compare.
+  5. Backup jobs enqueued as usual.
+- Optional **reorganize** flag (default OFF): move adopted files into the standard
+  `YYYY/YYYY-MM-DD Event/[RAW/]` layout. Moves MUST be same-volume atomic `os.Rename`
+  (verify same device via syscall.Stat_t.Dev before attempting; cross-volume → refuse and
+  fall back to leaving the file in place, recorded in the session notes — never
+  copy+delete in adopt mode). After a rename, re-verify the quick hash at the new path
+  before recording it. Collision handling via archive.ResolveCollision.
+- Restart-safe: adoption is resumable like import — a re-run skips files whose quick hash
+  (full-hash-confirmed on collision) already maps to a registered asset at the same path;
+  a crash mid-rename is recoverable because rename is atomic (file is at exactly one of
+  the two paths; the resumer checks both).
+- Files already inside the Master Library that were imported normally are recognized as
+  already-archived and skipped (counted as such in the dry run).
+- UI: the Import page offers the mode — "Copy into archive" vs "Adopt in place
+  (initialize)" — with explanatory copy; adopt mode shows a distinct badge in Import
+  History.
+
 ## Archive layout (internal/archive)
 
 Default (user-configurable via Settings): `<MasterLibrary>/YYYY/YYYY-MM-DD Event/` with RAW

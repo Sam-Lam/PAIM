@@ -1,0 +1,22 @@
+[{
+  "SourceFile": "/photos/IMG_0001.HEIC",
+  "Make": "Apple",
+  "Model": "iPhone 15 Pro",
+  "LensModel": "iPhone 15 Pro back triple camera 6.765mm f/1.78",
+  "ISO": 100,
+  "ExposureTime": 0.016666666,
+  "ShutterSpeed": 0.016666666,
+  "FNumber": 1.78,
+  "Aperture": 1.78,
+  "SubSecDateTimeOriginal": "2026:07:04 09:15:30.123-07:00",
+  "DateTimeOriginal": "2026:07:04 09:15:30",
+  "ImageWidth": 4032,
+  "ImageHeight": 3024,
+  "Orientation": 6,
+  "GPSLatitude": 37.7749,
+  "GPSLatitudeRef": "N",
+  "GPSLongitude": 122.4194,
+  "GPSLongitudeRef": "W",
+  "ColorSpace": 65535,
+  "ContentIdentifier": "E1B2C3D4-1234-5678-9ABC-DEF012345678"
+}]
