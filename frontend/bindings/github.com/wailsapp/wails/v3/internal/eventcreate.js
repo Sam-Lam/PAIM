@@ -6,9 +6,30 @@
 // @ts-ignore: Unused imports
 import { Create as $Create } from "@wailsio/runtime";
 
+// eslint-disable-next-line @typescript-eslint/ban-ts-comment
+// @ts-ignore: Unused imports
+import * as services$0 from "../../../../autolinepro/paim/internal/services/models.js";
+
 function configure() {
     Object.freeze(Object.assign($Create.Events, {
+        "backup:progress": $$createType0,
+        "backup:queue-changed": $$createType1,
+        "import:completed": $$createType2,
+        "import:progress": $$createType3,
+        "log:entry": $$createType4,
+        "source:identified": $$createType5,
+        "volume:mounted": $$createType6,
+        "volume:unmounted": $$createType6,
     }));
 }
+
+// Private type creation functions
+const $$createType0 = services$0.BackupProgress.createFrom;
+const $$createType1 = services$0.BackupQueueChanged.createFrom;
+const $$createType2 = services$0.ImportCompleted.createFrom;
+const $$createType3 = services$0.ImportProgress.createFrom;
+const $$createType4 = services$0.LogEntryEvent.createFrom;
+const $$createType5 = services$0.SourceIdentified.createFrom;
+const $$createType6 = services$0.VolumeEvent.createFrom;
 
 configure();

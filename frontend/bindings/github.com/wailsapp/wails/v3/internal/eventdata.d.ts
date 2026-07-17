@@ -5,10 +5,21 @@
 // @ts-ignore: Unused imports
 import type { Events } from "@wailsio/runtime";
 
+// eslint-disable-next-line @typescript-eslint/ban-ts-comment
+// @ts-ignore: Unused imports
+import type * as services$0 from "../../../../autolinepro/paim/internal/services/models.js";
+
 declare module "@wailsio/runtime" {
     namespace Events {
         interface CustomEvents {
-            "time": string;
+            "backup:progress": services$0.BackupProgress;
+            "backup:queue-changed": services$0.BackupQueueChanged;
+            "import:completed": services$0.ImportCompleted;
+            "import:progress": services$0.ImportProgress;
+            "log:entry": services$0.LogEntryEvent;
+            "source:identified": services$0.SourceIdentified;
+            "volume:mounted": services$0.VolumeEvent;
+            "volume:unmounted": services$0.VolumeEvent;
         }
     }
 }
