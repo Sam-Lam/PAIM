@@ -4,7 +4,9 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/autolinepro/paim/internal/domain"
 	"github.com/autolinepro/paim/internal/repo"
@@ -60,7 +62,26 @@ func (s *DuplicateService) ListDuplicates(ctx context.Context, page, pageSize in
 			Original:  toAssetDTO(p.Original),
 		})
 	}
-	return PageResult[DuplicatePairDTO]{Items: items, Total: int64(len(items)), Page: page, PageSize: pageSize}, nil
+	total, err := s.countDuplicates(ctx)
+	if err != nil {
+		return PageResult[DuplicatePairDTO]{}, err
+	}
+	return PageResult[DuplicatePairDTO]{Items: items, Total: total, Page: page, PageSize: pageSize}, nil
+}
+
+// countDuplicates returns the true number of flagged duplicate assets (ignoring
+// pagination), matching the filter used by AssetRepo.ListDuplicates. Soft-deleted
+// rows are excluded by GORM's default scope.
+func (s *DuplicateService) countDuplicates(ctx context.Context) (int64, error) {
+	var total int64
+	err := s.db.WithContext(ctx).
+		Model(&domain.Asset{}).
+		Where("duplicate_of_asset_id IS NOT NULL AND duplicate_of_asset_id <> ''").
+		Count(&total).Error
+	if err != nil {
+		return 0, fmt.Errorf("services: count duplicates: %w", err)
+	}
+	return total, nil
 }
 
 // ResolveDuplicate applies action to the duplicate asset. Actions (all require a
@@ -105,12 +126,16 @@ func (s *DuplicateService) ResolveDuplicate(ctx context.Context, duplicateAssetI
 	}
 }
 
-// resolveDelete soft-deletes the asset and trashes its physical file (if any).
+// resolveDelete trashes the asset's physical file (if any) and then soft-deletes
+// the row, recording the trash location as the asset's current path in the same
+// operation so recovery is easy. The file is trashed FIRST: if trashing fails we
+// do not soft-delete, so the DB never claims a file is gone while it is still in
+// place.
 func (s *DuplicateService) resolveDelete(ctx context.Context, assetID, archivePath string) error {
-	if err := s.assets.SoftDelete(ctx, assetID); err != nil {
-		return err
-	}
 	if archivePath == "" {
+		if err := s.assets.SoftDelete(ctx, assetID); err != nil {
+			return err
+		}
 		s.log.Info("duplicate soft-deleted (no physical file)", "assetId", assetID)
 		return nil
 	}
@@ -124,6 +149,11 @@ func (s *DuplicateService) resolveDelete(ctx context.Context, assetID, archivePa
 	}
 	trashed, err := trashFile(trashRoot, archivePath)
 	if err != nil {
+		return err
+	}
+	// Record the new (trash) location together with the soft-delete so the file
+	// can be found for recovery.
+	if err := s.assets.SoftDeleteWithPath(ctx, assetID, trashed); err != nil {
 		return err
 	}
 	s.log.Info("duplicate deleted (file moved to trash)", "assetId", assetID, "trash", trashed)
@@ -145,6 +175,14 @@ func (s *DuplicateService) resolveMove(ctx context.Context, assetID, archivePath
 	if err != nil {
 		return err
 	}
+
+	// Journal the intent BEFORE mutating disk so a crash between the file op and
+	// the DB update leaves a breadcrumb for manual recovery (subsystem "duplicate").
+	s.log.Info("duplicate move intent", "assetId", assetID, "from", archivePath, "to", dst, "sameVolume", same)
+
+	// undo reverses the on-disk move, so a DB failure can leave disk and DB
+	// consistent (best effort).
+	var undo func() error
 	if same {
 		if err := ensureDir(destFolder); err != nil {
 			return err
@@ -152,23 +190,60 @@ func (s *DuplicateService) resolveMove(ctx context.Context, assetID, archivePath
 		if err := renameFile(archivePath, dst); err != nil {
 			return err
 		}
+		undo = func() error { return os.Rename(dst, archivePath) }
 	} else {
 		// Cross-volume: copy+verify, then trash the original (never a bare delete).
 		if err := copyVerify(ctx, archivePath, dst); err != nil {
 			return err
 		}
-		if _, err := trashFile(filepath.Dir(archivePath), archivePath); err != nil {
+		trashed, err := trashFile(filepath.Dir(archivePath), archivePath)
+		if err != nil {
 			return err
+		}
+		undo = func() error {
+			if e := os.Rename(trashed, archivePath); e != nil {
+				return e
+			}
+			_ = os.Remove(dst)
+			return nil
 		}
 	}
 
-	res := s.db.WithContext(ctx).Model(&domain.Asset{}).Where("id = ?", assetID).
-		Update("current_archive_path", dst)
-	if res.Error != nil {
-		return fmt.Errorf("services: update archive path for %q: %w", assetID, res.Error)
+	// Update the recorded path immediately after the file op, retrying transient
+	// DB errors. On permanent failure, roll the file back so disk and DB agree.
+	if err := s.updateArchivePathWithRetry(ctx, assetID, dst); err != nil {
+		if uerr := undo(); uerr != nil {
+			s.log.Error("duplicate move: DB update failed AND file rollback failed; manual recovery needed",
+				"assetId", assetID, "from", archivePath, "to", dst, "dbError", err.Error(), "rollbackError", uerr.Error())
+		} else {
+			s.log.Warn("duplicate move: DB update failed; rolled file back to origin",
+				"assetId", assetID, "from", dst, "to", archivePath, "error", err.Error())
+		}
+		return fmt.Errorf("services: update archive path for %q: %w", assetID, err)
 	}
 	s.log.Info("duplicate moved", "assetId", assetID, "dest", dst)
 	return nil
+}
+
+// updateArchivePathWithRetry updates an asset's CurrentArchivePath, retrying a
+// few times to ride out transient SQLite contention (e.g. a busy lock) before
+// giving up.
+func (s *DuplicateService) updateArchivePathWithRetry(ctx context.Context, assetID, path string) error {
+	const attempts = 3
+	var err error
+	for i := 0; i < attempts; i++ {
+		res := s.db.WithContext(ctx).Model(&domain.Asset{}).Where("id = ?", assetID).
+			Update("current_archive_path", path)
+		if res.Error == nil {
+			if res.RowsAffected == 0 {
+				return fmt.Errorf("asset %q not found", assetID)
+			}
+			return nil
+		}
+		err = res.Error
+		time.Sleep(time.Duration(i+1) * 50 * time.Millisecond)
+	}
+	return err
 }
 
 // masterRoot resolves the configured Master Library root (may be empty).

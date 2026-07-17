@@ -39,6 +39,7 @@ const TABS: { key: string; label: string }[] = [
   { key: "failed", label: "Failed" },
   { key: "completed", label: "Completed" },
   { key: "paused", label: "Paused" },
+  { key: "cancelled", label: "Cancelled" },
 ];
 
 /** Backup Queue — the SQLite-persisted job queue with live progress and worker controls. */
@@ -282,12 +283,13 @@ export function BackupQueuePage() {
         }
       />
 
-      <div className="mb-5 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
+      <div className="mb-5 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
         <Stat label="Pending" value={formatNumber(s?.pending ?? 0)} tone={s && s.pending > 0 ? "warn" : "default"} icon={CloudArrowUpIcon} />
         <Stat label="Running" value={formatNumber(s?.running ?? 0)} tone={s && s.running > 0 ? "accent" : "default"} />
         <Stat label="Completed" value={formatNumber(s?.completed ?? 0)} tone="success" />
         <Stat label="Failed" value={formatNumber(s?.failed ?? 0)} tone={s && s.failed > 0 ? "danger" : "default"} />
         <Stat label="Paused" value={formatNumber(s?.paused ?? 0)} />
+        <Stat label="Cancelled" value={formatNumber(s?.cancelled ?? 0)} />
       </div>
 
       <Card flush>
@@ -357,6 +359,8 @@ function tabCount(s: QueueSummaryDTO | null, key: string): string {
               ? s.completed
               : key === "paused"
                 ? s.paused
-                : 0;
+                : key === "cancelled"
+                  ? s.cancelled
+                  : 0;
   return formatNumber(v);
 }

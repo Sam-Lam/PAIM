@@ -27,7 +27,30 @@ const (
 	// recordTimeout bounds the detached contexts used to record terminal
 	// job/asset state (see recordCtx).
 	recordTimeout = 10 * time.Second
+
+	// queueChangeInterval throttles OnQueueChanged notifications so a burst of job
+	// transitions cannot flood the UI with refresh signals.
+	queueChangeInterval = 500 * time.Millisecond
 )
+
+// notifyQueueChanged invokes the OnQueueChanged callback (if configured) at most
+// once per queueChangeInterval, without blocking the caller. It is called after
+// any job state transition the Manager performs so the UI can refresh queue
+// counts without waiting for its poll.
+func (m *Manager) notifyQueueChanged() {
+	if m.opts.OnQueueChanged == nil {
+		return
+	}
+	m.mu.Lock()
+	now := time.Now()
+	if !m.lastQueueNotify.IsZero() && now.Sub(m.lastQueueNotify) < queueChangeInterval {
+		m.mu.Unlock()
+		return
+	}
+	m.lastQueueNotify = now
+	m.mu.Unlock()
+	go m.opts.OnQueueChanged()
+}
 
 // recordCtx returns a short-lived context detached from the worker context, used
 // to record terminal job/asset state (MarkCompleted/MarkFailed and the asset's
@@ -74,6 +97,13 @@ type Options struct {
 	// worker goroutine and must be non-blocking / concurrency-safe. The services
 	// layer uses it to emit throttled backup:progress events.
 	ProgressFn func(jobID string, bytesDone, bytesTotal int64)
+	// OnQueueChanged, when set, is invoked (throttled to at most one call per
+	// queueChangeInterval, and non-blocking) after any job state transition the
+	// Manager performs itself — completion, failure, requeue-after-backoff, and
+	// reset-on-start/stop. It lets the UI refresh queue counts promptly instead of
+	// waiting for its periodic poll. It is called from Manager goroutines and must
+	// not block them.
+	OnQueueChanged func()
 }
 
 func (o Options) withDefaults() Options {
@@ -114,11 +144,14 @@ type Manager struct {
 	pluginMu    sync.Mutex
 	pluginCache map[string]Plugin // providerID -> initialized plugin
 
-	// mu guards backoff.
+	// mu guards backoff and lastQueueNotify.
 	mu sync.Mutex
 	// backoff maps a failed job ID to the time at which it may be requeued. The
 	// scheduler goroutine promotes elapsed entries back to pending.
 	backoff map[string]time.Time
+	// lastQueueNotify is the time OnQueueChanged was last invoked; it throttles
+	// queue-change notifications (see notifyQueueChanged).
+	lastQueueNotify time.Time
 
 	cancel context.CancelFunc
 	wg     sync.WaitGroup
@@ -146,8 +179,10 @@ func NewManager(jobs JobQueue, assets AssetStore, providers ProviderStore, regis
 // plus the backoff scheduler. The workers run until the given context is
 // cancelled or Stop is called. Start returns after the goroutines are launched.
 func (m *Manager) Start(ctx context.Context) error {
-	if _, err := m.jobs.ResetRunningOnStartup(ctx); err != nil {
+	if n, err := m.jobs.ResetRunningOnStartup(ctx); err != nil {
 		return fmt.Errorf("backup: reset running jobs on start: %w", err)
+	} else if n > 0 {
+		m.notifyQueueChanged()
 	}
 
 	runCtx, cancel := context.WithCancel(ctx)
@@ -175,8 +210,10 @@ func (m *Manager) Stop() {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	if _, err := m.jobs.ResetRunningOnStartup(ctx); err != nil {
+	if n, err := m.jobs.ResetRunningOnStartup(ctx); err != nil {
 		m.log.Error("backup: reset running jobs on stop", "error", err)
+	} else if n > 0 {
+		m.notifyQueueChanged()
 	}
 	m.log.Info("backup manager stopped")
 }
@@ -247,6 +284,7 @@ func (m *Manager) handle(ctx context.Context, job *domain.BackupJob) {
 		m.log.Error("backup: mark job failed", "job", job.ID, "error", markErr)
 		return
 	}
+	m.notifyQueueChanged()
 
 	newRetries := job.Retries + 1
 	if terminal || newRetries >= m.opts.MaxRetries {
@@ -336,6 +374,7 @@ func (m *Manager) process(ctx context.Context, job *domain.BackupJob) (terminal 
 		return false, fmt.Errorf("mark job %q completed: %w", job.ID, err)
 	}
 	m.recomputeAsset(recCtx, job.AssetID)
+	m.notifyQueueChanged()
 	m.log.Info("backup: job completed", "job", job.ID, "asset", job.AssetID, "plugin", plugin.Name())
 	return false, nil
 }
@@ -425,13 +464,19 @@ func (m *Manager) promoteReady(ctx context.Context) {
 	}
 	m.mu.Unlock()
 
+	requeued := 0
 	for _, id := range ready {
 		if err := m.jobs.Requeue(ctx, id); err != nil {
 			// The job may have been cancelled or already retried; that is fine.
 			if !errors.Is(err, repo.ErrNotFound) {
 				m.log.Error("backup: requeue after backoff", "job", id, "error", err)
 			}
+			continue
 		}
+		requeued++
+	}
+	if requeued > 0 {
+		m.notifyQueueChanged()
 	}
 }
 
@@ -491,19 +536,27 @@ func AggregateBackupStatus(jobs []domain.BackupJob) domain.BackupStatus {
 // EnqueueForAsset enqueues one backup job per enabled provider for the given
 // asset, inside the caller's transaction. It is idempotent (repo.Enqueue skips
 // duplicates), so it is safe to call during import even after a crash-and-resume.
-// This signature is injected into the importer and must remain stable.
-func (m *Manager) EnqueueForAsset(ctx context.Context, tx *gorm.DB, assetID string) error {
+// It returns the number of jobs newly created so the importer can set the
+// asset's BackupStatus to pending only when there is real backup work (with no
+// enabled providers it creates zero jobs and the caller records none). This
+// signature is injected into the importer and must remain stable.
+func (m *Manager) EnqueueForAsset(ctx context.Context, tx *gorm.DB, assetID string) (int, error) {
 	providers, err := m.providers.WithTx(tx).ListEnabled(ctx)
 	if err != nil {
-		return fmt.Errorf("backup: list providers for asset %q: %w", assetID, err)
+		return 0, fmt.Errorf("backup: list providers for asset %q: %w", assetID, err)
 	}
 	q := m.jobs.WithTx(tx)
+	created := 0
 	for _, p := range providers {
-		if _, _, err := q.Enqueue(ctx, assetID, p.PluginName, p.ID); err != nil {
-			return fmt.Errorf("backup: enqueue job for asset %q provider %q: %w", assetID, p.ID, err)
+		_, wasCreated, err := q.Enqueue(ctx, assetID, p.PluginName, p.ID)
+		if err != nil {
+			return created, fmt.Errorf("backup: enqueue job for asset %q provider %q: %w", assetID, p.ID, err)
+		}
+		if wasCreated {
+			created++
 		}
 	}
-	return nil
+	return created, nil
 }
 
 // Pause moves a pending job to paused so workers stop claiming it. A job that is

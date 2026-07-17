@@ -96,6 +96,41 @@ func (p *Pipeline) copyToPartial(ctx context.Context, src, destDir string, onByt
 	return partialPath, nil
 }
 
+// publishMaxAttempts bounds how many times linkExclusive re-resolves a name
+// collision when a racing process claims the chosen final name.
+const publishMaxAttempts = 10
+
+// linkExclusive hardlinks src into destDir under a collision-free name derived
+// from desiredName and returns the resulting final path. Unlike os.Rename, a
+// hardlink fails with EEXIST if the target already exists, so a name that
+// appears concurrently (another process publishing the same filename) is never
+// silently overwritten: linkExclusive re-runs collision resolution and retries,
+// bounded by publishMaxAttempts. The caller owns removal of src (a copy-mode
+// partial is best-effort removed; an adopt-mode original is removed to complete
+// the move).
+func linkExclusive(destDir, src, desiredName string) (string, error) {
+	if err := os.MkdirAll(destDir, 0o755); err != nil {
+		return "", fmt.Errorf("publish: create dir %q: %w", destDir, err)
+	}
+	for attempt := 0; attempt < publishMaxAttempts; attempt++ {
+		finalName, err := archive.ResolveCollision(destDir, desiredName)
+		if err != nil {
+			return "", err
+		}
+		finalPath := filepath.Join(destDir, finalName)
+		err = os.Link(src, finalPath)
+		if err == nil {
+			return finalPath, nil
+		}
+		if errors.Is(err, os.ErrExist) {
+			// A racing process claimed this name between resolve and link; try again.
+			continue
+		}
+		return "", fmt.Errorf("publish: link %q -> %q: %w", src, finalPath, err)
+	}
+	return "", fmt.Errorf("publish: exhausted %d attempts resolving collision for %q in %q", publishMaxAttempts, desiredName, destDir)
+}
+
 // fsyncDir fsyncs a directory so a rename/create within it is durable.
 func fsyncDir(dir string) error {
 	d, err := os.Open(dir)

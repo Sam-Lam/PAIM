@@ -4,6 +4,7 @@ import (
 	"context"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -363,12 +364,18 @@ func TestManager_TwoProvidersOneFailingIsPartial(t *testing.T) {
 
 	ctx := context.Background()
 	// EnqueueForAsset inside a transaction, one job per enabled provider.
+	var created int
 	err := h.db.Transaction(func(tx *gorm.DB) error {
 		m := backup.NewManager(h.jobs, h.assets, h.providers, h.registry, nil, fastOptions())
-		return m.EnqueueForAsset(ctx, tx, asset.ID)
+		var e error
+		created, e = m.EnqueueForAsset(ctx, tx, asset.ID)
+		return e
 	})
 	if err != nil {
 		t.Fatalf("enqueue for asset: %v", err)
+	}
+	if created != 2 {
+		t.Fatalf("EnqueueForAsset created = %d, want 2 (one per enabled provider)", created)
 	}
 
 	jobs, err := h.jobs.JobsForAsset(ctx, asset.ID)
@@ -449,12 +456,20 @@ func TestManager_EnqueueForAssetIdempotentInTx(t *testing.T) {
 	m := backup.NewManager(h.jobs, h.assets, h.providers, h.registry, nil, fastOptions())
 
 	// Two enqueues (as if import ran, crashed, and re-ran) inside transactions.
+	// The first creates two jobs; the second is idempotent and creates none.
+	wantCreated := []int{2, 0}
 	for i := 0; i < 2; i++ {
+		var created int
 		err := h.db.Transaction(func(tx *gorm.DB) error {
-			return m.EnqueueForAsset(ctx, tx, asset.ID)
+			var e error
+			created, e = m.EnqueueForAsset(ctx, tx, asset.ID)
+			return e
 		})
 		if err != nil {
 			t.Fatalf("enqueue for asset (iter %d): %v", i, err)
+		}
+		if created != wantCreated[i] {
+			t.Fatalf("iter %d created = %d, want %d", i, created, wantCreated[i])
 		}
 	}
 
@@ -465,6 +480,39 @@ func TestManager_EnqueueForAssetIdempotentInTx(t *testing.T) {
 	if len(jobs) != 2 {
 		t.Fatalf("expected 2 jobs (idempotent), got %d", len(jobs))
 	}
+}
+
+func TestManager_OnQueueChangedFiresOnCompletion(t *testing.T) {
+	h := newHarness(t)
+	fake := okPlugin("localfs")
+	h.registry.Register("localfs", func() backup.Plugin { return fake })
+	prov := h.addProvider(t, "localfs")
+	asset := h.addAsset(t)
+
+	var notes int32
+	opts := fastOptions()
+	opts.OnQueueChanged = func() { atomic.AddInt32(&notes, 1) }
+
+	ctx := context.Background()
+	job, _, err := h.jobs.Enqueue(ctx, asset.ID, prov.PluginName, prov.ID)
+	if err != nil {
+		t.Fatalf("enqueue: %v", err)
+	}
+
+	m := backup.NewManager(h.jobs, h.assets, h.providers, h.registry, nil, opts)
+	if err := m.Start(ctx); err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	defer m.Stop()
+
+	eventually(t, 2*time.Second, "job completed", func() bool {
+		return h.jobByID(t, job.ID).Status == domain.JobStatusCompleted
+	})
+	// The queue-changed callback fires (throttled, in a goroutine) after the
+	// completion transition; poll for it.
+	eventually(t, 2*time.Second, "OnQueueChanged fired", func() bool {
+		return atomic.LoadInt32(&notes) > 0
+	})
 }
 
 func TestAggregateBackupStatus(t *testing.T) {

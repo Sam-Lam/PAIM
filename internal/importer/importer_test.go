@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -54,12 +55,17 @@ func (f *fakeExtractor) ExtractBatch(_ context.Context, paths []string) (map[str
 func (f *fakeExtractor) Available() bool { return f.available }
 func (f *fakeExtractor) Close() error    { return nil }
 
-// countingEnqueuer records every asset it is asked to back up.
-type countingEnqueuer struct{ ids []string }
+// countingEnqueuer records every asset it is asked to back up and reports how
+// many jobs it "created" per asset (perAsset), letting tests exercise both the
+// pending path (perAsset>0) and the no-provider none path (perAsset==0).
+type countingEnqueuer struct {
+	ids      []string
+	perAsset int
+}
 
-func (c *countingEnqueuer) EnqueueForAsset(_ context.Context, _ *gorm.DB, id string) error {
+func (c *countingEnqueuer) EnqueueForAsset(_ context.Context, _ *gorm.DB, id string) (int, error) {
 	c.ids = append(c.ids, id)
-	return nil
+	return c.perAsset, nil
 }
 
 // harness bundles a Pipeline with its DB, repos, and temp directories.
@@ -85,7 +91,7 @@ func newHarness(t *testing.T) *harness {
 	assets := repo.NewAssetRepo(gdb)
 	sessions := repo.NewSessionRepo(gdb)
 	ext := newFakeExtractor()
-	enq := &countingEnqueuer{}
+	enq := &countingEnqueuer{perAsset: 1}
 
 	src := t.TempDir()
 	dest := t.TempDir()
@@ -514,6 +520,145 @@ func TestCancellationCleanliness(t *testing.T) {
 		t.Fatalf("expected some imports preserved, got %d", session.FilesImported)
 	}
 	assertNoPartials(t, h.destRoot)
+}
+
+func TestBackupStatusReflectsEnqueueCount(t *testing.T) {
+	// With at least one enabled provider (perAsset>0) the asset is pending.
+	h := newHarness(t)
+	h.writeFile("p.jpg", "pending-bytes", testDate)
+	if _, err := h.pipe.Run(context.Background(), h.copyOpts(), nil); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	var a domain.Asset
+	if err := h.db.First(&a).Error; err != nil {
+		t.Fatalf("load asset: %v", err)
+	}
+	if a.BackupStatus != domain.BackupStatusPending {
+		t.Fatalf("BackupStatus = %s, want pending", a.BackupStatus)
+	}
+
+	// With no enabled providers (perAsset==0) nothing reconciles the status, so it
+	// must stay none rather than inflating pending counts forever.
+	h2 := newHarness(t)
+	h2.enqueuer.perAsset = 0
+	h2.writeFile("n.jpg", "none-bytes", testDate)
+	if _, err := h2.pipe.Run(context.Background(), h2.copyOpts(), nil); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	var b domain.Asset
+	if err := h2.db.First(&b).Error; err != nil {
+		t.Fatalf("load asset: %v", err)
+	}
+	if b.BackupStatus != domain.BackupStatusNone {
+		t.Fatalf("BackupStatus = %s, want none (no enabled providers)", b.BackupStatus)
+	}
+}
+
+func TestAllFailuresMarksSessionFailed(t *testing.T) {
+	h := newHarness(t)
+	h.writeFile("a.jpg", "aaa", testDate)
+	h.writeFile("b.jpg", "bbb", testDate)
+
+	// Corrupt every partial so all files fail verification.
+	h.pipe.afterCopyHook = func(partialPath string) {
+		_ = os.WriteFile(partialPath, []byte("corrupt"), 0o644)
+	}
+
+	session, err := h.pipe.Run(context.Background(), h.copyOpts(), nil)
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if session.FilesImported != 0 {
+		t.Fatalf("FilesImported = %d, want 0", session.FilesImported)
+	}
+	if session.Failures != 2 {
+		t.Fatalf("Failures = %d, want 2", session.Failures)
+	}
+	if session.Status != domain.SessionStatusFailed {
+		t.Fatalf("status = %s, want failed", session.Status)
+	}
+}
+
+func TestConcurrentPublishSameFilenameNoOverwrite(t *testing.T) {
+	// Two independent pipelines publish a file with the SAME basename and date into
+	// the SAME destination directory concurrently. Exclusive (link+remove) publish
+	// must land both distinct payloads — one as "clash.jpg", one as "clash (2).jpg"
+	// — never overwriting one with the other.
+	dest := t.TempDir()
+
+	newPipe := func(src string) *Pipeline {
+		dbPath := filepath.Join(t.TempDir(), "p.db")
+		gdb, err := db.Open(dbPath)
+		if err != nil {
+			t.Fatalf("open db: %v", err)
+		}
+		return New(Config{
+			DB:        gdb,
+			Assets:    repo.NewAssetRepo(gdb),
+			Sessions:  repo.NewSessionRepo(gdb),
+			Extractor: newFakeExtractor(),
+			Layout:    archive.New(dest),
+			Backup:    &countingEnqueuer{perAsset: 1},
+		})
+	}
+
+	writeSrc := func(content string) string {
+		dir := t.TempDir()
+		full := filepath.Join(dir, "clash.jpg")
+		if err := os.WriteFile(full, []byte(content), 0o644); err != nil {
+			t.Fatalf("write: %v", err)
+		}
+		if err := os.Chtimes(full, testDate, testDate); err != nil {
+			t.Fatalf("chtimes: %v", err)
+		}
+		return dir
+	}
+
+	src1 := writeSrc("payload-one")
+	src2 := writeSrc("payload-two-different")
+	p1 := newPipe(src1)
+	p2 := newPipe(src2)
+
+	opts := func(src string) Options {
+		return Options{Mode: ModeCopy, SourceRoot: src, DestinationRoot: dest, EventName: "Clash"}
+	}
+
+	var wg sync.WaitGroup
+	wg.Add(2)
+	for _, pc := range []struct {
+		p   *Pipeline
+		src string
+	}{{p1, src1}, {p2, src2}} {
+		pc := pc
+		go func() {
+			defer wg.Done()
+			if _, err := pc.p.Run(context.Background(), opts(pc.src), nil); err != nil {
+				t.Errorf("run: %v", err)
+			}
+		}()
+	}
+	wg.Wait()
+
+	dayDir := filepath.Join(dest, "2023", "2023-06-15 Clash")
+	first := filepath.Join(dayDir, "clash.jpg")
+	second := filepath.Join(dayDir, "clash (2).jpg")
+	mustExist(t, first)
+	mustExist(t, second)
+	assertNoPartials(t, dest)
+
+	// Both distinct payloads must be present exactly once; neither overwrote the
+	// other.
+	got := map[string]bool{}
+	for _, f := range []string{first, second} {
+		b, err := os.ReadFile(f)
+		if err != nil {
+			t.Fatalf("read %s: %v", f, err)
+		}
+		got[string(b)] = true
+	}
+	if !got["payload-one"] || !got["payload-two-different"] {
+		t.Fatalf("expected both distinct payloads on disk, got %v", got)
+	}
 }
 
 // assertNoPartials fails if any ".paim-partial-*" file remains under root.

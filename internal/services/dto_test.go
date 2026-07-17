@@ -69,15 +69,19 @@ func TestSummaryFromCounts(t *testing.T) {
 }
 
 func TestNormalizePage(t *testing.T) {
-	limit, offset := normalizePage(2, 25)
-	if limit != 25 || offset != 50 {
-		t.Fatalf("normalizePage(2,25) = %d,%d want 25,50", limit, offset)
+	// 1-based: page 1 is the first page (offset 0), page 2 skips one page.
+	if l, o := normalizePage(1, 25); l != 25 || o != 0 {
+		t.Fatalf("normalizePage(1,25) = %d,%d want 25,0", l, o)
 	}
-	// Defaults and clamps.
+	limit, offset := normalizePage(2, 25)
+	if limit != 25 || offset != 25 {
+		t.Fatalf("normalizePage(2,25) = %d,%d want 25,25", limit, offset)
+	}
+	// page<=0 clamps to the first page; page size defaults when non-positive.
 	if l, o := normalizePage(-1, 0); l != 50 || o != 0 {
 		t.Fatalf("normalizePage(-1,0) = %d,%d want 50,0", l, o)
 	}
-	if l, _ := normalizePage(0, 10000); l != 500 {
-		t.Fatalf("page size not clamped: %d", l)
+	if l, o := normalizePage(0, 10000); l != 500 || o != 0 {
+		t.Fatalf("normalizePage(0,10000) = %d,%d want 500,0", l, o)
 	}
 }

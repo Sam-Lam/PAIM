@@ -30,7 +30,6 @@ export type {
   ImportOptions,
   ImportProgress,
   LogEntryDTO,
-  LogEntryEvent,
   MatchDTO,
   MonthCountDTO,
   PageResult,
@@ -60,5 +59,4 @@ export const WailsEvents = {
   VolumeMounted: "volume:mounted",
   VolumeUnmounted: "volume:unmounted",
   SourceIdentified: "source:identified",
-  LogEntry: "log:entry",
 } as const;

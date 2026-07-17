@@ -75,16 +75,21 @@ const (
 // narrow local interface (defined at the point of consumption) so the importer
 // never imports internal/backup. Implementations run inside the same DB
 // transaction that inserts the asset, so the enqueue is atomic with the import.
+// EnqueueForAsset returns the number of backup jobs it created, so the caller
+// can record BackupStatus=pending only when there is actually backup work
+// (zero enabled providers => zero jobs => BackupStatus=none).
 type BackupEnqueuer interface {
-	EnqueueForAsset(ctx context.Context, tx *gorm.DB, assetID string) error
+	EnqueueForAsset(ctx context.Context, tx *gorm.DB, assetID string) (int, error)
 }
 
 // NoopBackupEnqueuer is a BackupEnqueuer that does nothing. It is used in tests
 // and by callers that have not configured backups.
 type NoopBackupEnqueuer struct{}
 
-// EnqueueForAsset does nothing and never fails.
-func (NoopBackupEnqueuer) EnqueueForAsset(context.Context, *gorm.DB, string) error { return nil }
+// EnqueueForAsset does nothing, creates no jobs, and never fails.
+func (NoopBackupEnqueuer) EnqueueForAsset(context.Context, *gorm.DB, string) (int, error) {
+	return 0, nil
+}
 
 // Options configures a single import run.
 type Options struct {

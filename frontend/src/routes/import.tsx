@@ -78,7 +78,7 @@ export function ImportPage() {
   const refreshInterrupted = useCallback(async () => {
     try {
       const page = await HistoryService.ListSessions(1, 50);
-      setInterrupted((page.items ?? []).filter((s) => s.status === "interrupted" || s.status === "paused"));
+      setInterrupted((page.items ?? []).filter((s) => s.status === "interrupted"));
     } catch {
       // non-fatal
     }
@@ -304,6 +304,7 @@ export function ImportPage() {
           onCancel={() => setShowCancel(true)}
           onNewImport={resetToStart}
           onViewHistory={() => navigate({ to: "/history" })}
+          onResume={resume}
         />
       ) : null}
 
@@ -644,21 +645,26 @@ function ImportStep({
   onCancel,
   onNewImport,
   onViewHistory,
+  onResume,
 }: {
   progress: ImportProgress | null;
   completed: ImportCompleted | null;
   onCancel: () => void;
   onNewImport: () => void;
   onViewHistory: () => void;
+  onResume: (sessionID: string) => void;
 }) {
   if (completed) {
     const failed = completed.status === "failed";
     const cancelled = completed.status === "cancelled";
+    const interrupted = completed.status === "interrupted";
     return (
       <Card>
         <div className="flex flex-col items-center gap-3 py-4 text-center">
           {failed ? (
             <ExclamationTriangleIcon className="h-10 w-10 text-red-400" />
+          ) : interrupted ? (
+            <ExclamationTriangleIcon className="h-10 w-10 text-amber-400" />
           ) : cancelled ? (
             <StopIcon className="h-10 w-10 text-zinc-400" />
           ) : (
@@ -666,11 +672,30 @@ function ImportStep({
           )}
           <div>
             <h3 className="text-base font-semibold text-zinc-100">
-              {failed ? "Import failed" : cancelled ? "Import cancelled" : "Import complete"}
+              {failed
+                ? "Import failed"
+                : interrupted
+                  ? "Import interrupted"
+                  : cancelled
+                    ? "Import cancelled"
+                    : "Import complete"}
             </h3>
             <div className="mt-1 flex items-center justify-center gap-2">
               <StatusBadge status={completed.status} />
             </div>
+            {interrupted ? (
+              <p className="mx-auto mt-2 max-w-md text-[12px] text-amber-200/80">
+                The import stopped before finishing — the destination may have run out of space or been disconnected.
+                The counters below are preserved. Resuming re-scans and skips already-verified files, so nothing is
+                duplicated.
+              </p>
+            ) : null}
+            {failed ? (
+              <p className="mx-auto mt-2 max-w-md text-[12px] text-red-300/80">
+                No files were imported and one or more files failed. Check the source and destination, then try the
+                import again.
+              </p>
+            ) : null}
           </div>
         </div>
 
@@ -683,10 +708,15 @@ function ImportStep({
         </div>
 
         <div className="mt-5 flex items-center justify-center gap-2">
+          {interrupted ? (
+            <Button icon={ArrowPathIcon} variant="primary" onClick={() => onResume(completed.sessionId)}>
+              Resume
+            </Button>
+          ) : null}
           <Button variant="secondary" onClick={onNewImport}>
             Start another import
           </Button>
-          <Button variant="primary" onClick={onViewHistory}>
+          <Button variant={interrupted ? "ghost" : "primary"} onClick={onViewHistory}>
             View in history
           </Button>
         </div>

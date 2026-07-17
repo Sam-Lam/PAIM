@@ -3,6 +3,7 @@ package services
 import (
 	"context"
 	"log/slog"
+	"time"
 
 	"github.com/autolinepro/paim/internal/backup"
 	"github.com/autolinepro/paim/internal/domain"
@@ -127,6 +128,31 @@ func (s *BackupService) mutate(ctx context.Context, err error) error {
 		emitSafe(s.emitter, EventBackupQueueChanged, BackupQueueChanged{Summary: summary})
 	}
 	return nil
+}
+
+// NewBackupQueueChangedEmitter returns a backup.Options.OnQueueChanged callback
+// that emits a backup:queue-changed event carrying the current queue summary.
+// main.go wires it into the Manager so background job transitions (completion,
+// failure, requeue, reset) refresh the UI without waiting for its poll. It is
+// invoked (throttled) from Manager goroutines, so it must not block; a single
+// summary query plus emit is acceptable. The payload matches BackupService.mutate
+// so the frontend handles both identically.
+func NewBackupQueueChangedEmitter(emitter Emitter, jobs *repo.BackupRepo) func() {
+	return func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		counts, err := jobs.QueueSummary(ctx)
+		if err != nil {
+			return
+		}
+		statuses := make([]domain.JobStatus, len(counts))
+		values := make([]int64, len(counts))
+		for i, c := range counts {
+			statuses[i] = c.Status
+			values[i] = c.Count
+		}
+		emitSafe(emitter, EventBackupQueueChanged, BackupQueueChanged{Summary: summaryFromCounts(statuses, values)})
+	}
 }
 
 // NewBackupProgressEmitter returns a backup.Options.ProgressFn that emits

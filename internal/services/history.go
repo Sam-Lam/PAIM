@@ -26,16 +26,18 @@ func NewHistoryService(sessions *repo.SessionRepo, logs *repo.LogRepo, logger *s
 
 // ListSessions returns a page of import sessions, newest first. SessionRepo
 // exposes only a limit-based recent listing, so pagination is implemented by
-// fetching up to (offset+limit) recent rows and slicing the window; Total is a
-// lower bound (the number fetched) which is adequate for the History table's
-// "load more" pattern.
+// fetching up to (offset+limit) recent rows and slicing the window; Total is the
+// true count of all sessions so the History table renders correct pagination.
 func (s *HistoryService) ListSessions(ctx context.Context, page, pageSize int) (PageResult[SessionDTO], error) {
 	limit, offset := normalizePage(page, pageSize)
 	rows, err := s.sessions.ListRecent(ctx, offset+limit)
 	if err != nil {
 		return PageResult[SessionDTO]{}, err
 	}
-	total := int64(len(rows))
+	total, err := s.sessions.Count(ctx)
+	if err != nil {
+		return PageResult[SessionDTO]{}, err
+	}
 	if offset > len(rows) {
 		offset = len(rows)
 	}

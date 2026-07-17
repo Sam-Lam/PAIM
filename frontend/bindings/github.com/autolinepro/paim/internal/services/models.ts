@@ -202,16 +202,6 @@ export interface LogEntryDTO {
 }
 
 /**
- * LogEntryEvent is the optional payload for log:entry (live log streaming).
- */
-export interface LogEntryEvent {
-    "timestamp": string;
-    "level": string;
-    "subsystem": string;
-    "message": string;
-}
-
-/**
  * MatchDTO is the JSON-friendly result of identifying a volume.
  */
 export interface MatchDTO {

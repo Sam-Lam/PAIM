@@ -276,8 +276,9 @@ type PageResult[T any] struct {
 	PageSize int   `json:"pageSize"`
 }
 
-// normalizePage clamps a 0-based page and page size to sane bounds and returns
-// the resulting limit/offset.
+// normalizePage clamps a 1-based page and page size to sane bounds and returns
+// the resulting limit/offset. Pages are 1-based to match the frontend callers:
+// page 1 is the first page (offset 0); page<=0 is clamped to 1.
 func normalizePage(page, pageSize int) (limit, offset int) {
 	if pageSize <= 0 {
 		pageSize = 50
@@ -285,8 +286,8 @@ func normalizePage(page, pageSize int) (limit, offset int) {
 	if pageSize > 500 {
 		pageSize = 500
 	}
-	if page < 0 {
-		page = 0
+	if page <= 0 {
+		page = 1
 	}
-	return pageSize, page * pageSize
+	return pageSize, (page - 1) * pageSize
 }

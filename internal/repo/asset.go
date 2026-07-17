@@ -128,6 +128,29 @@ func (r *AssetRepo) SoftDelete(ctx context.Context, id string) error {
 	})
 }
 
+// SoftDeleteWithPath records archivePath as the asset's current archive path and
+// soft-deletes it in one transaction, so a trashed file's new location is
+// preserved on the row for recovery. Like SoftDelete, the row remains queryable
+// with Unscoped.
+func (r *AssetRepo) SoftDeleteWithPath(ctx context.Context, id, archivePath string) error {
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		res := tx.Model(&domain.Asset{}).Where("id = ?", id).Updates(map[string]any{
+			"deleted":              true,
+			"current_archive_path": archivePath,
+		})
+		if res.Error != nil {
+			return fmt.Errorf("repo: soft delete asset %q: %w", id, res.Error)
+		}
+		if res.RowsAffected == 0 {
+			return fmt.Errorf("repo: soft delete asset %q: %w", id, ErrNotFound)
+		}
+		if err := tx.Delete(&domain.Asset{}, "id = ?", id).Error; err != nil {
+			return fmt.Errorf("repo: soft delete asset %q: %w", id, err)
+		}
+		return nil
+	})
+}
+
 // MediaTypeCount pairs a media type with the number of non-deleted assets of
 // that type.
 type MediaTypeCount struct {

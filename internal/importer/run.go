@@ -142,7 +142,16 @@ func (p *Pipeline) runImport(ctx context.Context, session *domain.ImportSession,
 	// Link confirmed Live Photo pairs both ways, now that all files are imported.
 	p.linkPairs(ctx, partnerOf, assetIDByPath)
 
-	p.finishSession(session.ID, domain.SessionStatusCompleted, state)
+	// An import that recorded no assets but hit failures is a failed run, not a
+	// silent success. Decide from the accumulated session counters so resumes see
+	// the true totals.
+	status := domain.SessionStatusCompleted
+	if s, err := p.sessions.GetByID(context.Background(), session.ID); err == nil {
+		if s.FilesImported == 0 && s.Failures > 0 {
+			status = domain.SessionStatusFailed
+		}
+	}
+	p.finishSession(session.ID, status, state)
 	progressFn.emit(Progress{
 		Phase:      PhaseDone,
 		FilesDone:  len(scan.Files),
@@ -242,20 +251,23 @@ func (p *Pipeline) copyFile(ctx context.Context, sessionID string, fi FileInfo, 
 			fmt.Errorf("destination copy does not match source"))
 	}
 
-	finalName, err := archive.ResolveCollision(destDir, filepath.Base(destPath))
+	// Publish exclusively: hardlink the partial into a collision-free final name
+	// (never overwriting a file that appeared concurrently) then drop the partial.
+	finalPath, err := linkExclusive(destDir, partialPath, filepath.Base(destPath))
 	if err != nil {
 		_ = os.Remove(partialPath)
-		return p.fail(ctx, sessionID, fi.Path, "resolve-collision", err)
+		return p.fail(ctx, sessionID, fi.Path, "publish", err)
 	}
-	finalPath := filepath.Join(destDir, finalName)
-	if err := os.Rename(partialPath, finalPath); err != nil {
-		_ = os.Remove(partialPath)
-		return p.fail(ctx, sessionID, fi.Path, "rename", err)
+	_ = os.Remove(partialPath) // best effort; a leftover partial is swept on resume
+	if err := fsyncDir(destDir); err != nil {
+		// The rename is durable only after the directory fsync succeeds. The asset
+		// is not recorded yet, so remove the final file and fail this one; a later
+		// resume re-imports cleanly. Mirrors localfs, which propagates this error.
+		_ = os.Remove(finalPath)
+		return p.fail(ctx, sessionID, fi.Path, "fsync-dir", err)
 	}
-	_ = fsyncDir(destDir)
 
 	asset := p.buildAsset(sessionID, fi, cls, meta, finalPath, captureDate, nil)
-	asset.BackupStatus = domain.BackupStatusPending
 	if err := p.recordAsset(ctx, asset, repo.SessionCounters{Imported: 1}, true); err != nil {
 		// The bytes are safely on disk but the DB write failed; remove the file so
 		// a later resume re-imports cleanly (nothing was recorded).
@@ -308,7 +320,6 @@ func (p *Pipeline) adoptFile(ctx context.Context, sessionID string, fi FileInfo,
 	captureDate, _ := effectiveCaptureDate(meta, fi)
 	asset := p.buildAsset(sessionID, fi, cls, meta, currentPath, captureDate, dupOf)
 	asset.FullHash = fullHash
-	asset.BackupStatus = domain.BackupStatusPending
 	// A flagged in-library duplicate is still adopted and still backed up, but is
 	// additionally counted in the Duplicates tally.
 	counters := repo.SessionCounters{Imported: 1}
@@ -343,15 +354,22 @@ func (p *Pipeline) reorganizeInPlace(ctx context.Context, src, destPath, srcQuic
 	if err := os.MkdirAll(destDir, 0o755); err != nil {
 		return false, "", fmt.Errorf("reorganize: mkdir %q: %w", destDir, err)
 	}
-	finalName, err := archive.ResolveCollision(destDir, filepath.Base(destPath))
+	// Publish exclusively via hardlink+remove: this moves the original onto the
+	// same volume without copying (no-copy semantics preserved) and never
+	// overwrites a file that appeared concurrently (os.Link fails with EEXIST).
+	finalPath, err := linkExclusive(destDir, src, filepath.Base(destPath))
 	if err != nil {
 		return false, "", err
 	}
-	finalPath := filepath.Join(destDir, finalName)
-	if err := os.Rename(src, finalPath); err != nil {
-		return false, "", fmt.Errorf("reorganize: rename %q -> %q: %w", src, finalPath, err)
+	if err := os.Remove(src); err != nil {
+		// The hardlink is in place but the source could not be removed; both names
+		// point at the same inode (data-safe). Surface the error so the asset is
+		// not recorded; a resume adopts exactly one of them.
+		return false, "", fmt.Errorf("reorganize: remove source %q after link: %w", src, err)
 	}
-	_ = fsyncDir(destDir)
+	if err := fsyncDir(destDir); err != nil {
+		return false, "", fmt.Errorf("reorganize: fsync dir %q: %w", destDir, err)
+	}
 
 	// Re-verify the quick hash at the new location before recording it.
 	newQuick, err := hashing.QuickHash(finalPath)
@@ -438,8 +456,18 @@ func (p *Pipeline) recordAsset(ctx context.Context, asset *domain.Asset, counter
 			return err
 		}
 		if enqueue {
-			if err := p.backup.EnqueueForAsset(ctx, tx, asset.ID); err != nil {
+			n, err := p.backup.EnqueueForAsset(ctx, tx, asset.ID)
+			if err != nil {
 				return err
+			}
+			// Only claim a pending backup when jobs were actually created. With no
+			// enabled providers nothing is enqueued and nothing would ever reconcile
+			// the status, so leave it at the buildAsset default (none).
+			if n > 0 {
+				asset.BackupStatus = domain.BackupStatusPending
+				if err := p.assets.WithTx(tx).UpdateBackupStatus(ctx, asset.ID, domain.BackupStatusPending); err != nil {
+					return err
+				}
 			}
 		}
 		return nil

@@ -27,7 +27,6 @@ const (
 	EventVolumeMounted      = "volume:mounted"
 	EventVolumeUnmounted    = "volume:unmounted"
 	EventSourceIdentified   = "source:identified"
-	EventLogEntry           = "log:entry"
 )
 
 // Emitter delivers a typed event payload to the frontend. It is implemented in
@@ -99,14 +98,6 @@ type SourceIdentified struct {
 	SourceID   string `json:"sourceId"`
 	Confidence int    `json:"confidence"`
 	IsKnown    bool   `json:"isKnown"`
-}
-
-// LogEntryEvent is the optional payload for log:entry (live log streaming).
-type LogEntryEvent struct {
-	Timestamp string `json:"timestamp"`
-	Level     string `json:"level"`
-	Subsystem string `json:"subsystem"`
-	Message   string `json:"message"`
 }
 
 // throttleInterval bounds progress emission to at most one event per 100ms

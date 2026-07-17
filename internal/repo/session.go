@@ -162,6 +162,15 @@ func (r *SessionRepo) ListRecent(ctx context.Context, limit int) ([]domain.Impor
 	return sessions, nil
 }
 
+// Count returns the total number of import sessions.
+func (r *SessionRepo) Count(ctx context.Context) (int64, error) {
+	var n int64
+	if err := r.db.WithContext(ctx).Model(&domain.ImportSession{}).Count(&n).Error; err != nil {
+		return 0, fmt.Errorf("repo: count sessions: %w", err)
+	}
+	return n, nil
+}
+
 // MarkInterruptedOnStartup transitions any session still marked running to
 // interrupted (so it becomes resumable). It returns the number of sessions
 // updated. Intended to run once at application startup.

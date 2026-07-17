@@ -43,7 +43,6 @@ func init() {
 	application.RegisterEvent[services.VolumeEvent](services.EventVolumeMounted)
 	application.RegisterEvent[services.VolumeEvent](services.EventVolumeUnmounted)
 	application.RegisterEvent[services.SourceIdentified](services.EventSourceIdentified)
-	application.RegisterEvent[services.LogEntryEvent](services.EventLogEntry)
 }
 
 // wailsEmitter adapts the Wails event manager to services.Emitter. Its app
@@ -142,10 +141,11 @@ func run() error {
 	dialoger := &wailsDialoger{}
 
 	manager := backup.NewManager(jobQueue, assetRepo, providerStore, registry, logger, backup.Options{
-		Workers:     cfg.BackupWorkers,
-		MaxRetries:  cfg.MaxRetries,
-		LibraryRoot: masterRoot,
-		ProgressFn:  services.NewBackupProgressEmitter(emitter),
+		Workers:        cfg.BackupWorkers,
+		MaxRetries:     cfg.MaxRetries,
+		LibraryRoot:    masterRoot,
+		ProgressFn:     services.NewBackupProgressEmitter(emitter),
+		OnQueueChanged: services.NewBackupQueueChangedEmitter(emitter, backupRepo),
 	})
 
 	// Import pipeline (backup manager wired as the atomic backup enqueuer).

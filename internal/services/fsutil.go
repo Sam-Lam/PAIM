@@ -32,16 +32,25 @@ func sameVolume(a, b string) (bool, error) {
 	return da == db, nil
 }
 
-// deviceOf returns the filesystem device ID of the directory containing path
-// (falling back to path itself when the directory cannot be stat'd).
+// deviceOf returns the filesystem device ID governing path. The path itself (or
+// its containing directory) may not exist yet — a move destination — so it walks
+// up to the nearest existing ancestor and stats that, matching the importer's
+// sameVolume behaviour.
 func deviceOf(path string) (uint64, error) {
-	dir := filepath.Dir(path)
-	info, err := os.Stat(dir)
-	if err != nil {
-		info, err = os.Stat(path)
-		if err != nil {
-			return 0, fmt.Errorf("services: stat %q for device id: %w", path, err)
+	existing := filepath.Dir(path)
+	for {
+		if _, err := os.Stat(existing); err == nil {
+			break
 		}
+		parent := filepath.Dir(existing)
+		if parent == existing {
+			break
+		}
+		existing = parent
+	}
+	info, err := os.Stat(existing)
+	if err != nil {
+		return 0, fmt.Errorf("services: stat %q for device id: %w", path, err)
 	}
 	st, ok := info.Sys().(*syscall.Stat_t)
 	if !ok {
@@ -108,7 +117,7 @@ func copyVerify(ctx context.Context, src, dst string) error {
 	if err != nil {
 		return fmt.Errorf("services: create temp %q: %w", tmp, err)
 	}
-	if _, err := io.Copy(out, in); err != nil {
+	if err := copyChunked(ctx, out, in); err != nil {
 		_ = out.Close()
 		_ = os.Remove(tmp)
 		return fmt.Errorf("services: copy %q -> %q: %w", src, tmp, err)
@@ -136,6 +145,51 @@ func copyVerify(ctx context.Context, src, dst string) error {
 	if err := os.Rename(tmp, dst); err != nil {
 		_ = os.Remove(tmp)
 		return fmt.Errorf("services: publish %q -> %q: %w", tmp, dst, err)
+	}
+	// fsync the destination directory so the rename (the publish) is durable.
+	if err := fsyncDir(dstDir); err != nil {
+		return fmt.Errorf("services: fsync dir %q: %w", dstDir, err)
+	}
+	return nil
+}
+
+// copyBufferSize is the chunk size used by copyChunked (1 MiB); copying in chunks
+// lets the copy honor context cancellation promptly, mirroring the importer.
+const copyBufferSize = 1 << 20
+
+// copyChunked streams src into dst in fixed-size chunks, checking ctx between
+// chunks so a cancelled context aborts the copy promptly.
+func copyChunked(ctx context.Context, dst io.Writer, src io.Reader) error {
+	buf := make([]byte, copyBufferSize)
+	for {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		n, rerr := src.Read(buf)
+		if n > 0 {
+			if _, werr := dst.Write(buf[:n]); werr != nil {
+				return werr
+			}
+		}
+		if rerr == io.EOF {
+			return nil
+		}
+		if rerr != nil {
+			return rerr
+		}
+	}
+}
+
+// fsyncDir opens a directory and fsyncs it so a rename/create within it is
+// durable.
+func fsyncDir(dir string) error {
+	d, err := os.Open(dir)
+	if err != nil {
+		return fmt.Errorf("services: open dir for fsync %q: %w", dir, err)
+	}
+	defer d.Close()
+	if err := d.Sync(); err != nil {
+		return fmt.Errorf("services: fsync dir %q: %w", dir, err)
 	}
 	return nil
 }

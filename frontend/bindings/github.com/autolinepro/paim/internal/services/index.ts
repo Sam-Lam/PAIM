@@ -39,7 +39,6 @@ export type {
     ImportOptions,
     ImportProgress,
     LogEntryDTO,
-    LogEntryEvent,
     MatchDTO,
     MonthCountDTO,
     PageResult,

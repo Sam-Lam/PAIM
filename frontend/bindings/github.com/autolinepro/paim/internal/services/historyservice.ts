@@ -17,9 +17,8 @@ import * as $models from "./models.js";
 /**
  * ListSessions returns a page of import sessions, newest first. SessionRepo
  * exposes only a limit-based recent listing, so pagination is implemented by
- * fetching up to (offset+limit) recent rows and slicing the window; Total is a
- * lower bound (the number fetched) which is adequate for the History table's
- * "load more" pattern.
+ * fetching up to (offset+limit) recent rows and slicing the window; Total is the
+ * true count of all sessions so the History table renders correct pagination.
  */
 export function ListSessions(page: number, pageSize: number): $CancellablePromise<$models.PageResult<$models.SessionDTO>> {
     return $Call.ByID(3185044847, page, pageSize);
