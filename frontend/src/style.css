@@ -1,0 +1,70 @@
+@import "tailwindcss";
+
+/* Dark mode is the default and only theme; <html> always carries `.dark`.
+   The custom variant lets `dark:` utilities resolve against that class. */
+@custom-variant dark (&:where(.dark, .dark *));
+
+/* Design tokens (semantic names over the zinc/blue/emerald/amber/red scale). */
+@theme {
+  --color-app: #09090b;        /* zinc-950 — window background */
+  --color-surface: #18181b;    /* zinc-900 — cards / panels */
+  --color-surface-2: #27272a;  /* zinc-800 — raised / hover */
+  --color-line: #27272a;       /* zinc-800 — borders */
+  --color-line-soft: #1f1f23;  /* subtle borders */
+}
+
+:root {
+  color-scheme: dark;
+  font-family: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", Roboto,
+    "Helvetica Neue", Arial, sans-serif, "Apple Color Emoji", "Segoe UI Emoji";
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+html {
+  background-color: var(--color-app);
+}
+
+body {
+  margin: 0;
+  /* Modern macOS feel: 13px base text. */
+  font-size: 13px;
+  line-height: 1.5;
+  color: theme(--color-zinc-100);
+  background-color: var(--color-app);
+  /* App chrome is not a document — nothing selectable by default. Inputs and
+     explicit `.selectable` regions opt back in below. */
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+input,
+textarea,
+.selectable {
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+/* Thin, unobtrusive scrollbars to match the macOS aesthetic. */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-thumb {
+  background-color: var(--color-surface-2);
+  border-radius: 999px;
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+::-webkit-scrollbar-thumb:hover {
+  background-color: #3f3f46; /* zinc-700 */
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}

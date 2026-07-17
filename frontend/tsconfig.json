@@ -6,6 +6,11 @@
     "module": "ESNext",
     "skipLibCheck": true,
 
+    /* The generated Wails bindings are JS-with-JSDoc; allow importing them
+       (checkJs stays off so the generated files are not themselves linted). */
+    "allowJs": true,
+    "checkJs": false,
+
     /* Bundler mode */
     "moduleResolution": "bundler",
     "allowImportingTsExtensions": true,
