@@ -1,0 +1,29 @@
+{
+  "name": "react-ts-latest",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build:dev": "tsc && vite build --minify false --mode development",
+    "build": "tsc && vite build --mode production",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@heroicons/react": "^2.2.0",
+    "@tailwindcss/vite": "^4.3.3",
+    "@tanstack/react-router": "^1.170.18",
+    "@tanstack/react-table": "^8.21.3",
+    "@wailsio/runtime": "latest",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "tailwindcss": "^4.3.3"
+  },
+  "devDependencies": {
+    "@types/react": "^18.2.43",
+    "@types/react-dom": "^18.2.17",
+    "@vitejs/plugin-react": "^6.0.0",
+    "typescript": "^5.2.2",
+    "vite": "^8.0.5"
+  }
+}
