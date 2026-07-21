@@ -41,7 +41,11 @@ func Open(path string) (*gorm.DB, error) {
 	// the pool (foreign_keys and busy_timeout are per-connection settings). They
 	// are also asserted explicitly below.
 	dsn := fmt.Sprintf(
-		"file:%s?_busy_timeout=5000&_foreign_keys=on&_journal_mode=WAL&_synchronous=NORMAL",
+		// _txlock=immediate makes every write transaction take the write lock at
+		// BEGIN instead of on first write, so concurrent writers (import pipeline
+		// vs backup workers) queue on busy_timeout rather than deadlocking with
+		// SQLITE_BUSY on a deferred-to-write lock upgrade.
+		"file:%s?_busy_timeout=5000&_foreign_keys=on&_journal_mode=WAL&_synchronous=NORMAL&_txlock=immediate",
 		path,
 	)
 
