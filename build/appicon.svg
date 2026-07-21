@@ -1,0 +1,113 @@
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <!-- Background squircle -->
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#3a4468"/>
+      <stop offset="0.55" stop-color="#242c4a"/>
+      <stop offset="1" stop-color="#161c33"/>
+    </linearGradient>
+    <!-- Vault outer ring (steel) -->
+    <linearGradient id="ring" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#c3cadb"/>
+      <stop offset="0.5" stop-color="#8a93ab"/>
+      <stop offset="1" stop-color="#5d6580"/>
+    </linearGradient>
+    <!-- Vault door face -->
+    <radialGradient id="face" cx="0.5" cy="0.38" r="0.75">
+      <stop offset="0" stop-color="#46527e"/>
+      <stop offset="0.7" stop-color="#313b62"/>
+      <stop offset="1" stop-color="#262e4e"/>
+    </radialGradient>
+    <!-- Wheel spokes -->
+    <linearGradient id="spoke" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#e8ecf5"/>
+      <stop offset="1" stop-color="#9aa3ba"/>
+    </linearGradient>
+    <!-- Photo sky -->
+    <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#8ecdff"/>
+      <stop offset="1" stop-color="#3f83dd"/>
+    </linearGradient>
+    <filter id="softshadow" x="-30%" y="-30%" width="160%" height="160%">
+      <feDropShadow dx="0" dy="18" stdDeviation="26" flood-color="#000000" flood-opacity="0.45"/>
+    </filter>
+    <filter id="cardshadow" x="-30%" y="-30%" width="160%" height="160%">
+      <feDropShadow dx="0" dy="14" stdDeviation="18" flood-color="#000000" flood-opacity="0.5"/>
+    </filter>
+    <clipPath id="photoclip">
+      <rect x="-170" y="-130" width="340" height="260" rx="22"/>
+    </clipPath>
+  </defs>
+
+  <!-- Squircle canvas (Apple grid: 824pt content centered) -->
+  <rect x="100" y="100" width="824" height="824" rx="186" fill="url(#bg)"/>
+  <!-- top sheen: soft fade, no hard edge -->
+  <linearGradient id="sheen" x1="0" y1="0" x2="0" y2="1">
+    <stop offset="0" stop-color="#ffffff" stop-opacity="0.10"/>
+    <stop offset="1" stop-color="#ffffff" stop-opacity="0"/>
+  </linearGradient>
+  <path d="M286 100 L738 100 C841 100 924 183 924 286 L924 400 L100 400 L100 286 C100 183 183 100 286 100 Z" fill="url(#sheen)"/>
+
+  <!-- ===== Vault door ===== -->
+  <g filter="url(#softshadow)">
+    <!-- outer steel ring -->
+    <circle cx="512" cy="452" r="266" fill="url(#ring)"/>
+    <!-- ring inner shadow line -->
+    <circle cx="512" cy="452" r="238" fill="#1d2440"/>
+    <!-- door face -->
+    <circle cx="512" cy="452" r="228" fill="url(#face)"/>
+  </g>
+
+  <!-- rim bolts -->
+  <g fill="#dde2ee">
+    <circle cx="512" cy="200" r="13"/>
+    <circle cx="690" cy="274" r="13"/>
+    <circle cx="764" cy="452" r="13"/>
+    <circle cx="690" cy="630" r="13"/>
+    <circle cx="512" cy="704" r="13"/>
+    <circle cx="334" cy="630" r="13"/>
+    <circle cx="260" cy="452" r="13"/>
+    <circle cx="334" cy="274" r="13"/>
+  </g>
+  <g fill="#20263f" opacity="0.55">
+    <circle cx="512" cy="205" r="5"/>
+    <circle cx="686" cy="278" r="5"/>
+    <circle cx="759" cy="452" r="5"/>
+    <circle cx="686" cy="626" r="5"/>
+    <circle cx="512" cy="699" r="5"/>
+    <circle cx="338" cy="626" r="5"/>
+    <circle cx="265" cy="452" r="5"/>
+    <circle cx="338" cy="278" r="5"/>
+  </g>
+
+  <!-- spoke wheel -->
+  <g transform="translate(512 452) rotate(22.5)">
+    <g stroke="url(#spoke)" stroke-width="34" stroke-linecap="round">
+      <line x1="0" y1="-150" x2="0" y2="150"/>
+      <line x1="-150" y1="0" x2="150" y2="0"/>
+      <line x1="-106" y1="-106" x2="106" y2="106"/>
+      <line x1="-106" y1="106" x2="106" y2="-106"/>
+    </g>
+    <circle r="150" fill="none" stroke="url(#spoke)" stroke-width="26"/>
+    <circle r="56" fill="url(#spoke)"/>
+    <circle r="40" fill="#39426b"/>
+    <circle r="40" fill="none" stroke="#1e2540" stroke-width="4" opacity="0.6"/>
+  </g>
+
+  <!-- glass highlight over door -->
+  <path d="M300 300 A 266 266 0 0 1 724 300 L 512 452 Z" fill="#ffffff" opacity="0.07"/>
+
+  <!-- ===== Photo card in front ===== -->
+  <g transform="translate(628 668) rotate(-9)" filter="url(#cardshadow)">
+    <!-- white frame -->
+    <rect x="-192" y="-152" width="384" height="304" rx="34" fill="#f4f6fb"/>
+    <rect x="-192" y="-152" width="384" height="304" rx="34" fill="none" stroke="#c9cfdd" stroke-width="2"/>
+    <!-- picture -->
+    <g clip-path="url(#photoclip)">
+      <rect x="-170" y="-130" width="340" height="260" fill="url(#sky)"/>
+      <circle cx="88" cy="-56" r="38" fill="#ffd95e"/>
+      <path d="M-170 130 L-52 -34 L38 90 L96 22 L170 130 Z" fill="#2f8f63"/>
+      <path d="M-170 130 L-52 -34 L20 66 L-40 130 Z" fill="#25724f"/>
+    </g>
+  </g>
+</svg>
