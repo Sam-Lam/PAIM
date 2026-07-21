@@ -8,10 +8,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/autolinepro/paim/internal/backup"
-	"github.com/autolinepro/paim/internal/db"
-	"github.com/autolinepro/paim/internal/domain"
-	"github.com/autolinepro/paim/internal/repo"
+	"github.com/Sam-Lam/PAIM/internal/backup"
+	"github.com/Sam-Lam/PAIM/internal/db"
+	"github.com/Sam-Lam/PAIM/internal/domain"
+	"github.com/Sam-Lam/PAIM/internal/repo"
 	"gorm.io/gorm"
 )
 

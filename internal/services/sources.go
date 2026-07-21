@@ -4,11 +4,11 @@ import (
 	"context"
 	"log/slog"
 
-	"github.com/autolinepro/paim/internal/hashing"
-	"github.com/autolinepro/paim/internal/mediatype"
-	"github.com/autolinepro/paim/internal/repo"
-	"github.com/autolinepro/paim/internal/source"
-	"github.com/autolinepro/paim/internal/volumes"
+	"github.com/Sam-Lam/PAIM/internal/hashing"
+	"github.com/Sam-Lam/PAIM/internal/mediatype"
+	"github.com/Sam-Lam/PAIM/internal/repo"
+	"github.com/Sam-Lam/PAIM/internal/source"
+	"github.com/Sam-Lam/PAIM/internal/volumes"
 )
 
 // Hasher adapts internal/hashing to the source package's FileHasher and

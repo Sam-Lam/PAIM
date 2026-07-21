@@ -3,9 +3,9 @@ package services
 import (
 	"time"
 
-	"github.com/autolinepro/paim/internal/domain"
-	"github.com/autolinepro/paim/internal/library"
-	"github.com/autolinepro/paim/internal/volumes"
+	"github.com/Sam-Lam/PAIM/internal/domain"
+	"github.com/Sam-Lam/PAIM/internal/library"
+	"github.com/Sam-Lam/PAIM/internal/volumes"
 )
 
 // AssetDTO is the JSON-friendly projection of a domain.Asset returned across the

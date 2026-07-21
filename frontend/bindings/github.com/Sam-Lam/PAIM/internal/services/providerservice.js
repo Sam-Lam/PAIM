@@ -27,7 +27,7 @@ import * as $models from "./models.js";
  * @returns {$CancellablePromise<$models.ProviderDTO>}
  */
 export function Add(pluginName, configJSON) {
-    return $Call.ByID(302596964, pluginName, configJSON).then(/** @type {($result: any) => any} */(($result) => {
+    return $Call.ByID(3798959424, pluginName, configJSON).then(/** @type {($result: any) => any} */(($result) => {
         return $$createType0($result);
     }));
 }
@@ -37,7 +37,7 @@ export function Add(pluginName, configJSON) {
  * @returns {$CancellablePromise<$models.PluginDTO[]>}
  */
 export function AvailablePlugins() {
-    return $Call.ByID(17692200).then(/** @type {($result: any) => any} */(($result) => {
+    return $Call.ByID(898994396).then(/** @type {($result: any) => any} */(($result) => {
         return $$createType2($result);
     }));
 }
@@ -48,7 +48,7 @@ export function AvailablePlugins() {
  * @returns {$CancellablePromise<void>}
  */
 export function Bind(core) {
-    return $Call.ByID(3786291646, core);
+    return $Call.ByID(2685491282, core);
 }
 
 /**
@@ -56,7 +56,7 @@ export function Bind(core) {
  * @returns {$CancellablePromise<$models.ProviderDTO[]>}
  */
 export function List() {
-    return $Call.ByID(1616182161).then(/** @type {($result: any) => any} */(($result) => {
+    return $Call.ByID(2224840357).then(/** @type {($result: any) => any} */(($result) => {
         return $$createType3($result);
     }));
 }
@@ -68,7 +68,7 @@ export function List() {
  * @returns {$CancellablePromise<void>}
  */
 export function SetGate(gate) {
-    return $Call.ByID(1863971588, gate);
+    return $Call.ByID(1064554728, gate);
 }
 
 /**
@@ -80,7 +80,7 @@ export function SetGate(gate) {
  * @returns {$CancellablePromise<$models.ProviderDTO>}
  */
 export function Update(id, configJSON, enabled) {
-    return $Call.ByID(4278627748, id, configJSON, enabled).then(/** @type {($result: any) => any} */(($result) => {
+    return $Call.ByID(4249247096, id, configJSON, enabled).then(/** @type {($result: any) => any} */(($result) => {
         return $$createType0($result);
     }));
 }

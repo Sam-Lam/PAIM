@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"log/slog"
 
-	"github.com/autolinepro/paim/internal/backup"
-	"github.com/autolinepro/paim/internal/domain"
+	"github.com/Sam-Lam/PAIM/internal/backup"
+	"github.com/Sam-Lam/PAIM/internal/domain"
 	"gorm.io/gorm"
 )
 

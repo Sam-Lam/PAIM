@@ -21,7 +21,7 @@ import * as $models from "./models.js";
  * @returns {$CancellablePromise<void>}
  */
 export function Bind(core) {
-    return $Call.ByID(3738823893, core);
+    return $Call.ByID(3983286449, core);
 }
 
 /**
@@ -34,7 +34,7 @@ export function Bind(core) {
  * @returns {$CancellablePromise<$models.PageResult<$models.SessionDTO>>}
  */
 export function ListSessions(page, pageSize) {
-    return $Call.ByID(3185044847, page, pageSize).then(/** @type {($result: any) => any} */(($result) => {
+    return $Call.ByID(3210122019, page, pageSize).then(/** @type {($result: any) => any} */(($result) => {
         return $$createType1($result);
     }));
 }
@@ -48,7 +48,7 @@ export function ListSessions(page, pageSize) {
  * @returns {$CancellablePromise<$models.SessionDetail>}
  */
 export function SessionEvents(sessionID) {
-    return $Call.ByID(97310383, sessionID).then(/** @type {($result: any) => any} */(($result) => {
+    return $Call.ByID(1356593475, sessionID).then(/** @type {($result: any) => any} */(($result) => {
         return $$createType2($result);
     }));
 }
@@ -60,7 +60,7 @@ export function SessionEvents(sessionID) {
  * @returns {$CancellablePromise<void>}
  */
 export function SetGate(gate) {
-    return $Call.ByID(3095585249, gate);
+    return $Call.ByID(2750894333, gate);
 }
 
 // Private type creation functions

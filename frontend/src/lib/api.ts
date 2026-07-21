@@ -14,7 +14,7 @@ export {
   ProviderService,
   SettingsService,
   SourcesService,
-} from "../../bindings/github.com/autolinepro/paim/internal/services";
+} from "../../bindings/github.com/Sam-Lam/PAIM/internal/services";
 
 export type {
   AssetDTO,
@@ -54,7 +54,7 @@ export type {
   TotalsDTO,
   VolumeDTO,
   VolumeEvent,
-} from "../../bindings/github.com/autolinepro/paim/internal/services";
+} from "../../bindings/github.com/Sam-Lam/PAIM/internal/services";
 
 // Canonical event names emitted by the Go services (internal/services/events.go).
 export const WailsEvents = {

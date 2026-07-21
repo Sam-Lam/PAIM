@@ -22,7 +22,7 @@ import * as $models from "./models.js";
  * @returns {$CancellablePromise<$models.ImportProgress | null>}
  */
 export function ActiveImport() {
-    return $Call.ByID(939337238).then(/** @type {($result: any) => any} */(($result) => {
+    return $Call.ByID(4129542162).then(/** @type {($result: any) => any} */(($result) => {
         return $$createType1($result);
     }));
 }
@@ -33,7 +33,7 @@ export function ActiveImport() {
  * @returns {$CancellablePromise<void>}
  */
 export function Bind(core) {
-    return $Call.ByID(1987678406, core);
+    return $Call.ByID(3861444354, core);
 }
 
 /**
@@ -42,7 +42,7 @@ export function Bind(core) {
  * @returns {$CancellablePromise<void>}
  */
 export function CancelImport() {
-    return $Call.ByID(1382102186);
+    return $Call.ByID(4197606086);
 }
 
 /**
@@ -54,7 +54,7 @@ export function CancelImport() {
  * @returns {$CancellablePromise<$models.DryRunReportDTO>}
  */
 export function DryRun(root, opts) {
-    return $Call.ByID(2149229199, root, opts).then(/** @type {($result: any) => any} */(($result) => {
+    return $Call.ByID(3790038963, root, opts).then(/** @type {($result: any) => any} */(($result) => {
         return $$createType2($result);
     }));
 }
@@ -65,7 +65,7 @@ export function DryRun(root, opts) {
  * @returns {$CancellablePromise<string>}
  */
 export function PickFolder() {
-    return $Call.ByID(2382930612);
+    return $Call.ByID(3202014584);
 }
 
 /**
@@ -76,7 +76,7 @@ export function PickFolder() {
  * @returns {$CancellablePromise<$models.StartImportResult>}
  */
 export function ResumeSession(sessionID) {
-    return $Call.ByID(4045256054, sessionID).then(/** @type {($result: any) => any} */(($result) => {
+    return $Call.ByID(4153050978, sessionID).then(/** @type {($result: any) => any} */(($result) => {
         return $$createType3($result);
     }));
 }
@@ -88,7 +88,7 @@ export function ResumeSession(sessionID) {
  * @returns {$CancellablePromise<$models.ScanSummary>}
  */
 export function ScanSource(root) {
-    return $Call.ByID(2716834293, root).then(/** @type {($result: any) => any} */(($result) => {
+    return $Call.ByID(152237345, root).then(/** @type {($result: any) => any} */(($result) => {
         return $$createType4($result);
     }));
 }
@@ -100,7 +100,7 @@ export function ScanSource(root) {
  * @returns {$CancellablePromise<void>}
  */
 export function SetGate(gate) {
-    return $Call.ByID(168142972, gate);
+    return $Call.ByID(1124552088, gate);
 }
 
 /**
@@ -118,7 +118,7 @@ export function SetGate(gate) {
  * @returns {$CancellablePromise<$models.StartImportResult>}
  */
 export function StartImport(opts) {
-    return $Call.ByID(608332294, opts).then(/** @type {($result: any) => any} */(($result) => {
+    return $Call.ByID(3538574610, opts).then(/** @type {($result: any) => any} */(($result) => {
         return $$createType3($result);
     }));
 }

@@ -22,7 +22,7 @@ import * as $models from "./models.js";
  * @returns {$CancellablePromise<void>}
  */
 export function Bind(core) {
-    return $Call.ByID(3638504623, core);
+    return $Call.ByID(3479872355, core);
 }
 
 /**
@@ -38,7 +38,7 @@ export function Bind(core) {
  * @returns {$CancellablePromise<string>}
  */
 export function Export(query, level, subsystem, fromISO, toISO, format) {
-    return $Call.ByID(43858206, query, level, subsystem, fromISO, toISO, format);
+    return $Call.ByID(3153149562, query, level, subsystem, fromISO, toISO, format);
 }
 
 /**
@@ -53,7 +53,7 @@ export function Export(query, level, subsystem, fromISO, toISO, format) {
  * @returns {$CancellablePromise<$models.PageResult<$models.LogEntryDTO>>}
  */
 export function Search(query, level, subsystem, fromISO, toISO, page, pageSize) {
-    return $Call.ByID(1748940228, query, level, subsystem, fromISO, toISO, page, pageSize).then(/** @type {($result: any) => any} */(($result) => {
+    return $Call.ByID(3240393328, query, level, subsystem, fromISO, toISO, page, pageSize).then(/** @type {($result: any) => any} */(($result) => {
         return $$createType1($result);
     }));
 }
@@ -65,7 +65,7 @@ export function Search(query, level, subsystem, fromISO, toISO, page, pageSize) 
  * @returns {$CancellablePromise<void>}
  */
 export function SetGate(gate) {
-    return $Call.ByID(1455384815, gate);
+    return $Call.ByID(892112739, gate);
 }
 
 /**
@@ -73,7 +73,7 @@ export function SetGate(gate) {
  * @returns {$CancellablePromise<string[]>}
  */
 export function Subsystems() {
-    return $Call.ByID(2833846240).then(/** @type {($result: any) => any} */(($result) => {
+    return $Call.ByID(2519064772).then(/** @type {($result: any) => any} */(($result) => {
         return $$createType2($result);
     }));
 }

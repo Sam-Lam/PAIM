@@ -21,7 +21,7 @@ import * as $models from "./models.js";
  * @returns {$CancellablePromise<void>}
  */
 export function Bind(core) {
-    return $Call.ByID(3610225898, core);
+    return $Call.ByID(3528820422, core);
 }
 
 /**
@@ -30,7 +30,7 @@ export function Bind(core) {
  * @returns {$CancellablePromise<$models.Settings>}
  */
 export function GetAll() {
-    return $Call.ByID(2916482902).then(/** @type {($result: any) => any} */(($result) => {
+    return $Call.ByID(3320771594).then(/** @type {($result: any) => any} */(($result) => {
         return $$createType0($result);
     }));
 }
@@ -42,7 +42,7 @@ export function GetAll() {
  * @returns {$CancellablePromise<void>}
  */
 export function SetGate(gate) {
-    return $Call.ByID(54775376, gate);
+    return $Call.ByID(3296246396, gate);
 }
 
 /**
@@ -55,7 +55,7 @@ export function SetGate(gate) {
  * @returns {$CancellablePromise<$models.Settings>}
  */
 export function Update($in) {
-    return $Call.ByID(794792368, $in).then(/** @type {($result: any) => any} */(($result) => {
+    return $Call.ByID(3458506124, $in).then(/** @type {($result: any) => any} */(($result) => {
         return $$createType0($result);
     }));
 }

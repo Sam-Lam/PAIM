@@ -24,7 +24,7 @@ import * as $models from "./models.js";
  * @returns {$CancellablePromise<void>}
  */
 export function Bind(core) {
-    return $Call.ByID(334927977, core);
+    return $Call.ByID(1108989621, core);
 }
 
 /**
@@ -33,7 +33,7 @@ export function Bind(core) {
  * @returns {$CancellablePromise<void>}
  */
 export function Cancel(jobID) {
-    return $Call.ByID(1944181464, jobID);
+    return $Call.ByID(3236091820, jobID);
 }
 
 /**
@@ -46,7 +46,7 @@ export function Cancel(jobID) {
  * @returns {$CancellablePromise<$models.PageResult<$models.BackupJobDTO>>}
  */
 export function ListJobs(statusFilter, page, pageSize) {
-    return $Call.ByID(48006254, statusFilter, page, pageSize).then(/** @type {($result: any) => any} */(($result) => {
+    return $Call.ByID(1737606034, statusFilter, page, pageSize).then(/** @type {($result: any) => any} */(($result) => {
         return $$createType1($result);
     }));
 }
@@ -57,7 +57,7 @@ export function ListJobs(statusFilter, page, pageSize) {
  * @returns {$CancellablePromise<void>}
  */
 export function Pause(jobID) {
-    return $Call.ByID(3412453788, jobID);
+    return $Call.ByID(3536245888, jobID);
 }
 
 /**
@@ -65,7 +65,7 @@ export function Pause(jobID) {
  * @returns {$CancellablePromise<void>}
  */
 export function PauseAll() {
-    return $Call.ByID(3205164423);
+    return $Call.ByID(3325548243);
 }
 
 /**
@@ -73,7 +73,7 @@ export function PauseAll() {
  * @returns {$CancellablePromise<$models.QueueSummaryDTO>}
  */
 export function QueueSummary() {
-    return $Call.ByID(2056755563).then(/** @type {($result: any) => any} */(($result) => {
+    return $Call.ByID(3240464335).then(/** @type {($result: any) => any} */(($result) => {
         return $$createType2($result);
     }));
 }
@@ -84,7 +84,7 @@ export function QueueSummary() {
  * @returns {$CancellablePromise<void>}
  */
 export function Resume(jobID) {
-    return $Call.ByID(1002769893, jobID);
+    return $Call.ByID(1523895361, jobID);
 }
 
 /**
@@ -92,7 +92,7 @@ export function Resume(jobID) {
  * @returns {$CancellablePromise<void>}
  */
 export function ResumeAll() {
-    return $Call.ByID(684596164);
+    return $Call.ByID(470287800);
 }
 
 /**
@@ -101,7 +101,7 @@ export function ResumeAll() {
  * @returns {$CancellablePromise<void>}
  */
 export function Retry(jobID) {
-    return $Call.ByID(3825207064, jobID);
+    return $Call.ByID(2080218012, jobID);
 }
 
 /**
@@ -111,7 +111,7 @@ export function Retry(jobID) {
  * @returns {$CancellablePromise<void>}
  */
 export function SetGate(gate) {
-    return $Call.ByID(4171442213, gate);
+    return $Call.ByID(2196210049, gate);
 }
 
 // Private type creation functions

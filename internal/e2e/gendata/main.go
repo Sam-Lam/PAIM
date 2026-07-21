@@ -18,7 +18,7 @@ import (
 	"path/filepath"
 	"sort"
 
-	"github.com/autolinepro/paim/internal/e2e"
+	"github.com/Sam-Lam/PAIM/internal/e2e"
 )
 
 func main() {

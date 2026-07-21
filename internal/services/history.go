@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/autolinepro/paim/internal/repo"
+	"github.com/Sam-Lam/PAIM/internal/repo"
 )
 
 // HistoryService lists past import sessions and the log entries belonging to one.

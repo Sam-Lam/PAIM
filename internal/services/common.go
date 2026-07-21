@@ -3,7 +3,7 @@ package services
 import (
 	"time"
 
-	"github.com/autolinepro/paim/internal/domain"
+	"github.com/Sam-Lam/PAIM/internal/domain"
 )
 
 // Convenience aliases for the domain status constants the mapping code compares

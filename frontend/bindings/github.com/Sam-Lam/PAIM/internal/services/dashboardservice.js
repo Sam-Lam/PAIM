@@ -24,7 +24,7 @@ import * as $models from "./models.js";
  * @returns {$CancellablePromise<void>}
  */
 export function Bind(core) {
-    return $Call.ByID(1891870997, core);
+    return $Call.ByID(367829209, core);
 }
 
 /**
@@ -32,7 +32,7 @@ export function Bind(core) {
  * @returns {$CancellablePromise<$models.DashboardStats>}
  */
 export function GetStats() {
-    return $Call.ByID(579990625).then(/** @type {($result: any) => any} */(($result) => {
+    return $Call.ByID(3217767757).then(/** @type {($result: any) => any} */(($result) => {
         return $$createType0($result);
     }));
 }
@@ -44,7 +44,7 @@ export function GetStats() {
  * @returns {$CancellablePromise<void>}
  */
 export function SetGate(gate) {
-    return $Call.ByID(2096842529, gate);
+    return $Call.ByID(2297460053, gate);
 }
 
 // Private type creation functions

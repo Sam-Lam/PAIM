@@ -1,4 +1,4 @@
-module github.com/autolinepro/paim
+module github.com/Sam-Lam/PAIM
 
 go 1.25.0
 

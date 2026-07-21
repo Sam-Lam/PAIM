@@ -39,10 +39,10 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/autolinepro/paim/internal/domain"
-	"github.com/autolinepro/paim/internal/hashing"
-	"github.com/autolinepro/paim/internal/library"
-	"github.com/autolinepro/paim/internal/mediatype"
+	"github.com/Sam-Lam/PAIM/internal/domain"
+	"github.com/Sam-Lam/PAIM/internal/hashing"
+	"github.com/Sam-Lam/PAIM/internal/library"
+	"github.com/Sam-Lam/PAIM/internal/mediatype"
 )
 
 // maxFilesPerClass caps how many file paths are retained per class in a Report.

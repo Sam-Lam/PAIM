@@ -4,9 +4,9 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/autolinepro/paim/internal/domain"
-	"github.com/autolinepro/paim/internal/hashing"
-	"github.com/autolinepro/paim/internal/library"
+	"github.com/Sam-Lam/PAIM/internal/domain"
+	"github.com/Sam-Lam/PAIM/internal/hashing"
+	"github.com/Sam-Lam/PAIM/internal/library"
 )
 
 // Disposition is the classification of a scanned file against the asset DB.

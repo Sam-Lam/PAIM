@@ -7,8 +7,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/autolinepro/paim/internal/library"
-	"github.com/autolinepro/paim/internal/version"
+	"github.com/Sam-Lam/PAIM/internal/library"
+	"github.com/Sam-Lam/PAIM/internal/version"
 )
 
 // CurrentLibraryDTO describes the library currently open, surfaced to the

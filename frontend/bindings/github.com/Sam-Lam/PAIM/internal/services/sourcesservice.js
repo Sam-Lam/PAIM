@@ -23,7 +23,7 @@ import * as $models from "./models.js";
  * @returns {$CancellablePromise<void>}
  */
 export function Bind(core) {
-    return $Call.ByID(3068078139, core);
+    return $Call.ByID(1781319071, core);
 }
 
 /**
@@ -35,7 +35,7 @@ export function Bind(core) {
  * @returns {$CancellablePromise<$models.SafeToEraseDTO>}
  */
 export function EvaluateSafeToErase(sourceID, mountPoint) {
-    return $Call.ByID(778222795, sourceID, mountPoint).then(/** @type {($result: any) => any} */(($result) => {
+    return $Call.ByID(2071845607, sourceID, mountPoint).then(/** @type {($result: any) => any} */(($result) => {
         return $$createType0($result);
     }));
 }
@@ -48,7 +48,7 @@ export function EvaluateSafeToErase(sourceID, mountPoint) {
  * @returns {$CancellablePromise<$models.MatchDTO>}
  */
 export function IdentifyVolume(mountPoint) {
-    return $Call.ByID(2439323266, mountPoint).then(/** @type {($result: any) => any} */(($result) => {
+    return $Call.ByID(3239382622, mountPoint).then(/** @type {($result: any) => any} */(($result) => {
         return $$createType1($result);
     }));
 }
@@ -58,7 +58,7 @@ export function IdentifyVolume(mountPoint) {
  * @returns {$CancellablePromise<$models.SourceDTO[]>}
  */
 export function ListKnownSources() {
-    return $Call.ByID(3024950359).then(/** @type {($result: any) => any} */(($result) => {
+    return $Call.ByID(3142920755).then(/** @type {($result: any) => any} */(($result) => {
         return $$createType3($result);
     }));
 }
@@ -68,7 +68,7 @@ export function ListKnownSources() {
  * @returns {$CancellablePromise<$models.VolumeDTO[]>}
  */
 export function ListVolumes() {
-    return $Call.ByID(3325610759).then(/** @type {($result: any) => any} */(($result) => {
+    return $Call.ByID(2030789603).then(/** @type {($result: any) => any} */(($result) => {
         return $$createType5($result);
     }));
 }
@@ -80,7 +80,7 @@ export function ListVolumes() {
  * @returns {$CancellablePromise<void>}
  */
 export function SetGate(gate) {
-    return $Call.ByID(1731528587, gate);
+    return $Call.ByID(47600799, gate);
 }
 
 /**
@@ -91,7 +91,7 @@ export function SetGate(gate) {
  * @returns {$CancellablePromise<void>}
  */
 export function StartWatching() {
-    return $Call.ByID(385547173);
+    return $Call.ByID(2506465009);
 }
 
 // Private type creation functions

@@ -6,8 +6,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/autolinepro/paim/internal/domain"
-	"github.com/autolinepro/paim/internal/volumes"
+	"github.com/Sam-Lam/PAIM/internal/domain"
+	"github.com/Sam-Lam/PAIM/internal/volumes"
 )
 
 // Confidence scores (0..100) and the signals that earn them. Every score is

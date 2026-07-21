@@ -6,8 +6,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/autolinepro/paim/internal/hashing"
-	"github.com/autolinepro/paim/internal/mediatype"
+	"github.com/Sam-Lam/PAIM/internal/hashing"
+	"github.com/Sam-Lam/PAIM/internal/mediatype"
 )
 
 // DryRunReport is the non-mutating prediction of an import. It also carries the

@@ -3,7 +3,7 @@ package services
 import (
 	"testing"
 
-	"github.com/autolinepro/paim/internal/domain"
+	"github.com/Sam-Lam/PAIM/internal/domain"
 )
 
 func TestToAssetDTODuplicatePointer(t *testing.T) {

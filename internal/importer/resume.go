@@ -9,7 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/autolinepro/paim/internal/domain"
+	"github.com/Sam-Lam/PAIM/internal/domain"
 )
 
 // ResumeSession re-runs an interrupted, cancelled, or crashed session. It

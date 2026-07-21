@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/autolinepro/paim/internal/domain"
+	"github.com/Sam-Lam/PAIM/internal/domain"
 	"gorm.io/gorm"
 )
 

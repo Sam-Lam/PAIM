@@ -4,7 +4,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/autolinepro/paim/internal/domain"
+	"github.com/Sam-Lam/PAIM/internal/domain"
 )
 
 func TestOpenMigratesAndSetsPragmas(t *testing.T) {

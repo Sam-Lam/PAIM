@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/autolinepro/paim/internal/domain"
-	"github.com/autolinepro/paim/internal/hashing"
+	"github.com/Sam-Lam/PAIM/internal/domain"
+	"github.com/Sam-Lam/PAIM/internal/hashing"
 	"gorm.io/gorm"
 )
 

@@ -10,7 +10,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/autolinepro/paim/internal/version"
+	"github.com/Sam-Lam/PAIM/internal/version"
 )
 
 // heartbeatInterval is how often a held lock refreshes its mtime so other

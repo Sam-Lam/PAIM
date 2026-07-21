@@ -18,7 +18,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/autolinepro/paim/internal/mediatype"
+	"github.com/Sam-Lam/PAIM/internal/mediatype"
 )
 
 // Default format tokens for the layout. They are Go reference-time layouts:

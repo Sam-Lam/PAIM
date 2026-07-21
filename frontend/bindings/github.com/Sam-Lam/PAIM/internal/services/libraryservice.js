@@ -22,7 +22,7 @@ import * as $models from "./models.js";
  * @returns {$CancellablePromise<string>}
  */
 export function AppVersion() {
-    return $Call.ByID(1928401332);
+    return $Call.ByID(2908880760);
 }
 
 /**
@@ -32,7 +32,7 @@ export function AppVersion() {
  * @returns {$CancellablePromise<$models.OpenResultDTO>}
  */
 export function Create(path) {
-    return $Call.ByID(3043023337, path).then(/** @type {($result: any) => any} */(($result) => {
+    return $Call.ByID(1486684037, path).then(/** @type {($result: any) => any} */(($result) => {
         return $$createType0($result);
     }));
 }
@@ -43,7 +43,7 @@ export function Create(path) {
  * @returns {$CancellablePromise<$models.CurrentLibraryDTO | null>}
  */
 export function Current() {
-    return $Call.ByID(333806998).then(/** @type {($result: any) => any} */(($result) => {
+    return $Call.ByID(1163760450).then(/** @type {($result: any) => any} */(($result) => {
         return $$createType2($result);
     }));
 }
@@ -55,7 +55,7 @@ export function Current() {
  * @returns {$CancellablePromise<$models.OpenResultDTO>}
  */
 export function ForceOpen(path) {
-    return $Call.ByID(588766464, path).then(/** @type {($result: any) => any} */(($result) => {
+    return $Call.ByID(451676940, path).then(/** @type {($result: any) => any} */(($result) => {
         return $$createType0($result);
     }));
 }
@@ -65,7 +65,7 @@ export function ForceOpen(path) {
  * @returns {$CancellablePromise<$models.LegacyStatusDTO>}
  */
 export function LegacyStatus() {
-    return $Call.ByID(4094524180).then(/** @type {($result: any) => any} */(($result) => {
+    return $Call.ByID(1250907944).then(/** @type {($result: any) => any} */(($result) => {
         return $$createType3($result);
     }));
 }
@@ -77,7 +77,7 @@ export function LegacyStatus() {
  * @returns {$CancellablePromise<$models.OpenResultDTO>}
  */
 export function MigrateLegacy(targetRoot) {
-    return $Call.ByID(969238033, targetRoot).then(/** @type {($result: any) => any} */(($result) => {
+    return $Call.ByID(328045109, targetRoot).then(/** @type {($result: any) => any} */(($result) => {
         return $$createType0($result);
     }));
 }
@@ -89,7 +89,7 @@ export function MigrateLegacy(targetRoot) {
  * @returns {$CancellablePromise<$models.OpenResultDTO>}
  */
 export function Open(path) {
-    return $Call.ByID(2255004805, path).then(/** @type {($result: any) => any} */(($result) => {
+    return $Call.ByID(2731203569, path).then(/** @type {($result: any) => any} */(($result) => {
         return $$createType0($result);
     }));
 }
@@ -99,7 +99,7 @@ export function Open(path) {
  * @returns {$CancellablePromise<string>}
  */
 export function PickLibraryFolder() {
-    return $Call.ByID(3434768979);
+    return $Call.ByID(734359295);
 }
 
 /**
@@ -107,7 +107,7 @@ export function PickLibraryFolder() {
  * @returns {$CancellablePromise<$models.RecentLibraryDTO[]>}
  */
 export function Recent() {
-    return $Call.ByID(2116018466).then(/** @type {($result: any) => any} */(($result) => {
+    return $Call.ByID(570839318).then(/** @type {($result: any) => any} */(($result) => {
         return $$createType5($result);
     }));
 }
@@ -119,7 +119,7 @@ export function Recent() {
  * @returns {$CancellablePromise<void>}
  */
 export function SetCurrent(c) {
-    return $Call.ByID(3342758592, c);
+    return $Call.ByID(946804516, c);
 }
 
 // Private type creation functions

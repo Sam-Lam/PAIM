@@ -46,9 +46,9 @@ import (
 	"log/slog"
 	"runtime"
 
-	"github.com/autolinepro/paim/internal/archive"
-	"github.com/autolinepro/paim/internal/metadata"
-	"github.com/autolinepro/paim/internal/repo"
+	"github.com/Sam-Lam/PAIM/internal/archive"
+	"github.com/Sam-Lam/PAIM/internal/metadata"
+	"github.com/Sam-Lam/PAIM/internal/repo"
 	"gorm.io/gorm"
 )
 

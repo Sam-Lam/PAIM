@@ -9,10 +9,10 @@ import (
 	"sync"
 	"time"
 
-	"github.com/autolinepro/paim/internal/domain"
-	"github.com/autolinepro/paim/internal/importer"
-	"github.com/autolinepro/paim/internal/mediatype"
-	"github.com/autolinepro/paim/internal/repo"
+	"github.com/Sam-Lam/PAIM/internal/domain"
+	"github.com/Sam-Lam/PAIM/internal/importer"
+	"github.com/Sam-Lam/PAIM/internal/mediatype"
+	"github.com/Sam-Lam/PAIM/internal/repo"
 )
 
 // ErrImportInProgress is returned by StartImport/ResumeSession when an import is

@@ -10,7 +10,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/autolinepro/paim/internal/archive"
+	"github.com/Sam-Lam/PAIM/internal/archive"
 	"github.com/google/uuid"
 )
 

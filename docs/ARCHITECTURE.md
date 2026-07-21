@@ -15,7 +15,7 @@ restart-safe.
   missing), `fsnotify`, `github.com/google/uuid`, `howett.net/plist` for diskutil output.
 - Frontend: Wails **v3** (alpha2.117), React + TypeScript + Vite, Tailwind CSS v4
   (via `@tailwindcss/vite`), TanStack Router, TanStack Table, Heroicons. Dark mode default.
-- Module path: `github.com/autolinepro/paim`.
+- Module path: `github.com/Sam-Lam/PAIM`.
 
 ## Package layout
 
@@ -316,7 +316,7 @@ inserts into LogEntry. Subsystem field mandatory. Logs page supports search/filt
   `app.Event.Emit("name", payload)`. Frontend: `import {Events} from "@wailsio/runtime"` →
   `Events.On("name", cb)`. Event payload types must be JSON-serializable structs.
 - Bindings: regenerate with `wails3 generate bindings` (root). Generated under
-  `frontend/bindings/github.com/autolinepro/paim/...`.
+  `frontend/bindings/github.com/Sam-Lam/PAIM/...`.
 - Folder picker: use `application.OpenFileDialog().CanChooseDirectories(true)…` inside a
   service method (runs on the Go side).
 - Progress: engines report via callback; services throttle to ≤10 events/sec and emit

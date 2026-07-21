@@ -9,7 +9,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/autolinepro/paim/internal/hashing"
+	"github.com/Sam-Lam/PAIM/internal/hashing"
 )
 
 // trashDirName mirrors the localfs plugin's trash convention: soft-deleted files

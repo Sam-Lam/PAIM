@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/autolinepro/paim/internal/mediatype"
+	"github.com/Sam-Lam/PAIM/internal/mediatype"
 )
 
 func date(t *testing.T, s string) time.Time {

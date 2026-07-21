@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/autolinepro/paim/internal/domain"
+	"github.com/Sam-Lam/PAIM/internal/domain"
 )
 
 func TestSessionCountersAndComplete(t *testing.T) {

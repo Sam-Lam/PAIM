@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/autolinepro/paim/internal/domain"
-	"github.com/autolinepro/paim/internal/volumes"
+	"github.com/Sam-Lam/PAIM/internal/domain"
+	"github.com/Sam-Lam/PAIM/internal/volumes"
 )
 
 // fakeDescriber returns a fixed Info.

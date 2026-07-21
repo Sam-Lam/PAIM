@@ -4,8 +4,8 @@ import (
 	"context"
 	"log/slog"
 
-	"github.com/autolinepro/paim/internal/domain"
-	"github.com/autolinepro/paim/internal/repo"
+	"github.com/Sam-Lam/PAIM/internal/domain"
+	"github.com/Sam-Lam/PAIM/internal/repo"
 	"gorm.io/gorm"
 )
 

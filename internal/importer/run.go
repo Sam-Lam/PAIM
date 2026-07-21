@@ -9,13 +9,13 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/autolinepro/paim/internal/archive"
-	"github.com/autolinepro/paim/internal/domain"
-	"github.com/autolinepro/paim/internal/hashing"
-	"github.com/autolinepro/paim/internal/library"
-	"github.com/autolinepro/paim/internal/mediatype"
-	"github.com/autolinepro/paim/internal/metadata"
-	"github.com/autolinepro/paim/internal/repo"
+	"github.com/Sam-Lam/PAIM/internal/archive"
+	"github.com/Sam-Lam/PAIM/internal/domain"
+	"github.com/Sam-Lam/PAIM/internal/hashing"
+	"github.com/Sam-Lam/PAIM/internal/library"
+	"github.com/Sam-Lam/PAIM/internal/mediatype"
+	"github.com/Sam-Lam/PAIM/internal/metadata"
+	"github.com/Sam-Lam/PAIM/internal/repo"
 	"gorm.io/gorm"
 )
 

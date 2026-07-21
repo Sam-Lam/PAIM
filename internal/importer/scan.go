@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/autolinepro/paim/internal/mediatype"
+	"github.com/Sam-Lam/PAIM/internal/mediatype"
 )
 
 // FileInfo is a single media file discovered during a scan.

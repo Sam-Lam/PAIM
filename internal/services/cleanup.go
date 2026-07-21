@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 
-	"github.com/autolinepro/paim/internal/cleanup"
+	"github.com/Sam-Lam/PAIM/internal/cleanup"
 )
 
 // CleanupService runs the read-only Cleanup Assistant analysis over a folder.

@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/autolinepro/paim/internal/repo"
+	"github.com/Sam-Lam/PAIM/internal/repo"
 )
 
 // Setting keys persisted in the Setting table (as JSON values). They are the

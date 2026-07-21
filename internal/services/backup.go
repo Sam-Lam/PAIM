@@ -5,10 +5,10 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/autolinepro/paim/internal/backup"
-	"github.com/autolinepro/paim/internal/domain"
-	"github.com/autolinepro/paim/internal/library"
-	"github.com/autolinepro/paim/internal/repo"
+	"github.com/Sam-Lam/PAIM/internal/backup"
+	"github.com/Sam-Lam/PAIM/internal/domain"
+	"github.com/Sam-Lam/PAIM/internal/library"
+	"github.com/Sam-Lam/PAIM/internal/repo"
 )
 
 // BackupService inspects and controls the SQLite-persisted backup queue via the

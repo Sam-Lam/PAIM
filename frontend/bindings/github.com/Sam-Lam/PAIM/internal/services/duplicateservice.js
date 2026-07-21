@@ -24,7 +24,7 @@ import * as $models from "./models.js";
  * @returns {$CancellablePromise<void>}
  */
 export function Bind(core) {
-    return $Call.ByID(974189764, core);
+    return $Call.ByID(3557733976, core);
 }
 
 /**
@@ -34,7 +34,7 @@ export function Bind(core) {
  * @returns {$CancellablePromise<$models.PageResult<$models.DuplicatePairDTO>>}
  */
 export function ListDuplicates(page, pageSize) {
-    return $Call.ByID(2850417589, page, pageSize).then(/** @type {($result: any) => any} */(($result) => {
+    return $Call.ByID(4232984785, page, pageSize).then(/** @type {($result: any) => any} */(($result) => {
         return $$createType1($result);
     }));
 }
@@ -60,7 +60,7 @@ export function ListDuplicates(page, pageSize) {
  * @returns {$CancellablePromise<void>}
  */
 export function ResolveDuplicate(duplicateAssetID, action, destFolder) {
-    return $Call.ByID(435930598, duplicateAssetID, action, destFolder);
+    return $Call.ByID(1261347546, duplicateAssetID, action, destFolder);
 }
 
 /**
@@ -70,7 +70,7 @@ export function ResolveDuplicate(duplicateAssetID, action, destFolder) {
  * @returns {$CancellablePromise<void>}
  */
 export function SetGate(gate) {
-    return $Call.ByID(1011226254, gate);
+    return $Call.ByID(3666370770, gate);
 }
 
 // Private type creation functions

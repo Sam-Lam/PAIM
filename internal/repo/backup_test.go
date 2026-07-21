@@ -5,7 +5,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/autolinepro/paim/internal/domain"
+	"github.com/Sam-Lam/PAIM/internal/domain"
 )
 
 func TestEnqueueIsIdempotent(t *testing.T) {

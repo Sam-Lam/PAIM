@@ -24,8 +24,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/autolinepro/paim/internal/backup"
-	"github.com/autolinepro/paim/internal/hashing"
+	"github.com/Sam-Lam/PAIM/internal/backup"
+	"github.com/Sam-Lam/PAIM/internal/hashing"
 	"github.com/google/uuid"
 )
 

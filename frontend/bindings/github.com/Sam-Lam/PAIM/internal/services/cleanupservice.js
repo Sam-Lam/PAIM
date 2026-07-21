@@ -28,7 +28,7 @@ import * as $models from "./models.js";
  * @returns {$CancellablePromise<$models.CleanupReportDTO>}
  */
 export function Analyze(root) {
-    return $Call.ByID(530975406, root).then(/** @type {($result: any) => any} */(($result) => {
+    return $Call.ByID(2471023610, root).then(/** @type {($result: any) => any} */(($result) => {
         return $$createType0($result);
     }));
 }
@@ -39,7 +39,7 @@ export function Analyze(root) {
  * @returns {$CancellablePromise<void>}
  */
 export function Bind(core) {
-    return $Call.ByID(1014909805, core);
+    return $Call.ByID(3355625145, core);
 }
 
 /**
@@ -47,7 +47,7 @@ export function Bind(core) {
  * @returns {$CancellablePromise<string>}
  */
 export function PickFolder() {
-    return $Call.ByID(2287990203);
+    return $Call.ByID(3457112271);
 }
 
 /**
@@ -57,7 +57,7 @@ export function PickFolder() {
  * @returns {$CancellablePromise<void>}
  */
 export function SetGate(gate) {
-    return $Call.ByID(461687465, gate);
+    return $Call.ByID(3390353397, gate);
 }
 
 // Private type creation functions

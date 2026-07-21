@@ -3,7 +3,7 @@ package mediatype
 import (
 	"testing"
 
-	"github.com/autolinepro/paim/internal/domain"
+	"github.com/Sam-Lam/PAIM/internal/domain"
 )
 
 func TestKind(t *testing.T) {

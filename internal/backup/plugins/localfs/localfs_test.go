@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/autolinepro/paim/internal/backup/plugins/localfs"
+	"github.com/Sam-Lam/PAIM/internal/backup/plugins/localfs"
 )
 
 func writeFile(t *testing.T, path string, data []byte) {
