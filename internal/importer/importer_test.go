@@ -301,6 +301,49 @@ func TestDryRunMutatesNothingAndPredictsCounts(t *testing.T) {
 	}
 }
 
+func TestDryRunPredictsIntraBatchDuplicate(t *testing.T) {
+	h := newHarness(t)
+	// Two files share identical content (an intra-batch duplicate); a third is
+	// unique. The asset DB is empty, so only intra-batch detection can catch it.
+	h.writeFile("orig.jpg", "same-identical-bytes", testDate)
+	h.writeFile("copy.jpg", "same-identical-bytes", testDate)
+	h.writeFile("other.jpg", "distinct-unique-bytes", testDate)
+
+	ctx := context.Background()
+	scan, err := h.pipe.Scan(ctx, h.srcRoot, nil)
+	if err != nil {
+		t.Fatalf("scan: %v", err)
+	}
+	report, err := h.pipe.DryRun(ctx, scan, h.copyOpts(), nil)
+	if err != nil {
+		t.Fatalf("dry run: %v", err)
+	}
+	if report.Files != 3 {
+		t.Fatalf("Files = %d, want 3", report.Files)
+	}
+	// First occurrence imports (New); the later copy is predicted as a Duplicate.
+	if report.New != 2 || report.Duplicates != 1 {
+		t.Fatalf("dry run New=%d Duplicates=%d, want 2/1 (intra-batch duplicate predicted)",
+			report.New, report.Duplicates)
+	}
+	// Nothing was written by the dry run.
+	if got := h.countAssets(); got != 0 {
+		t.Fatalf("dry run created %d assets", got)
+	}
+
+	// The prediction must match the real import exactly.
+	opts := h.copyOpts()
+	opts.Precomputed = report
+	session, err := h.pipe.Run(ctx, opts, nil)
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if session.FilesImported != report.New || session.Duplicates != report.Duplicates {
+		t.Fatalf("import imported=%d dup=%d != dry run New=%d Duplicates=%d (prediction must be exact)",
+			session.FilesImported, session.Duplicates, report.New, report.Duplicates)
+	}
+}
+
 func TestVerificationFailurePath(t *testing.T) {
 	h := newHarness(t)
 	h.writeFile("corruptme.jpg", "original-good-content", testDate)
@@ -416,6 +459,36 @@ func TestAdoptInPlaceRegistration(t *testing.T) {
 	}
 	if _, ok := byPath[p1]; !ok {
 		t.Fatalf("asset for %s not registered in place", p1)
+	}
+}
+
+func TestAdoptDuplicateCountsOnlyAsDuplicate(t *testing.T) {
+	h := newHarness(t)
+	// Two identical-content files under the adopt root: the first adopts, the
+	// second is a flagged in-place duplicate. The duplicate must count ONLY under
+	// Duplicates (consistent with copy mode) — never inflating FilesImported.
+	h.writeFile("lib/first.jpg", "identical-adopt-bytes", testDate)
+	h.writeFile("lib/second.jpg", "identical-adopt-bytes", testDate)
+
+	opts := Options{Mode: ModeAdopt, SourceRoot: h.srcRoot, DestinationRoot: h.srcRoot}
+	session, err := h.pipe.Run(context.Background(), opts, nil)
+	if err != nil {
+		t.Fatalf("adopt run: %v", err)
+	}
+	if session.FilesImported != 1 {
+		t.Fatalf("FilesImported = %d, want 1 (the duplicate must not count as imported)", session.FilesImported)
+	}
+	if session.Duplicates != 1 {
+		t.Fatalf("Duplicates = %d, want 1", session.Duplicates)
+	}
+	// Both files are still registered (adopt never drops the duplicate).
+	if got := h.countAssets(); got != 2 {
+		t.Fatalf("assets = %d, want 2 (duplicate still registered in place)", got)
+	}
+	var dupCount int64
+	h.db.Model(&domain.Asset{}).Where("duplicate_of_asset_id IS NOT NULL AND duplicate_of_asset_id <> ''").Count(&dupCount)
+	if dupCount != 1 {
+		t.Fatalf("flagged duplicate rows = %d, want 1", dupCount)
 	}
 }
 

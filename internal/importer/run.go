@@ -321,11 +321,12 @@ func (p *Pipeline) adoptFile(ctx context.Context, sessionID string, fi FileInfo,
 	captureDate, _ := effectiveCaptureDate(meta, fi)
 	asset := p.buildAsset(sessionID, fi, cls, meta, currentPath, captureDate, dupOf)
 	asset.FullHash = fullHash
-	// A flagged in-library duplicate is still adopted and still backed up, but is
-	// additionally counted in the Duplicates tally.
+	// A flagged in-library duplicate is still adopted and still backed up, but it
+	// counts ONLY toward the Duplicates tally — never Imported — so adopt-mode
+	// counters stay consistent with copy mode (a duplicate is not an import).
 	counters := repo.SessionCounters{Imported: 1}
 	if duplicate {
-		counters.Duplicates = 1
+		counters = repo.SessionCounters{Duplicates: 1}
 	}
 	if err := p.recordAsset(ctx, asset, counters, true); err != nil {
 		return p.fail(ctx, sessionID, fi.Path, "record", err)

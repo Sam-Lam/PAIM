@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -56,6 +57,10 @@ type scenario struct {
 
 	provider *domain.BackupProvider
 	tree     *Tree // the source ("SD card") manifest
+
+	// dryRun is the Stage-2 dry-run prediction, retained so Stage 3 can assert the
+	// prediction matched the real import exactly.
+	dryRun *importer.DryRunReport
 
 	managerStarted bool
 	managerStopped bool
@@ -233,19 +238,22 @@ func TestFullScenario(t *testing.T) {
 		if report.Videos != 1 {
 			t.Errorf("dry run Videos = %d, want 1", report.Videos)
 		}
-		// NOTE (documented deviation): duplicate detection is against the asset DB,
-		// which is empty during this dry run, so the intra-batch duplicate cannot be
-		// recognized yet — the dry run predicts ALL 7 files as New. The actual import
-		// (below) inserts assets as it goes and therefore DOES catch the duplicate.
-		if report.New != 7 {
-			t.Errorf("dry run New = %d, want 7 (dry run cannot see intra-batch duplicates)", report.New)
+		// The dry run predicts intra-batch duplicates: although the asset DB is empty
+		// here, the source tree contains one exact intra-batch duplicate
+		// (sub/IMG_0001_copy.JPG == IMG_0001.JPG). The dry run recognizes the repeat
+		// within the batch — first occurrence imports, the copy becomes a duplicate —
+		// exactly as the real import (below) will record it.
+		if report.New != 6 {
+			t.Errorf("dry run New = %d, want 6 (7 files minus 1 intra-batch duplicate)", report.New)
 		}
-		if report.Duplicates != 0 {
-			t.Errorf("dry run Duplicates = %d, want 0 (empty DB)", report.Duplicates)
+		if report.Duplicates != 1 {
+			t.Errorf("dry run Duplicates = %d, want 1 (the intra-batch copy)", report.Duplicates)
 		}
 		if report.AlreadyImported != 0 {
 			t.Errorf("dry run AlreadyImported = %d, want 0", report.AlreadyImported)
 		}
+		// Retain the prediction so Stage 3 can assert it matched the import exactly.
+		s.dryRun = report
 
 		// Nothing was written: master library empty, zero asset rows.
 		if n := countRegularFiles(t, s.masterRoot); n != 0 {
@@ -269,6 +277,17 @@ func TestFullScenario(t *testing.T) {
 		if sess.FilesScanned != 7 || sess.FilesImported != 6 || sess.Duplicates != 1 || sess.Skipped != 0 || sess.Failures != 0 {
 			t.Errorf("session counters = scanned:%d imported:%d dup:%d skipped:%d fail:%d; want 7/6/1/0/0",
 				sess.FilesScanned, sess.FilesImported, sess.Duplicates, sess.Skipped, sess.Failures)
+		}
+
+		// The Stage-2 dry run predicted the import exactly: New == the files that
+		// actually imported, and Duplicates == the files actually recorded as dups.
+		if s.dryRun != nil {
+			if s.dryRun.New != int(sess.FilesImported) {
+				t.Errorf("dry run New = %d, but import FilesImported = %d (prediction must be exact)", s.dryRun.New, sess.FilesImported)
+			}
+			if s.dryRun.Duplicates != int(sess.Duplicates) {
+				t.Errorf("dry run Duplicates = %d, but import Duplicates = %d (prediction must be exact)", s.dryRun.Duplicates, sess.Duplicates)
+			}
 		}
 
 		// Every non-duplicate file landed at the exact expected layout path.
@@ -453,19 +472,19 @@ func TestFullScenario(t *testing.T) {
 			t.Errorf("BackupIncomplete = %d, want 0 (backups are complete)", report.BackupIncomplete)
 		}
 
-		// DEVIATION FROM THE TASK'S STATED EXPECTATION (asserted honestly):
-		// the Cleanup Assistant's Recommendation refuses deletion whenever any file
-		// classifies as `duplicate` (recommendation.go: "resolve in the Duplicate
-		// Manager first"). Because the source tree contains an in-folder duplicate,
-		// SafeToDelete is FALSE here even though every byte is archived and backed
-		// up. This is by design in recommendation.go, and contradicts the task
-		// brief's "SafeToDelete=true"; see the final report.
+		// Delete-safety is about CONTENT coverage: the in-folder duplicate's bytes are
+		// preserved in the archive (its content maps to the verified, fully-backed
+		// IMG_0001 asset), so it does NOT block deletion — matching
+		// source.EvaluateSafeToErase, which treats duplicate content as archived.
+		// Every byte of the source tree is archived + verified + backed up, so the
+		// folder is safe to delete.
 		rec := report.Recommendation()
-		if rec.SafeToDelete {
-			t.Errorf("cleanup Recommendation.SafeToDelete = true; expected false because an in-folder duplicate blocks it")
+		if !rec.SafeToDelete {
+			t.Errorf("cleanup Recommendation.SafeToDelete = false, want true (the duplicate's content is preserved in the archive); reasons=%v", rec.Reasons)
 		}
-		if len(rec.Reasons) == 0 {
-			t.Errorf("expected a blocking reason (the duplicate), got none")
+		// The safe duplicate is still surfaced as an informational note, not a blocker.
+		if !reasonsContain(rec.Reasons, "content preserved in archive") {
+			t.Errorf("expected an informational note about the archived duplicate, got %v", rec.Reasons)
 		}
 
 		// To demonstrate the intended positive path (backups complete -> safe), run
@@ -538,10 +557,11 @@ func TestFullScenario(t *testing.T) {
 		if sess.Status != domain.SessionStatusCompleted {
 			t.Fatalf("adopt status = %q, want completed", sess.Status)
 		}
-		// adoptFile counts every adopted file as Imported; the duplicate is also
-		// tallied under Duplicates.
-		if sess.FilesImported != 4 || sess.Duplicates != 1 || sess.Skipped != 0 {
-			t.Errorf("adopt counters = imported:%d dup:%d skipped:%d; want 4/1/0",
+		// Adopt counters mirror copy mode: the 4 files are 3 unique JPEGs + 1
+		// duplicate-of-DSC_0003. The 3 uniques import; the duplicate counts ONLY under
+		// Duplicates (never double-counted as Imported).
+		if sess.FilesImported != 3 || sess.Duplicates != 1 || sess.Skipped != 0 {
+			t.Errorf("adopt counters = imported:%d dup:%d skipped:%d; want 3/1/0",
 				sess.FilesImported, sess.Duplicates, sess.Skipped)
 		}
 
@@ -722,6 +742,16 @@ func countRegularFiles(t *testing.T, root string) int {
 		t.Fatalf("count files under %q: %v", root, err)
 	}
 	return n
+}
+
+// reasonsContain reports whether any reason string contains sub.
+func reasonsContain(reasons []string, sub string) bool {
+	for _, r := range reasons {
+		if strings.Contains(r, sub) {
+			return true
+		}
+	}
+	return false
 }
 
 func mustMkdir(t *testing.T, dir string) {

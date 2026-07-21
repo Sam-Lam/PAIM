@@ -250,6 +250,76 @@ func TestAnalyze_InFolderDuplicate(t *testing.T) {
 	}
 }
 
+func TestAnalyze_InFolderDuplicateOfArchived_Safe(t *testing.T) {
+	scan := t.TempDir()
+	arch := t.TempDir()
+	archFile := mkFile(t, arch, "a.jpg")
+	// The archived original and an in-folder duplicate of it, both in the scanned
+	// folder. Their content maps to a verified, fully-backed archived asset.
+	orig := mkFile(t, scan, "a.jpg")
+	dup := mkFile(t, scan, "a_copy.jpg")
+
+	hm := newHashModel()
+	for _, f := range []string{orig, dup} {
+		hm.quick[f] = "Q1"
+		hm.full[f] = "F1"
+	}
+
+	asset := archivedAsset("asset-1", "Q1", "F1", true, domain.BackupStatusComplete, archFile)
+	lookup := &fakeLookup{byQuick: map[string][]domain.Asset{"Q1": {asset}}}
+
+	an := NewAnalyzer(lookup, hm.quickFn, hm.fullFn, nil)
+	report, err := an.Analyze(context.Background(), scan, nil)
+	if err != nil {
+		t.Fatalf("analyze: %v", err)
+	}
+	if report.Count(ClassAlreadyArchived) != 1 || report.Count(ClassDuplicate) != 1 {
+		t.Fatalf("expected 1 already_archived + 1 duplicate, got archived=%d dup=%d",
+			report.Count(ClassAlreadyArchived), report.Count(ClassDuplicate))
+	}
+	if report.DuplicatesArchived != 1 {
+		t.Fatalf("expected DuplicatesArchived=1 (content preserved in archive), got %d", report.DuplicatesArchived)
+	}
+	rec := report.Recommendation()
+	if !rec.SafeToDelete {
+		t.Fatalf("expected safe to delete (duplicate's content is preserved), reasons=%v", rec.Reasons)
+	}
+	if !containsSubstr(rec.Reasons, "content preserved in archive") {
+		t.Fatalf("expected an informational note about the archived duplicate, got %v", rec.Reasons)
+	}
+}
+
+func TestAnalyze_InFolderDuplicateOfNew_Unsafe(t *testing.T) {
+	scan := t.TempDir()
+	// Two identical files with NO archive match: the duplicate is of a still-new
+	// file, so its content is NOT preserved anywhere and it must block.
+	f1 := mkFile(t, scan, "one.jpg")
+	f2 := mkFile(t, scan, "two.jpg")
+
+	hm := newHashModel()
+	for _, f := range []string{f1, f2} {
+		hm.quick[f] = "QD"
+		hm.full[f] = "FD"
+	}
+	lookup := &fakeLookup{byQuick: map[string][]domain.Asset{}}
+	an := NewAnalyzer(lookup, hm.quickFn, hm.fullFn, nil)
+	report, err := an.Analyze(context.Background(), scan, nil)
+	if err != nil {
+		t.Fatalf("analyze: %v", err)
+	}
+	if report.Count(ClassDuplicate) != 1 || report.DuplicatesArchived != 0 {
+		t.Fatalf("expected 1 blocking duplicate (DuplicatesArchived=0), got dup=%d archived=%d",
+			report.Count(ClassDuplicate), report.DuplicatesArchived)
+	}
+	rec := report.Recommendation()
+	if rec.SafeToDelete {
+		t.Fatalf("expected unsafe: a duplicate of a new file blocks")
+	}
+	if !containsSubstr(rec.Reasons, "are duplicates") {
+		t.Fatalf("expected a blocking duplicate reason, got %v", rec.Reasons)
+	}
+}
+
 func TestAnalyze_EmptyFolder(t *testing.T) {
 	scan := t.TempDir()
 	lookup := &fakeLookup{byQuick: map[string][]domain.Asset{}}

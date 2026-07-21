@@ -6,6 +6,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Sam-Lam/PAIM/internal/archive"
 	"github.com/Sam-Lam/PAIM/internal/hashing"
 	"github.com/Sam-Lam/PAIM/internal/mediatype"
 )
@@ -13,6 +14,13 @@ import (
 // DryRunReport is the non-mutating prediction of an import. It also carries the
 // per-file quick (and any computed full) hashes forward so a subsequent import
 // need not recompute them.
+//
+// Duplicates counts both files whose content already exists in the asset DB AND
+// intra-batch duplicates: content that appears two or more times within the very
+// same scan. The DB cannot see the batch itself, so the first occurrence of a
+// repeated content is predicted New (it imports) and every later occurrence is
+// predicted Duplicate — exactly what the import records — making the dry run an
+// exact predictor of the subsequent session's New/Duplicates counters.
 type DryRunReport struct {
 	Files            int
 	Photos           int // photo + raw_photo files
@@ -130,6 +138,12 @@ func (p *Pipeline) DryRun(ctx context.Context, scan *ScanResult, opts Options, p
 		})
 	}
 
+	// The DB-driven classification above cannot recognize duplicates that live
+	// entirely within this batch (the assets do not exist yet). Predict them the
+	// way the import will actually record them: the first occurrence of a repeated
+	// content imports, later occurrences become duplicate rows.
+	p.predictIntraBatchDuplicates(ctx, scan, opts, lay, quick, report)
+
 	multiplier := 3.0
 	if opts.mode() == ModeAdopt {
 		multiplier = 1.0
@@ -141,6 +155,72 @@ func (p *Pipeline) DryRun(ctx context.Context, scan *ScanResult, opts Options, p
 		"alreadyImported", report.AlreadyImported, "importBytes", report.TotalImportBytes,
 		"estimatedSeconds", report.EstimatedSeconds)
 	return report, nil
+}
+
+// predictIntraBatchDuplicates reclassifies later occurrences of content repeated
+// within the scanned batch from New to Duplicate. It runs AFTER the DB-driven
+// classification and only touches files the DB left as New (a DB match already
+// carries the authoritative disposition). Files are grouped by quick hash and
+// each colliding group is confirmed with full hashes — a quick-hash collision
+// alone is never a duplicate, mirroring the two-stage rule of the DB path. The
+// first occurrence in scan order stays New (it imports); every subsequent
+// full-hash match becomes a Duplicate, with the counters and byte/adopt tallies
+// adjusted to match what the import will record.
+func (p *Pipeline) predictIntraBatchDuplicates(ctx context.Context, scan *ScanResult, opts Options, lay *archive.Layout, quick map[string]string, report *DryRunReport) {
+	// Group the New-classified files by quick hash, preserving scan order so the
+	// "first occurrence imports" rule is deterministic.
+	byQuick := make(map[string][]FileInfo)
+	for _, fi := range scan.Files {
+		if report.Dispositions[fi.Path] != DispositionNew {
+			continue
+		}
+		qh := quick[fi.Path]
+		if qh == "" {
+			continue // hash unavailable; cannot confirm identity
+		}
+		byQuick[qh] = append(byQuick[qh], fi)
+	}
+
+	for _, group := range byQuick {
+		if len(group) < 2 {
+			continue // no intra-batch quick-hash collision
+		}
+		firstByFull := make(map[string]string, len(group)) // full hash -> first path
+		for _, fi := range group {
+			if err := ctx.Err(); err != nil {
+				return
+			}
+			fh := report.FullHashes[fi.Path]
+			if fh == "" {
+				computed, err := hashing.FullHash(ctx, fi.Path)
+				if err != nil {
+					p.log.Warn("dry run: intra-batch full hash failed", "path", fi.Path, "error", err.Error())
+					continue
+				}
+				fh = computed
+				report.FullHashes[fi.Path] = fh
+			}
+			if _, seen := firstByFull[fh]; !seen {
+				firstByFull[fh] = fi.Path
+				continue // first occurrence of this content: it imports, stays New
+			}
+			// A later occurrence of identical content: the import records it as a
+			// duplicate row (not copied/adopted anew).
+			report.Dispositions[fi.Path] = DispositionDuplicate
+			report.New--
+			report.Duplicates++
+			report.TotalImportBytes -= fi.Size
+			if opts.mode() == ModeAdopt {
+				report.PlannedAdoptions--
+				if opts.Reorganize {
+					dest := computeDestination(lay, time.Unix(fi.ModTime, 0), opts.EventName, fi)
+					if dest != fi.Path {
+						report.PlannedMoves--
+					}
+				}
+			}
+		}
+	}
 }
 
 // hashAll computes the quick hash of every file using a bounded worker pool. It

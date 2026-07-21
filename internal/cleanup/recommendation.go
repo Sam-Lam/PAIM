@@ -29,6 +29,17 @@ type Recommendation struct {
 func (r *Report) Recommendation() Recommendation {
 	archived := r.Count(ClassAlreadyArchived)
 
+	// Duplicates whose content is confirmed preserved in the archive (verified,
+	// fully-backed original) are safe: the bytes survive deletion, so they count
+	// toward coverage instead of blocking. Only duplicates NOT so preserved (e.g.
+	// an in-folder copy of a still-new file) block.
+	dupTotal := r.Count(ClassDuplicate)
+	dupSafe := r.DuplicatesArchived
+	if dupSafe > dupTotal {
+		dupSafe = dupTotal
+	}
+	dupBlocking := dupTotal - dupSafe
+
 	var reasons []string
 	if r.MediaFiles == 0 {
 		reasons = append(reasons, "no media files found to archive")
@@ -36,8 +47,8 @@ func (r *Report) Recommendation() Recommendation {
 	if n := r.Count(ClassNew); n > 0 {
 		reasons = append(reasons, fmt.Sprintf("%s not yet archived", files(n)))
 	}
-	if n := r.Count(ClassDuplicate); n > 0 {
-		reasons = append(reasons, fmt.Sprintf("%s are duplicates (resolve in the Duplicate Manager first)", files(n)))
+	if dupBlocking > 0 {
+		reasons = append(reasons, fmt.Sprintf("%s are duplicates (resolve in the Duplicate Manager first)", files(dupBlocking)))
 	}
 	if n := r.Count(ClassVerificationFailed); n > 0 {
 		reasons = append(reasons, fmt.Sprintf("%s failed verification", files(n)))
@@ -55,10 +66,18 @@ func (r *Report) Recommendation() Recommendation {
 		reasons = append(reasons, fmt.Sprintf("%s archived assets are missing their archived copy on disk", count(r.DBInconsistencies)))
 	}
 
-	if len(reasons) == 0 && r.MediaFiles > 0 && archived == r.MediaFiles {
+	// Informational (non-blocking) note surfacing the safe duplicates.
+	var notes []string
+	if dupSafe > 0 {
+		notes = append(notes, fmt.Sprintf("%s of archived assets — content preserved in archive", duplicates(dupSafe)))
+	}
+
+	// Coverage is satisfied when every media file is either already_archived or a
+	// duplicate whose content is preserved in the archive.
+	if len(reasons) == 0 && r.MediaFiles > 0 && archived+dupSafe == r.MediaFiles {
 		summary := fmt.Sprintf("Already Archived — %s — %s — Safe to Delete",
 			assets(archived), humanBytes(r.Bytes(ClassAlreadyArchived)))
-		return Recommendation{SafeToDelete: true, Title: "Already Archived", Summary: summary}
+		return Recommendation{SafeToDelete: true, Title: "Already Archived", Summary: summary, Reasons: notes}
 	}
 
 	// Defensive: if no specific blocker fired but not every media file is archived
@@ -75,7 +94,7 @@ func (r *Report) Recommendation() Recommendation {
 		SafeToDelete: false,
 		Title:        title,
 		Summary:      title + " — Deletion NOT Recommended",
-		Reasons:      reasons,
+		Reasons:      append(reasons, notes...),
 	}
 }
 
@@ -85,6 +104,14 @@ func files(n int) string {
 		return "1 file"
 	}
 	return count(n) + " files"
+}
+
+// duplicates renders a count with the word "duplicate(s)".
+func duplicates(n int) string {
+	if n == 1 {
+		return "1 duplicate"
+	}
+	return count(n) + " duplicates"
 }
 
 // assets renders a count with the word "asset(s)".

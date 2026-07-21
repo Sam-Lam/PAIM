@@ -155,6 +155,14 @@ type Report struct {
 	// required backups are not complete (BackupStatus != complete).
 	BackupIncomplete int `json:"backupIncomplete"`
 
+	// DuplicatesArchived counts duplicate files whose content is confirmed
+	// preserved in the archive — it maps (by full hash) to a verified,
+	// fully-backed, non-duplicate archived asset whose copy is present on disk.
+	// Such duplicates are effectively already_archived for delete-safety purposes
+	// (the bytes are safe in the archive), so they do NOT block a deletion
+	// recommendation even though they remain classified as duplicates for display.
+	DuplicatesArchived int `json:"duplicatesArchived"`
+
 	// DBInconsistencies counts already_archived matches whose archive file is
 	// missing or unreadable on disk (the DB claims an archived copy that is gone).
 	DBInconsistencies int `json:"dbInconsistencies"`
@@ -314,7 +322,10 @@ func (a *Analyzer) classify(ctx context.Context, report *Report, folderQuick map
 				e.hashed = true
 			}
 			if e.full != "" && e.full == fh {
-				report.Class(ClassDuplicate).add(path, size, maxFilesPerClass, a.log, ClassDuplicate)
+				// An in-folder duplicate. Its content may nonetheless already live
+				// safely in the archive (e.g. an in-folder copy of an archived
+				// original); record that so it does not needlessly block deletion.
+				a.recordDuplicate(ctx, report, path, size, candidates, fh)
 				folderQuick[qh] = append(prior, &folderFile{path: path, full: fh, hashed: true})
 				return
 			}
@@ -334,7 +345,59 @@ func (a *Analyzer) classify(ctx context.Context, report *Report, folderQuick map
 		return
 	}
 
-	a.classifyMatched(report, path, size, matched)
+	a.classifyMatched(ctx, report, path, size, matched, candidates, fh)
+}
+
+// recordDuplicate files path under the duplicate class and, when its content is
+// confirmed preserved in the archive (a verified, fully-backed, non-duplicate
+// archived asset with the same full hash and a present copy on disk), also counts
+// it under DuplicatesArchived so the recommendation treats it as safe.
+func (a *Analyzer) recordDuplicate(ctx context.Context, report *Report, path string, size int64, candidates []domain.Asset, fh string) {
+	report.Class(ClassDuplicate).add(path, size, maxFilesPerClass, a.log, ClassDuplicate)
+	if a.contentSafelyArchived(ctx, candidates, fh) {
+		report.DuplicatesArchived++
+	}
+}
+
+// contentSafelyArchived reports whether some candidate is a verified, fully-
+// backed, non-duplicate archived asset whose content (full hash) equals fh and
+// whose archived copy still exists on disk — i.e. the duplicate's bytes are
+// safely preserved in the archive.
+func (a *Analyzer) contentSafelyArchived(ctx context.Context, candidates []domain.Asset, fh string) bool {
+	if fh == "" {
+		return false
+	}
+	for i := range candidates {
+		c := &candidates[i]
+		if c.DuplicateOfAssetID != nil && *c.DuplicateOfAssetID != "" {
+			continue // a duplicate placeholder is not itself an archived copy
+		}
+		if c.VerificationStatus != domain.VerificationStatusVerified {
+			continue
+		}
+		if c.BackupStatus != domain.BackupStatusComplete {
+			continue
+		}
+		cFull := c.FullHash
+		archiveAbs := library.ResolvePath(a.Root, c.CurrentArchivePath)
+		if cFull == "" {
+			computed, err := a.fullHash(ctx, archiveAbs)
+			if err != nil {
+				continue
+			}
+			cFull = computed
+		}
+		if cFull != fh {
+			continue
+		}
+		// The content matches a fully-backed verified asset; require its archived
+		// copy to actually exist on disk before declaring the bytes preserved.
+		if _, err := os.Stat(archiveAbs); err != nil {
+			continue
+		}
+		return true
+	}
+	return false
 }
 
 // matchArchive returns the candidate whose content equals fh, confirming by the
@@ -367,13 +430,15 @@ func (a *Analyzer) matchArchive(ctx context.Context, candidates []domain.Asset, 
 // classifyMatched records a file that matched an archive asset, splitting into
 // verification_failed / duplicate / already_archived and updating the blocking
 // counters.
-func (a *Analyzer) classifyMatched(report *Report, path string, size int64, matched *domain.Asset) {
+func (a *Analyzer) classifyMatched(ctx context.Context, report *Report, path string, size int64, matched *domain.Asset, candidates []domain.Asset, fh string) {
 	switch {
 	case matched.VerificationStatus == domain.VerificationStatusFailed:
 		report.Class(ClassVerificationFailed).add(path, size, maxFilesPerClass, a.log, ClassVerificationFailed)
 		return
 	case matched.DuplicateOfAssetID != nil && *matched.DuplicateOfAssetID != "":
-		report.Class(ClassDuplicate).add(path, size, maxFilesPerClass, a.log, ClassDuplicate)
+		// The file matched a duplicate placeholder row. Its content is still safe if
+		// another candidate is the real, fully-backed archived original.
+		a.recordDuplicate(ctx, report, path, size, candidates, fh)
 		return
 	}
 
