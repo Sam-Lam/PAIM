@@ -15,9 +15,15 @@ import (
 // is the user's responsibility in Finder. A DeleteAnalyzedFolder method is
 // intentionally not implemented.
 type CleanupService struct {
+	gated
 	analyzer *cleanup.Analyzer
 	dialog   Dialoger
 	log      *slog.Logger
+}
+
+// Bind wires the CleanupService to an open library's analyzer in place.
+func (s *CleanupService) Bind(core *AppCore) {
+	s.analyzer = core.Analyzer
 }
 
 // NewCleanupService constructs a CleanupService.
@@ -71,6 +77,9 @@ type CleanupReportDTO struct {
 // root against the archive and returns the report plus its delete-safety
 // recommendation. It is synchronous but honors ctx cancellation between files.
 func (s *CleanupService) Analyze(ctx context.Context, root string) (CleanupReportDTO, error) {
+	if err := s.guard(); err != nil {
+		return CleanupReportDTO{}, err
+	}
 	if root == "" {
 		return CleanupReportDTO{}, fmt.Errorf("services: cleanup analyze: empty root")
 	}

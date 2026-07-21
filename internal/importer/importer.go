@@ -167,6 +167,11 @@ type Pipeline struct {
 	log       *slog.Logger
 	backup    BackupEnqueuer
 
+	// libraryRoot, when set, is the portable-library root against which archive
+	// paths are stored relative (forward slashes) and resolved back to absolute.
+	// Empty (the dev escape hatch and most tests) stores/reads absolute paths.
+	libraryRoot string
+
 	// afterCopyHook, when non-nil, is invoked with the partial file path after a
 	// copy completes but before verification. It exists solely to let tests
 	// corrupt the partial and exercise the verification-failure path.
@@ -183,6 +188,9 @@ type Config struct {
 	Layout    *archive.Layout
 	Logger    *slog.Logger
 	Backup    BackupEnqueuer
+	// LibraryRoot enables portable-library relative archive paths (see Pipeline).
+	// Empty preserves the historical absolute-path behavior.
+	LibraryRoot string
 }
 
 // New constructs a Pipeline from cfg, applying sane defaults for the optional
@@ -200,13 +208,14 @@ func New(cfg Config) *Pipeline {
 	}
 
 	return &Pipeline{
-		db:        cfg.DB,
-		assets:    cfg.Assets,
-		sessions:  cfg.Sessions,
-		extractor: cfg.Extractor,
-		layout:    cfg.Layout,
-		log:       log,
-		backup:    backup,
+		db:          cfg.DB,
+		assets:      cfg.Assets,
+		sessions:    cfg.Sessions,
+		extractor:   cfg.Extractor,
+		layout:      cfg.Layout,
+		log:         log,
+		backup:      backup,
+		libraryRoot: cfg.LibraryRoot,
 	}
 }
 

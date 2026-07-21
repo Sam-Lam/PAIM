@@ -11,9 +11,16 @@ import (
 
 // HistoryService lists past import sessions and the log entries belonging to one.
 type HistoryService struct {
+	gated
 	sessions *repo.SessionRepo
 	logs     *repo.LogRepo
 	log      *slog.Logger
+}
+
+// Bind wires the HistoryService to an open library's repos in place.
+func (s *HistoryService) Bind(core *AppCore) {
+	s.sessions = core.Sessions
+	s.logs = core.Logs
 }
 
 // NewHistoryService constructs a HistoryService.
@@ -29,6 +36,9 @@ func NewHistoryService(sessions *repo.SessionRepo, logs *repo.LogRepo, logger *s
 // fetching up to (offset+limit) recent rows and slicing the window; Total is the
 // true count of all sessions so the History table renders correct pagination.
 func (s *HistoryService) ListSessions(ctx context.Context, page, pageSize int) (PageResult[SessionDTO], error) {
+	if err := s.guard(); err != nil {
+		return PageResult[SessionDTO]{}, err
+	}
 	limit, offset := normalizePage(page, pageSize)
 	rows, err := s.sessions.ListRecent(ctx, offset+limit)
 	if err != nil {
@@ -63,6 +73,9 @@ type SessionDetail struct {
 // import subsystem within the session's time window and filtered in memory to
 // those whose MetadataJSON mentions the session ID.
 func (s *HistoryService) SessionEvents(ctx context.Context, sessionID string) (SessionDetail, error) {
+	if err := s.guard(); err != nil {
+		return SessionDetail{}, err
+	}
 	session, err := s.sessions.GetByID(ctx, sessionID)
 	if err != nil {
 		return SessionDetail{}, err

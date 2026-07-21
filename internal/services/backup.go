@@ -7,6 +7,7 @@ import (
 
 	"github.com/autolinepro/paim/internal/backup"
 	"github.com/autolinepro/paim/internal/domain"
+	"github.com/autolinepro/paim/internal/library"
 	"github.com/autolinepro/paim/internal/repo"
 )
 
@@ -15,11 +16,21 @@ import (
 // refresh; per-upload progress is emitted as backup:progress by the Manager's
 // ProgressFn (wired in main.go, see NewBackupProgressEmitter).
 type BackupService struct {
+	gated
 	manager *backup.Manager
 	jobs    *repo.BackupRepo
 	assets  *repo.AssetRepo
 	emitter Emitter
 	log     *slog.Logger
+	root    string
+}
+
+// Bind wires the BackupService to an open library's catalog in place.
+func (s *BackupService) Bind(core *AppCore) {
+	s.manager = core.Manager
+	s.jobs = core.Backups
+	s.assets = core.Assets
+	s.root = core.Root
 }
 
 // NewBackupService constructs a BackupService.
@@ -32,6 +43,9 @@ func NewBackupService(manager *backup.Manager, jobs *repo.BackupRepo, assets *re
 
 // QueueSummary returns the count of jobs in each status.
 func (s *BackupService) QueueSummary(ctx context.Context) (QueueSummaryDTO, error) {
+	if err := s.guard(); err != nil {
+		return QueueSummaryDTO{}, err
+	}
 	return s.queueSummary(ctx)
 }
 
@@ -53,6 +67,9 @@ func (s *BackupService) queueSummary(ctx context.Context) (QueueSummaryDTO, erro
 // with each job's asset filename and archive path. An empty statusFilter lists
 // all statuses.
 func (s *BackupService) ListJobs(ctx context.Context, statusFilter string, page, pageSize int) (PageResult[BackupJobDTO], error) {
+	if err := s.guard(); err != nil {
+		return PageResult[BackupJobDTO]{}, err
+	}
 	limit, offset := normalizePage(page, pageSize)
 
 	var status *domain.JobStatus
@@ -81,7 +98,7 @@ func (s *BackupService) ListJobs(ctx context.Context, statusFilter string, page,
 		}
 		if asset, err := s.assets.GetByID(ctx, j.AssetID); err == nil {
 			dto.Filename = asset.OriginalFilename
-			dto.ArchivePath = asset.CurrentArchivePath
+			dto.ArchivePath = library.ResolvePath(s.root, asset.CurrentArchivePath)
 		}
 		items = append(items, dto)
 	}
@@ -90,31 +107,49 @@ func (s *BackupService) ListJobs(ctx context.Context, statusFilter string, page,
 
 // Retry requeues a failed job immediately.
 func (s *BackupService) Retry(ctx context.Context, jobID string) error {
+	if err := s.guard(); err != nil {
+		return err
+	}
 	return s.mutate(ctx, s.manager.Retry(ctx, jobID))
 }
 
 // Pause pauses a pending job.
 func (s *BackupService) Pause(ctx context.Context, jobID string) error {
+	if err := s.guard(); err != nil {
+		return err
+	}
 	return s.mutate(ctx, s.manager.Pause(ctx, jobID))
 }
 
 // Resume resumes a paused job.
 func (s *BackupService) Resume(ctx context.Context, jobID string) error {
+	if err := s.guard(); err != nil {
+		return err
+	}
 	return s.mutate(ctx, s.manager.Resume(ctx, jobID))
 }
 
 // Cancel cancels a job from any non-terminal state.
 func (s *BackupService) Cancel(ctx context.Context, jobID string) error {
+	if err := s.guard(); err != nil {
+		return err
+	}
 	return s.mutate(ctx, s.manager.Cancel(ctx, jobID))
 }
 
 // PauseAll pauses every pending job.
 func (s *BackupService) PauseAll(ctx context.Context) error {
+	if err := s.guard(); err != nil {
+		return err
+	}
 	return s.mutate(ctx, s.manager.PauseAll(ctx))
 }
 
 // ResumeAll resumes every paused job.
 func (s *BackupService) ResumeAll(ctx context.Context) error {
+	if err := s.guard(); err != nil {
+		return err
+	}
 	return s.mutate(ctx, s.manager.ResumeAll(ctx))
 }
 

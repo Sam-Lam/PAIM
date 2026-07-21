@@ -1,12 +1,14 @@
 import { useEffect, useState } from "react";
 import {
+  ArrowsRightLeftIcon,
   CheckCircleIcon,
+  CircleStackIcon,
   ExclamationTriangleIcon,
-  FolderOpenIcon,
   InformationCircleIcon,
 } from "@heroicons/react/24/outline";
 import { Button, Card, LoadingBlock, PageHeader, StatusBadge } from "../components";
-import { CleanupService, SettingsService, Settings } from "../lib/api";
+import { LibraryService, SettingsService, Settings, type RecentLibraryDTO } from "../lib/api";
+import { useLibrary } from "../lib/library";
 import { useToast } from "../lib/toast";
 
 const APP_VERSION = "0.1.0";
@@ -22,11 +24,45 @@ interface FormState {
 /** Settings — Master Library location, concurrency/worker/retry counts, and defaults. */
 export function SettingsPage() {
   const toast = useToast();
+  const { current } = useLibrary();
   const [form, setForm] = useState<FormState | null>(null);
   const [metadataAvailable, setMetadataAvailable] = useState(true);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [rootError, setRootError] = useState<string | null>(null);
+  const [recent, setRecent] = useState<RecentLibraryDTO[]>([]);
+  const [switching, setSwitching] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const r = await LibraryService.Recent();
+        if (!cancelled) setRecent(r ?? []);
+      } catch {
+        /* recent list is non-critical */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const switchLibrary = async (path: string) => {
+    setSwitching(true);
+    try {
+      const res = await LibraryService.Open(path);
+      if (res.needsRelaunch) {
+        toast.success("Library selected — quit and reopen PAIM to switch.");
+      } else if (res.lockConflict) {
+        toast.fromError(new Error(res.lockConflict.message), "Library is locked");
+      }
+    } catch (e) {
+      toast.fromError(e, "Could not switch library");
+    } finally {
+      setSwitching(false);
+    }
+  };
 
   useEffect(() => {
     let cancelled = false;
@@ -56,18 +92,6 @@ export function SettingsPage() {
 
   const update = <K extends keyof FormState>(key: K, value: FormState[K]) => {
     setForm((f) => (f ? { ...f, [key]: value } : f));
-  };
-
-  const pickRoot = async () => {
-    try {
-      const picked = await CleanupService.PickFolder();
-      if (picked) {
-        update("masterLibraryRoot", picked);
-        setRootError(null);
-      }
-    } catch (e) {
-      toast.fromError(e, "Could not open folder picker");
-    }
   };
 
   const save = async () => {
@@ -124,30 +148,60 @@ export function SettingsPage() {
       />
 
       <div className="space-y-4">
-        <Card title="Master Library" subtitle="Where copied imports are archived. Validated when you save.">
-          <div className="flex flex-wrap items-center gap-3">
-            <Button icon={FolderOpenIcon} variant="secondary" onClick={pickRoot}>
-              Choose folder…
-            </Button>
-            <input
-              value={form.masterLibraryRoot}
-              onChange={(e) => update("masterLibraryRoot", e.target.value)}
-              placeholder="No library folder chosen yet"
-              className={`min-w-0 flex-1 rounded-md border bg-zinc-950 px-3 py-1.5 font-mono text-[12px] text-zinc-200 outline-none focus:border-blue-500 ${
-                rootError ? "border-red-500/60" : "border-zinc-700"
-              }`}
-            />
-          </div>
+        <Card
+          title="Library"
+          subtitle="The library root is your Master Library — the catalog lives inside it and travels with your photos."
+        >
+          <dl className="grid gap-3 sm:grid-cols-2">
+            <div className="sm:col-span-2 flex items-start justify-between gap-3">
+              <dt className="flex items-center gap-1.5 text-[12px] text-zinc-500">
+                <CircleStackIcon className="h-4 w-4 flex-none" /> Location
+              </dt>
+              <dd className="min-w-0 break-all text-right font-mono text-[12px] text-zinc-300">
+                {current?.path ?? "—"}
+              </dd>
+            </div>
+            <AboutRow label="Name" value={current?.name ?? "—"} />
+            <AboutRow label="Schema version" value={current ? `v${current.schemaVersion}` : "—"} />
+            <AboutRow label="Opened by app" value={current?.appVersion ?? APP_VERSION} />
+          </dl>
           {rootError ? (
             <p className="mt-2 flex items-start gap-1.5 text-[12px] text-red-400">
               <ExclamationTriangleIcon className="mt-0.5 h-4 w-4 flex-none" />
               {rootError}
             </p>
-          ) : (
-            <p className="mt-2 text-[11px] text-zinc-500">
-              An empty root is allowed — you can choose the library later. Copy-mode imports require it.
-            </p>
-          )}
+          ) : null}
+
+          {recent.length > 1 ? (
+            <div className="mt-4 border-t border-zinc-800 pt-3">
+              <div className="mb-2 text-[12px] font-medium text-zinc-400">Recent libraries</div>
+              <ul className="divide-y divide-zinc-800">
+                {recent.map((r) => {
+                  const isCurrent = r.path === current?.path;
+                  return (
+                    <li key={r.path} className="flex items-center justify-between gap-3 py-2">
+                      <div className="min-w-0">
+                        <div className="truncate text-[12px] text-zinc-300">{r.name}</div>
+                        <div className="truncate font-mono text-[11px] text-zinc-500">{r.path}</div>
+                      </div>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        icon={ArrowsRightLeftIcon}
+                        disabled={isCurrent || switching}
+                        onClick={() => void switchLibrary(r.path)}
+                      >
+                        {isCurrent ? "Current" : "Switch"}
+                      </Button>
+                    </li>
+                  );
+                })}
+              </ul>
+              <p className="mt-2 text-[11px] text-zinc-500">
+                Switching updates your choice; quit and reopen PAIM to load the other library.
+              </p>
+            </div>
+          ) : null}
         </Card>
 
         <Card title="Import">

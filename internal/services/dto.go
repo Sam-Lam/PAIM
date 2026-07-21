@@ -4,6 +4,7 @@ import (
 	"time"
 
 	"github.com/autolinepro/paim/internal/domain"
+	"github.com/autolinepro/paim/internal/library"
 	"github.com/autolinepro/paim/internal/volumes"
 )
 
@@ -34,8 +35,11 @@ type AssetDTO struct {
 	DuplicateOfAssetID string     `json:"duplicateOfAssetId"`
 }
 
-// toAssetDTO maps a domain.Asset to its DTO.
-func toAssetDTO(a domain.Asset) AssetDTO {
+// toAssetDTO maps a domain.Asset to its DTO, surfacing the RESOLVED absolute
+// archive path (relative-to-root storage is an internal detail; the frontend and
+// any file-open action need a real path). root is the library root; an empty root
+// leaves stored paths as-is (dev/legacy absolute paths).
+func toAssetDTO(a domain.Asset, root string) AssetDTO {
 	dup := ""
 	if a.DuplicateOfAssetID != nil {
 		dup = *a.DuplicateOfAssetID
@@ -58,7 +62,7 @@ func toAssetDTO(a domain.Asset) AssetDTO {
 		DurationSeconds:    a.DurationSeconds,
 		CameraMake:         a.CameraMake,
 		CameraModel:        a.CameraModel,
-		CurrentArchivePath: a.CurrentArchivePath,
+		CurrentArchivePath: library.ResolvePath(root, a.CurrentArchivePath),
 		VerificationStatus: string(a.VerificationStatus),
 		BackupStatus:       string(a.BackupStatus),
 		DuplicateOfAssetID: dup,

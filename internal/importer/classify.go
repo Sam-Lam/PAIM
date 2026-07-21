@@ -6,6 +6,7 @@ import (
 
 	"github.com/autolinepro/paim/internal/domain"
 	"github.com/autolinepro/paim/internal/hashing"
+	"github.com/autolinepro/paim/internal/library"
 )
 
 // Disposition is the classification of a scanned file against the asset DB.
@@ -79,12 +80,13 @@ func (p *Pipeline) classify(ctx context.Context, path string, quickHash string) 
 			if a.CurrentArchivePath == "" {
 				continue
 			}
-			computed, herr := hashing.FullHash(ctx, a.CurrentArchivePath)
+			archiveAbs := library.ResolvePath(p.libraryRoot, a.CurrentArchivePath)
+			computed, herr := hashing.FullHash(ctx, archiveAbs)
 			if herr != nil {
 				// The archived file may be offline; skip this candidate rather than
 				// fail the whole classification.
 				p.log.Warn("classify: cannot backfill full hash of existing asset",
-					"assetId", a.ID, "path", a.CurrentArchivePath, "error", herr.Error())
+					"assetId", a.ID, "path", archiveAbs, "error", herr.Error())
 				continue
 			}
 			existingFull = computed
@@ -99,7 +101,7 @@ func (p *Pipeline) classify(ctx context.Context, path string, quickHash string) 
 		// Confirmed identical content. A match on either the original source path
 		// or the current archive path means this exact file is already registered
 		// (the latter covers re-scanning after an adopt+reorganize move).
-		if a.OriginalFullPath == path || a.CurrentArchivePath == path {
+		if a.OriginalFullPath == path || library.ResolvePath(p.libraryRoot, a.CurrentArchivePath) == path {
 			return classification{
 				Disposition:    DispositionAlreadyImported,
 				QuickHash:      quickHash,

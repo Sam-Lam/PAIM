@@ -12,6 +12,7 @@ import (
 	"github.com/autolinepro/paim/internal/archive"
 	"github.com/autolinepro/paim/internal/domain"
 	"github.com/autolinepro/paim/internal/hashing"
+	"github.com/autolinepro/paim/internal/library"
 	"github.com/autolinepro/paim/internal/mediatype"
 	"github.com/autolinepro/paim/internal/metadata"
 	"github.com/autolinepro/paim/internal/repo"
@@ -418,7 +419,7 @@ func (p *Pipeline) buildAsset(sessionID string, fi FileInfo, cls classification,
 		CaptureDate:        &cd,
 		ImportDate:         time.Now(),
 		MediaType:          mediatype.MediaTypeFor(fi.Ext),
-		CurrentArchivePath: archivePath,
+		CurrentArchivePath: library.RelativizePath(p.libraryRoot, archivePath),
 		VerificationStatus: domain.VerificationStatusVerified,
 		BackupStatus:       domain.BackupStatusNone,
 		DuplicateOfAssetID: duplicateOf,

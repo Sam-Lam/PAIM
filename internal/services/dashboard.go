@@ -14,11 +14,20 @@ import (
 // direct GORM read-model queries for aggregates the repos do not cover
 // (per-month growth, status counts, recent activity).
 type DashboardService struct {
+	gated
 	db      *gorm.DB
 	assets  *repo.AssetRepo
 	backups *repo.BackupRepo
 	sources *repo.SourceRepo
 	log     *slog.Logger
+}
+
+// Bind wires the DashboardService to an open library's catalog in place.
+func (s *DashboardService) Bind(core *AppCore) {
+	s.db = core.DB
+	s.assets = core.Assets
+	s.backups = core.Backups
+	s.sources = core.Sources
 }
 
 // NewDashboardService constructs a DashboardService.
@@ -64,6 +73,9 @@ type DashboardStats struct {
 
 // GetStats computes the dashboard metrics.
 func (s *DashboardService) GetStats(ctx context.Context) (DashboardStats, error) {
+	if err := s.guard(); err != nil {
+		return DashboardStats{}, err
+	}
 	var out DashboardStats
 
 	// Totals by media type.

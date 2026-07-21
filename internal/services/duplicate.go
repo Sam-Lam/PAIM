@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/autolinepro/paim/internal/domain"
+	"github.com/autolinepro/paim/internal/library"
 	"github.com/autolinepro/paim/internal/repo"
 	"gorm.io/gorm"
 )
@@ -26,10 +27,23 @@ const (
 // ConfirmDialog) before it is invoked; the service performs the action without
 // re-prompting.
 type DuplicateService struct {
+	gated
 	db       *gorm.DB
 	assets   *repo.AssetRepo
 	settings *repo.SettingsRepo
 	log      *slog.Logger
+	// root is the portable-library root used to resolve stored (relative) archive
+	// paths to absolute for file operations and to relativize new paths for
+	// storage. Empty (tests/dev) leaves absolute paths untouched.
+	root string
+}
+
+// Bind wires the DuplicateService to an open library's catalog in place.
+func (s *DuplicateService) Bind(core *AppCore) {
+	s.db = core.DB
+	s.assets = core.Assets
+	s.settings = core.Settings
+	s.root = core.Root
 }
 
 // NewDuplicateService constructs a DuplicateService. The db handle is used only
@@ -50,6 +64,9 @@ type DuplicatePairDTO struct {
 
 // ListDuplicates returns a page of duplicate/original pairs (newest first).
 func (s *DuplicateService) ListDuplicates(ctx context.Context, page, pageSize int) (PageResult[DuplicatePairDTO], error) {
+	if err := s.guard(); err != nil {
+		return PageResult[DuplicatePairDTO]{}, err
+	}
 	limit, offset := normalizePage(page, pageSize)
 	pairs, err := s.assets.ListDuplicates(ctx, repo.Page{Limit: limit, Offset: offset})
 	if err != nil {
@@ -58,8 +75,8 @@ func (s *DuplicateService) ListDuplicates(ctx context.Context, page, pageSize in
 	items := make([]DuplicatePairDTO, 0, len(pairs))
 	for _, p := range pairs {
 		items = append(items, DuplicatePairDTO{
-			Duplicate: toAssetDTO(p.Duplicate),
-			Original:  toAssetDTO(p.Original),
+			Duplicate: toAssetDTO(p.Duplicate, s.root),
+			Original:  toAssetDTO(p.Original, s.root),
 		})
 	}
 	total, err := s.countDuplicates(ctx)
@@ -99,16 +116,22 @@ func (s *DuplicateService) countDuplicates(ctx context.Context) (int64, error) {
 //
 // destFolder is used only by the move action.
 func (s *DuplicateService) ResolveDuplicate(ctx context.Context, duplicateAssetID, action, destFolder string) error {
+	if err := s.guard(); err != nil {
+		return err
+	}
 	asset, err := s.assets.GetByID(ctx, duplicateAssetID)
 	if err != nil {
 		return err
 	}
+	// Stored paths are relative to the library root; resolve to absolute for the
+	// filesystem operations below.
+	archiveAbs := library.ResolvePath(s.root, asset.CurrentArchivePath)
 
 	switch action {
 	case DuplicateActionDelete:
-		return s.resolveDelete(ctx, duplicateAssetID, asset.CurrentArchivePath)
+		return s.resolveDelete(ctx, duplicateAssetID, archiveAbs)
 	case DuplicateActionMove:
-		return s.resolveMove(ctx, duplicateAssetID, asset.CurrentArchivePath, destFolder)
+		return s.resolveMove(ctx, duplicateAssetID, archiveAbs, destFolder)
 	case DuplicateActionIgnore:
 		if err := s.assets.MarkDuplicateOf(ctx, duplicateAssetID, ""); err != nil {
 			return err
@@ -139,11 +162,12 @@ func (s *DuplicateService) resolveDelete(ctx context.Context, assetID, archivePa
 		s.log.Info("duplicate soft-deleted (no physical file)", "assetId", assetID)
 		return nil
 	}
-	root, err := s.masterRoot(ctx)
-	if err != nil {
-		return err
+	trashRoot := s.root
+	if trashRoot == "" {
+		if root, err := s.masterRoot(ctx); err == nil {
+			trashRoot = root
+		}
 	}
-	trashRoot := root
 	if trashRoot == "" {
 		trashRoot = filepath.Dir(archivePath)
 	}
@@ -151,9 +175,9 @@ func (s *DuplicateService) resolveDelete(ctx context.Context, assetID, archivePa
 	if err != nil {
 		return err
 	}
-	// Record the new (trash) location together with the soft-delete so the file
-	// can be found for recovery.
-	if err := s.assets.SoftDeleteWithPath(ctx, assetID, trashed); err != nil {
+	// Record the new (trash) location (relativized to the root) together with the
+	// soft-delete so the file can be found for recovery.
+	if err := s.assets.SoftDeleteWithPath(ctx, assetID, library.RelativizePath(s.root, trashed)); err != nil {
 		return err
 	}
 	s.log.Info("duplicate deleted (file moved to trash)", "assetId", assetID, "trash", trashed)
@@ -211,7 +235,8 @@ func (s *DuplicateService) resolveMove(ctx context.Context, assetID, archivePath
 
 	// Update the recorded path immediately after the file op, retrying transient
 	// DB errors. On permanent failure, roll the file back so disk and DB agree.
-	if err := s.updateArchivePathWithRetry(ctx, assetID, dst); err != nil {
+	// The stored path is relativized to the library root.
+	if err := s.updateArchivePathWithRetry(ctx, assetID, library.RelativizePath(s.root, dst)); err != nil {
 		if uerr := undo(); uerr != nil {
 			s.log.Error("duplicate move: DB update failed AND file rollback failed; manual recovery needed",
 				"assetId", assetID, "from", archivePath, "to", dst, "dbError", err.Error(), "rollbackError", uerr.Error())

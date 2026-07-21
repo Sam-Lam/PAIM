@@ -41,6 +41,7 @@ import (
 
 	"github.com/autolinepro/paim/internal/domain"
 	"github.com/autolinepro/paim/internal/hashing"
+	"github.com/autolinepro/paim/internal/library"
 	"github.com/autolinepro/paim/internal/mediatype"
 )
 
@@ -89,6 +90,11 @@ type Analyzer struct {
 	quickHash QuickHashFn
 	fullHash  FullHashFn
 	log       *slog.Logger
+
+	// Root is the portable-library root used to resolve assets' relative
+	// CurrentArchivePath values to absolute paths before reading/stat'ing the
+	// archived files. Empty leaves stored paths as-is (dev/legacy absolute paths).
+	Root string
 }
 
 // NewAnalyzer constructs an Analyzer. Nil hashing funcs fall back to the hashing
@@ -340,12 +346,13 @@ func (a *Analyzer) matchArchive(ctx context.Context, candidates []domain.Asset, 
 		cFull := c.FullHash
 		if cFull == "" {
 			// Confirm by reading the archived file (read-only; no DB backfill).
-			computed, err := a.fullHash(ctx, c.CurrentArchivePath)
+			archiveAbs := library.ResolvePath(a.Root, c.CurrentArchivePath)
+			computed, err := a.fullHash(ctx, archiveAbs)
 			if err != nil {
 				// Cannot confirm this candidate; skip it (its inconsistency, if any,
 				// is captured when a match is finally made and stat'd).
 				a.log.Warn("cleanup: cannot read archived file to confirm match",
-					"asset", c.ID, "path", c.CurrentArchivePath, "error", err)
+					"asset", c.ID, "path", archiveAbs, "error", err)
 				continue
 			}
 			cFull = computed
@@ -372,9 +379,10 @@ func (a *Analyzer) classifyMatched(report *Report, path string, size int64, matc
 
 	// already_archived. Verify the archived copy actually exists on disk; a
 	// missing copy is a DB/filesystem inconsistency and blocks deletion.
-	if _, err := os.Stat(matched.CurrentArchivePath); err != nil {
+	archiveAbs := library.ResolvePath(a.Root, matched.CurrentArchivePath)
+	if _, err := os.Stat(archiveAbs); err != nil {
 		a.log.Warn("cleanup: archived copy missing on disk",
-			"asset", matched.ID, "path", matched.CurrentArchivePath, "error", err)
+			"asset", matched.ID, "path", archiveAbs, "error", err)
 		report.DBInconsistencies++
 	}
 	if matched.VerificationStatus != domain.VerificationStatusVerified {

@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/autolinepro/paim/internal/domain"
+	"github.com/autolinepro/paim/internal/library"
 	"github.com/autolinepro/paim/internal/repo"
 	"gorm.io/gorm"
 )
@@ -330,18 +331,19 @@ func (m *Manager) process(ctx context.Context, job *domain.BackupJob) (terminal 
 	}
 
 	remoteRel := m.remoteRelPath(asset)
+	localPath := library.ResolvePath(m.opts.LibraryRoot, asset.CurrentArchivePath)
 	progress := func(done, total int64) {
 		if m.opts.ProgressFn != nil {
 			m.opts.ProgressFn(job.ID, done, total)
 		}
 	}
 
-	if err := plugin.Upload(ctx, asset.CurrentArchivePath, remoteRel, progress); err != nil {
+	if err := plugin.Upload(ctx, localPath, remoteRel, progress); err != nil {
 		return false, fmt.Errorf("upload asset %q to %q: %w", job.AssetID, remoteRel, err)
 	}
 
 	if caps.SupportsVerify {
-		ok, err := plugin.Verify(ctx, asset.CurrentArchivePath, remoteRel)
+		ok, err := plugin.Verify(ctx, localPath, remoteRel)
 		if err != nil {
 			return false, fmt.Errorf("verify asset %q at %q: %w", job.AssetID, remoteRel, err)
 		}
@@ -405,10 +407,16 @@ func (m *Manager) pluginFor(ctx context.Context, provider *domain.BackupProvider
 	return p, nil
 }
 
-// remoteRelPath computes the destination-relative path for an asset. See
-// Options.LibraryRoot.
+// remoteRelPath computes the destination-relative path for an asset so backups
+// mirror the library tree. Portable-library archive paths are stored relative to
+// the root already, so they ARE the remote-relative path (normalized to forward
+// slashes). A legacy absolute path is made relative to LibraryRoot when possible,
+// otherwise reduced to a leading-separator-stripped clean path.
 func (m *Manager) remoteRelPath(asset *domain.Asset) string {
 	p := asset.CurrentArchivePath
+	if !filepath.IsAbs(p) {
+		return filepath.ToSlash(filepath.Clean(p))
+	}
 	if m.opts.LibraryRoot != "" {
 		if rel, err := filepath.Rel(m.opts.LibraryRoot, p); err == nil && !strings.HasPrefix(rel, "..") {
 			return filepath.ToSlash(rel)

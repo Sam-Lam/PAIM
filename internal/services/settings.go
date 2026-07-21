@@ -76,8 +76,14 @@ func LoadSettings(ctx context.Context, settings *repo.SettingsRepo) (Settings, e
 
 // SettingsService reads and writes application settings.
 type SettingsService struct {
+	gated
 	settings          *repo.SettingsRepo
 	metadataAvailable bool
+}
+
+// Bind wires the SettingsService to an open library's settings repo in place.
+func (s *SettingsService) Bind(core *AppCore) {
+	s.settings = core.Settings
 }
 
 // NewSettingsService constructs a SettingsService. metadataAvailable reflects the
@@ -89,6 +95,9 @@ func NewSettingsService(settings *repo.SettingsRepo, metadataAvailable bool) *Se
 // GetAll returns the typed settings with defaults applied and the read-only
 // MetadataAvailable flag populated.
 func (s *SettingsService) GetAll(ctx context.Context) (Settings, error) {
+	if err := s.guard(); err != nil {
+		return Settings{}, err
+	}
 	out, err := LoadSettings(ctx, s.settings)
 	if err != nil {
 		return Settings{}, err
@@ -103,6 +112,9 @@ func (s *SettingsService) GetAll(ctx context.Context) (Settings, error) {
 // and ignored. Changes to worker/retry/concurrency counts take effect on the
 // next application start (the running Manager/Pipeline are configured at boot).
 func (s *SettingsService) Update(ctx context.Context, in Settings) (Settings, error) {
+	if err := s.guard(); err != nil {
+		return Settings{}, err
+	}
 	if in.MasterLibraryRoot != "" {
 		info, err := os.Stat(in.MasterLibraryRoot)
 		if err != nil {

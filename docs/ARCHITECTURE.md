@@ -165,6 +165,69 @@ writes. Initialize registers existing files as archived assets **without copying
   (initialize)" — with explanatory copy; adopt mode shows a distinct badge in Import
   History.
 
+## Portable libraries (library-on-drive) — internal/library, internal/db
+
+The catalog travels WITH the photos, Lightroom-catalog style, so the same library can be
+used from any Mac the drive is plugged into (one machine at a time).
+
+- A **library** is a folder (the Master Library root). Its catalog lives inside it at
+  `<root>/.paim/paim.db`. Choosing a library and choosing the master root are the same act;
+  the legacy MasterLibraryRoot setting becomes derived (= the library root) and read-only.
+- **Per-machine config** (NOT in the library): `~/Library/Application Support/PAIM/config.json`
+  — `{ lastLibrary, recentLibraries: [{path, name, lastOpenedAt}] }`. Atomic write
+  (temp+rename). The library DB stays machine-agnostic.
+- **Relative paths**: `Asset.CurrentArchivePath` is stored RELATIVE to the library root
+  (forward slashes). A resolution helper joins it with the current root at runtime, so the
+  catalog survives volume renames and `/Volumes/Name 1` mount fallbacks. Backup provider
+  roots may point anywhere and stay absolute. Trash moves go to `<root>/.paim-trash/` as
+  before (already root-relative in behavior).
+- **Single-writer lock**: `<root>/.paim/lock` created with O_CREATE|O_EXCL, containing JSON
+  `{hostname, pid, appVersion, acquiredAt}` and fsync'd; mtime heartbeat every 30s while
+  open; removed on graceful shutdown. On open: existing lock from same host with a dead
+  pid → reclaim (log it); same host live pid → refuse ("already open in another PAIM");
+  other hostname → refuse with the hostname and last-heartbeat age, offering a typed-
+  confirmation Force Open in the UI (for the crashed-at-the-office case). Never silently
+  double-open.
+- **Startup flow**: `main.go` reads config; if lastLibrary exists and locks cleanly, open
+  it. Otherwise the app still launches into a **Welcome state**: every service is gated
+  behind a LibraryGate that returns a typed "no library open" error, and the frontend
+  shows a Welcome screen (Create new library / Open existing / Migrate legacy catalog)
+  driven by a new LibraryService (Current, Recent, Create(path), Open(path),
+  ForceOpen(path), MigrateLegacy(targetRoot)). Create/Open at Welcome time constructs the
+  full object graph in place (no restart needed for the cold-start case). SWITCHING away
+  from an already-open library updates config and prompts for app relaunch (services
+  cannot be re-registered at runtime in Wails; the relaunch prompt is explicit, never
+  silent).
+- **Legacy migration**: if the per-machine legacy DB (`~/Library/Application Support/
+  PAIM/paim.db`) exists and no library is configured, Welcome offers migration: copy the
+  DB into `<chosen root>/.paim/paim.db` (copy + verify + keep original renamed
+  `paim.db.pre-library-backup`), then convert stored absolute archive paths under the old
+  master root to relative (paths outside it are left absolute and reported).
+- exiftool and the PAIM app must be installed on each machine; the library carries
+  everything else.
+
+## Schema versioning & migrations — internal/db
+
+The database records what wrote it, and upgrades are explicit, ordered, and backed up.
+
+- Table `library_meta` (single row): SchemaVersion (int), CreatedByAppVersion,
+  CreatedAt, LastOpenedByAppVersion, LastOpenedAt. Updated on every successful open.
+- App version: `version.Version` const in a tiny `internal/version` package (v0.1.0 now),
+  also shown in Settings → About and stamped into the lock file.
+- **Migration framework** in internal/db: `[]Migration{ID int, Description string,
+  Run func(tx *gorm.DB) error}`. Baseline migration 1 = today's schema (AutoMigrate +
+  indexes + meta row). Open flow: read SchemaVersion; if it EXCEEDS the app's latest
+  known migration → REFUSE to open with a clear error ("this library was written by a
+  newer version of PAIM — update the app"); never attempt forward-compat writes. If
+  BEHIND → before touching anything, copy the DB file (plus -wal/-shm after a
+  wal_checkpoint) to `<root>/.paim/backups/paim-v<N>-<yyyymmdd-hhmmss>.db`, then run each
+  pending migration in its own transaction, bumping SchemaVersion as each commits.
+  A failed migration rolls back its transaction and aborts the open with the backup path
+  in the error. AutoMigrate remains as a safety net for additive drift but migrations are
+  authoritative; keep old library backups (never auto-delete).
+- The relative-path conversion for portable libraries is Migration 2 — the first real
+  exercise of the framework.
+
 ## Archive layout (internal/archive)
 
 Default (user-configurable via Settings): `<MasterLibrary>/YYYY/YYYY-MM-DD Event/` with RAW

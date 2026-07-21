@@ -16,9 +16,15 @@ import (
 // validate a provider's config via a plugin Initialize probe and to enumerate
 // available plugins with their capabilities.
 type ProviderService struct {
+	gated
 	db       *gorm.DB
 	registry *backup.Registry
 	log      *slog.Logger
+}
+
+// Bind wires the ProviderService to an open library's catalog in place.
+func (s *ProviderService) Bind(core *AppCore) {
+	s.db = core.DB
 }
 
 // NewProviderService constructs a ProviderService.
@@ -52,6 +58,9 @@ type PluginDTO struct {
 
 // List returns every configured provider (including disabled ones).
 func (s *ProviderService) List(ctx context.Context) ([]ProviderDTO, error) {
+	if err := s.guard(); err != nil {
+		return nil, err
+	}
 	var rows []domain.BackupProvider
 	if err := s.db.WithContext(ctx).Order("created_at ASC, id ASC").Find(&rows).Error; err != nil {
 		return nil, fmt.Errorf("services: list providers: %w", err)
@@ -66,6 +75,9 @@ func (s *ProviderService) List(ctx context.Context) ([]ProviderDTO, error) {
 // Add validates configJSON against the named plugin (via an Initialize probe)
 // and, on success, creates an enabled provider.
 func (s *ProviderService) Add(ctx context.Context, pluginName, configJSON string) (ProviderDTO, error) {
+	if err := s.guard(); err != nil {
+		return ProviderDTO{}, err
+	}
 	if err := s.probe(ctx, pluginName, configJSON); err != nil {
 		return ProviderDTO{}, err
 	}
@@ -80,6 +92,9 @@ func (s *ProviderService) Add(ctx context.Context, pluginName, configJSON string
 // Update revalidates configJSON against the provider's plugin and persists the
 // new config and enabled flag.
 func (s *ProviderService) Update(ctx context.Context, id, configJSON string, enabled bool) (ProviderDTO, error) {
+	if err := s.guard(); err != nil {
+		return ProviderDTO{}, err
+	}
 	var p domain.BackupProvider
 	if err := s.db.WithContext(ctx).First(&p, "id = ?", id).Error; err != nil {
 		return ProviderDTO{}, fmt.Errorf("services: get provider %q: %w", id, err)

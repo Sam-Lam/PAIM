@@ -56,6 +56,7 @@ func (a assetLookupAdapter) FindByQuickHash(ctx context.Context, quickHash strin
 // SourcesService lists volumes, identifies import sources, and evaluates
 // safe-to-erase.
 type SourcesService struct {
+	gated
 	collector  *volumes.Collector
 	identifier *source.Identifier
 	sources    *repo.SourceRepo
@@ -63,6 +64,14 @@ type SourcesService struct {
 	watcher    *volumes.Watcher
 	emitter    Emitter
 	log        *slog.Logger
+}
+
+// Bind wires the SourcesService to an open library's identifier and repos in
+// place.
+func (s *SourcesService) Bind(core *AppCore) {
+	s.identifier = core.Identifier
+	s.sources = core.Sources
+	s.assets = core.Assets
 }
 
 // NewSourcesService constructs a SourcesService.
@@ -108,6 +117,9 @@ type MatchDTO struct {
 // source (creating a new record or updating the matched one and its LastSeen),
 // emits source:identified, and returns the match with confidence and reasons.
 func (s *SourcesService) IdentifyVolume(ctx context.Context, mountPoint string) (MatchDTO, error) {
+	if err := s.guard(); err != nil {
+		return MatchDTO{}, err
+	}
 	match, err := s.identifier.Identify(ctx, mountPoint)
 	if err != nil {
 		return MatchDTO{}, err
@@ -146,6 +158,9 @@ func (s *SourcesService) IdentifyVolume(ctx context.Context, mountPoint string) 
 
 // ListKnownSources returns the most recently seen persisted sources.
 func (s *SourcesService) ListKnownSources(ctx context.Context) ([]SourceDTO, error) {
+	if err := s.guard(); err != nil {
+		return nil, err
+	}
 	rows, err := s.sources.ListRecent(ctx, 200)
 	if err != nil {
 		return nil, err
@@ -173,6 +188,9 @@ type SafeToEraseDTO struct {
 // to erase, persists the conclusion on the source (when sourceID is set), and
 // returns the report.
 func (s *SourcesService) EvaluateSafeToErase(ctx context.Context, sourceID, mountPoint string) (SafeToEraseDTO, error) {
+	if err := s.guard(); err != nil {
+		return SafeToEraseDTO{}, err
+	}
 	report, err := s.identifier.EvaluateSafeToErase(ctx, sourceID, mountPoint, assetLookupAdapter{assets: s.assets}, mediatype.IsMedia)
 	if err != nil {
 		return SafeToEraseDTO{}, err

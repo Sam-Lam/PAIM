@@ -18,10 +18,17 @@ import (
 // LogService searches, enumerates, and exports persisted log entries for the
 // Logs page.
 type LogService struct {
+	gated
 	db     *gorm.DB
 	logs   *repo.LogRepo
 	dialog Dialoger
 	log    *slog.Logger
+}
+
+// Bind wires the LogService to an open library's catalog in place.
+func (s *LogService) Bind(core *AppCore) {
+	s.db = core.DB
+	s.logs = core.Logs
 }
 
 // NewLogService constructs a LogService. The db handle backs the distinct
@@ -58,6 +65,9 @@ func buildQuery(query, level, subsystem, fromISO, toISO string, page, pageSize i
 
 // Search returns a page of log entries matching the filters, newest first.
 func (s *LogService) Search(ctx context.Context, query, level, subsystem, fromISO, toISO string, page, pageSize int) (PageResult[LogEntryDTO], error) {
+	if err := s.guard(); err != nil {
+		return PageResult[LogEntryDTO]{}, err
+	}
 	q, err := buildQuery(query, level, subsystem, fromISO, toISO, page, pageSize)
 	if err != nil {
 		return PageResult[LogEntryDTO]{}, err
@@ -75,6 +85,9 @@ func (s *LogService) Search(ctx context.Context, query, level, subsystem, fromIS
 
 // Subsystems returns the distinct subsystem names present in the log, sorted.
 func (s *LogService) Subsystems(ctx context.Context) ([]string, error) {
+	if err := s.guard(); err != nil {
+		return nil, err
+	}
 	var names []string
 	err := s.db.WithContext(ctx).
 		Model(&domain.LogEntry{}).
@@ -97,6 +110,9 @@ func (s *LogService) Subsystems(ctx context.Context) ([]string, error) {
 // user-chosen file in json or csv format via a native save dialog and returns
 // the written path. It returns "" when the user cancels the dialog.
 func (s *LogService) Export(ctx context.Context, query, level, subsystem, fromISO, toISO, format string) (string, error) {
+	if err := s.guard(); err != nil {
+		return "", err
+	}
 	q, err := buildQuery(query, level, subsystem, fromISO, toISO, 0, 0)
 	if err != nil {
 		return "", err

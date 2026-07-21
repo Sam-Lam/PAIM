@@ -1,5 +1,6 @@
 import { createHashHistory, createRoute, createRouter } from "@tanstack/react-router";
 import { rootRoute } from "./routes/root";
+import { WelcomePage } from "./routes/welcome";
 import { DashboardPage } from "./routes/dashboard";
 import { ImportPage } from "./routes/import";
 import { SourcesPage } from "./routes/sources";
@@ -10,6 +11,12 @@ import { BackupQueuePage } from "./routes/backup-queue";
 import { ProvidersPage } from "./routes/providers";
 import { LogsPage } from "./routes/logs";
 import { SettingsPage } from "./routes/settings";
+
+const welcomeRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/welcome",
+  component: WelcomePage,
+});
 
 const dashboardRoute = createRoute({
   getParentRoute: () => rootRoute,
@@ -76,6 +83,7 @@ const settingsRoute = createRoute({
 });
 
 const routeTree = rootRoute.addChildren([
+  welcomeRoute,
   dashboardRoute,
   importRoute,
   sourcesRoute,

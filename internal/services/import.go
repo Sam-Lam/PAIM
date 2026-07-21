@@ -33,6 +33,7 @@ type scanEntry struct {
 // ImportService drives the scan -> dry-run -> import workflow. It enforces a
 // single active import: StartImport and ResumeSession reject concurrent starts.
 type ImportService struct {
+	gated
 	pipeline *importer.Pipeline
 	sessions *repo.SessionRepo
 	dialog   Dialoger
@@ -62,6 +63,13 @@ func NewImportService(pipeline *importer.Pipeline, sessions *repo.SessionRepo, s
 		log:      logger.With(slog.String("subsystem", "import")),
 		cache:    make(map[string]scanEntry),
 	}
+}
+
+// Bind wires the ImportService to an open library's importer and repos in place.
+func (s *ImportService) Bind(core *AppCore) {
+	s.pipeline = core.Pipeline
+	s.sessions = core.Sessions
+	s.settings = core.Settings
 }
 
 // ScanSummary is the provisional result of scanning a source tree, before any
@@ -124,6 +132,9 @@ func (s *ImportService) PickFolder(ctx context.Context) (string, error) {
 // ScanSource walks root, caches the scan, and returns provisional counts (no
 // hashing or duplicate detection yet).
 func (s *ImportService) ScanSource(ctx context.Context, root string) (ScanSummary, error) {
+	if err := s.guard(); err != nil {
+		return ScanSummary{}, err
+	}
 	if root == "" {
 		return ScanSummary{}, fmt.Errorf("services: scan source: empty root")
 	}
@@ -157,6 +168,9 @@ func (s *ImportService) ScanSource(ctx context.Context, root string) (ScanSummar
 // the mode-aware prediction. It reuses a cached scan for root when present and
 // caches the resulting report so StartImport can reuse it.
 func (s *ImportService) DryRun(ctx context.Context, root string, opts ImportOptions) (DryRunReportDTO, error) {
+	if err := s.guard(); err != nil {
+		return DryRunReportDTO{}, err
+	}
 	absRoot, err := filepath.Abs(root)
 	if err != nil {
 		return DryRunReportDTO{}, fmt.Errorf("services: dry run: resolve %q: %w", root, err)
@@ -211,6 +225,9 @@ func (s *ImportService) DryRun(ctx context.Context, root string, opts ImportOpti
 // cheap relative to the copy); the dry-run cache is used to validate the request
 // and to power instant UI stats, not to seed hashes.
 func (s *ImportService) StartImport(ctx context.Context, opts ImportOptions) (StartImportResult, error) {
+	if err := s.guard(); err != nil {
+		return StartImportResult{}, err
+	}
 	iopts, err := s.buildOptions(ctx, opts, opts.Root)
 	if err != nil {
 		return StartImportResult{}, err
@@ -238,6 +255,9 @@ func (s *ImportService) StartImport(ctx context.Context, opts ImportOptions) (St
 // background goroutine identical to StartImport. Only one import may run at a
 // time.
 func (s *ImportService) ResumeSession(ctx context.Context, sessionID string) (StartImportResult, error) {
+	if err := s.guard(); err != nil {
+		return StartImportResult{}, err
+	}
 	session, err := s.sessions.GetByID(ctx, sessionID)
 	if err != nil {
 		return StartImportResult{}, err

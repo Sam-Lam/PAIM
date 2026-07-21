@@ -16,7 +16,7 @@ func TestToAssetDTODuplicatePointer(t *testing.T) {
 		BackupStatus:       domain.BackupStatusComplete,
 		DuplicateOfAssetID: &orig,
 	}
-	dto := toAssetDTO(a)
+	dto := toAssetDTO(a, "")
 	if dto.ID != "dup-1" || dto.MediaType != "photo" {
 		t.Fatalf("unexpected mapping: %+v", dto)
 	}
@@ -25,7 +25,7 @@ func TestToAssetDTODuplicatePointer(t *testing.T) {
 	}
 
 	a.DuplicateOfAssetID = nil
-	if got := toAssetDTO(a).DuplicateOfAssetID; got != "" {
+	if got := toAssetDTO(a, "").DuplicateOfAssetID; got != "" {
 		t.Fatalf("nil duplicate should map to empty string, got %q", got)
 	}
 }
