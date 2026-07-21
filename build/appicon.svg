@@ -51,37 +51,37 @@
   <!-- ===== Vault door ===== -->
   <g filter="url(#softshadow)">
     <!-- outer steel ring -->
-    <circle cx="512" cy="452" r="266" fill="url(#ring)"/>
+    <circle cx="512" cy="512" r="266" fill="url(#ring)"/>
     <!-- ring inner shadow line -->
-    <circle cx="512" cy="452" r="238" fill="#1d2440"/>
+    <circle cx="512" cy="512" r="238" fill="#1d2440"/>
     <!-- door face -->
-    <circle cx="512" cy="452" r="228" fill="url(#face)"/>
+    <circle cx="512" cy="512" r="228" fill="url(#face)"/>
   </g>
 
   <!-- rim bolts -->
   <g fill="#dde2ee">
-    <circle cx="512" cy="200" r="13"/>
-    <circle cx="690" cy="274" r="13"/>
-    <circle cx="764" cy="452" r="13"/>
-    <circle cx="690" cy="630" r="13"/>
-    <circle cx="512" cy="704" r="13"/>
-    <circle cx="334" cy="630" r="13"/>
-    <circle cx="260" cy="452" r="13"/>
-    <circle cx="334" cy="274" r="13"/>
+    <circle cx="512" cy="260" r="13"/>
+    <circle cx="690" cy="334" r="13"/>
+    <circle cx="764" cy="512" r="13"/>
+    <circle cx="690" cy="690" r="13"/>
+    <circle cx="512" cy="764" r="13"/>
+    <circle cx="334" cy="690" r="13"/>
+    <circle cx="260" cy="512" r="13"/>
+    <circle cx="334" cy="334" r="13"/>
   </g>
   <g fill="#20263f" opacity="0.55">
-    <circle cx="512" cy="205" r="5"/>
-    <circle cx="686" cy="278" r="5"/>
-    <circle cx="759" cy="452" r="5"/>
-    <circle cx="686" cy="626" r="5"/>
-    <circle cx="512" cy="699" r="5"/>
-    <circle cx="338" cy="626" r="5"/>
-    <circle cx="265" cy="452" r="5"/>
-    <circle cx="338" cy="278" r="5"/>
+    <circle cx="512" cy="265" r="5"/>
+    <circle cx="686" cy="338" r="5"/>
+    <circle cx="759" cy="512" r="5"/>
+    <circle cx="686" cy="686" r="5"/>
+    <circle cx="512" cy="759" r="5"/>
+    <circle cx="338" cy="686" r="5"/>
+    <circle cx="265" cy="512" r="5"/>
+    <circle cx="338" cy="338" r="5"/>
   </g>
 
   <!-- spoke wheel -->
-  <g transform="translate(512 452) rotate(22.5)">
+  <g transform="translate(512 512) rotate(22.5)">
     <g stroke="url(#spoke)" stroke-width="34" stroke-linecap="round">
       <line x1="0" y1="-150" x2="0" y2="150"/>
       <line x1="-150" y1="0" x2="150" y2="0"/>
@@ -95,10 +95,10 @@
   </g>
 
   <!-- glass highlight over door -->
-  <path d="M300 300 A 266 266 0 0 1 724 300 L 512 452 Z" fill="#ffffff" opacity="0.07"/>
+  <path d="M300 360 A 266 266 0 0 1 724 360 L 512 512 Z" fill="#ffffff" opacity="0.07"/>
 
   <!-- ===== Photo card in front ===== -->
-  <g transform="translate(628 668) rotate(-9)" filter="url(#cardshadow)">
+  <g transform="translate(628 692) rotate(-9)" filter="url(#cardshadow)">
     <!-- white frame -->
     <rect x="-192" y="-152" width="384" height="304" rx="34" fill="#f4f6fb"/>
     <rect x="-192" y="-152" width="384" height="304" rx="34" fill="none" stroke="#c9cfdd" stroke-width="2"/>
