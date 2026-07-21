@@ -7,7 +7,9 @@ tracked forever in a local SQLite database, get backed up, and that cards, drive
 stray folders can be erased with confidence instead of anxiety.
 
 Built with Go and Wails v3 (React + TypeScript frontend). No Electron. No cloud account.
-Your catalog is a SQLite file on your own disk.
+Your catalog is a SQLite file that lives inside your library folder and travels with it.
+
+![Dashboard](docs/screenshots/dashboard.png)
 
 ## The promise
 
@@ -56,6 +58,19 @@ BLAKE3 quick-hash → duplicate check → copy to .paim-partial → fsync file +
   source and session, where is it now, is it verified, is it backed up, what duplicates it.
 - **Everything logged** — every copy, hash, verification, duplicate decision, backup, and
   failure lands in a searchable, exportable log.
+
+## Screenshots
+
+| | |
+|---|---|
+| ![Welcome](docs/screenshots/welcome.png) | ![Import](docs/screenshots/import.png) |
+| Welcome — open, create, or migrate a library | Import — copy mode or adopt-in-place, with dry run |
+| ![Sources](docs/screenshots/sources.png) | ![Import History](docs/screenshots/history.png) |
+| Sources — volume identification with reasons | Import History — every session, expandable events |
+| ![Duplicate Manager](docs/screenshots/duplicates.png) | ![Backup Queue](docs/screenshots/backup-queue.png) |
+| Duplicate Manager — hash-confirmed pairs, safe actions | Backup Queue — live progress, retries, pause/resume |
+
+More in [`docs/screenshots/`](docs/screenshots/): Cleanup Assistant, Providers, Logs, Settings.
 
 ## Archive layout
 
