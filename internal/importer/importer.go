@@ -69,6 +69,12 @@ const (
 	// ModeAdopt registers existing files in place without copying (Initialize),
 	// computing a full BLAKE3 integrity baseline instead of a copy-compare.
 	ModeAdopt Mode = "adopt"
+	// ModeReorganize is the notes marker for a standalone reorganize-maintenance
+	// session (RunReorganize). It never drives the copy/adopt per-file loop; it
+	// exists so Import History can badge the run distinctly and so a resume of a
+	// reorganize session (which records no source root) refuses cleanly rather
+	// than misinterpreting it as an import.
+	ModeReorganize Mode = "reorganize"
 )
 
 // BackupEnqueuer enqueues backup work for a freshly recorded asset. It is a
@@ -128,10 +134,11 @@ func (o Options) mode() Mode {
 type Phase string
 
 const (
-	PhaseScanning  Phase = "scanning"
-	PhaseHashing   Phase = "hashing"
-	PhaseImporting Phase = "importing"
-	PhaseDone      Phase = "done"
+	PhaseScanning     Phase = "scanning"
+	PhaseHashing      Phase = "hashing"
+	PhaseImporting    Phase = "importing"
+	PhaseReorganizing Phase = "reorganizing"
+	PhaseDone         Phase = "done"
 )
 
 // Progress is a snapshot of a long-running operation. The caller is responsible

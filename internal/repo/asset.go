@@ -77,6 +77,32 @@ func (r *AssetRepo) UpdateFullHash(ctx context.Context, id, fullHash string) err
 	return r.updateColumns(ctx, id, map[string]any{"full_hash": fullHash})
 }
 
+// UpdateArchivePath records a new current archive path for an asset (used by the
+// reorganize maintenance operation after a same-volume move). It is
+// transaction-aware via WithTx so the path update and session counter can commit
+// atomically.
+func (r *AssetRepo) UpdateArchivePath(ctx context.Context, id, archivePath string) error {
+	return r.updateColumns(ctx, id, map[string]any{"current_archive_path": archivePath})
+}
+
+// ListActiveArchived returns every non-deleted, verified asset that has a
+// recorded archive path (ordered by that path). It intentionally INCLUDES assets
+// flagged as duplicates that were adopted in place (they carry a path): the
+// reorganize planner reports them as skipped rather than moving them. Copy-mode
+// duplicate placeholders (empty path) are excluded — there is nothing to move.
+func (r *AssetRepo) ListActiveArchived(ctx context.Context) ([]domain.Asset, error) {
+	var assets []domain.Asset
+	err := r.db.WithContext(ctx).
+		Where("verification_status = ?", domain.VerificationStatusVerified).
+		Where("current_archive_path <> ''").
+		Order("current_archive_path").
+		Find(&assets).Error
+	if err != nil {
+		return nil, fmt.Errorf("repo: list active archived assets: %w", err)
+	}
+	return assets, nil
+}
+
 // UpdateVerificationStatus sets the verification status of an asset.
 func (r *AssetRepo) UpdateVerificationStatus(ctx context.Context, id string, status domain.VerificationStatus) error {
 	return r.updateColumns(ctx, id, map[string]any{"verification_status": status})

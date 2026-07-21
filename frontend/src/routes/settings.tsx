@@ -1,15 +1,30 @@
 import { useEffect, useState } from "react";
 import {
+  ArrowPathIcon,
   ArrowsRightLeftIcon,
   CheckCircleIcon,
   CircleStackIcon,
   ExclamationTriangleIcon,
+  FolderArrowDownIcon,
   InformationCircleIcon,
+  StopIcon,
 } from "@heroicons/react/24/outline";
-import { Button, Card, LoadingBlock, PageHeader, StatusBadge } from "../components";
-import { LibraryService, SettingsService, Settings, type RecentLibraryDTO } from "../lib/api";
+import { Button, Card, ConfirmDialog, LoadingBlock, PageHeader, ProgressBar, StatusBadge } from "../components";
+import {
+  ImportService,
+  LibraryService,
+  SettingsService,
+  Settings,
+  WailsEvents,
+  type ImportCompleted,
+  type ImportProgress,
+  type RecentLibraryDTO,
+  type ReorganizePlanDTO,
+} from "../lib/api";
+import { useWailsEvent } from "../lib/hooks";
 import { useLibrary } from "../lib/library";
 import { useToast } from "../lib/toast";
+import { baseName, formatNumber } from "../lib/format";
 
 const APP_VERSION = "0.1.0";
 
@@ -202,6 +217,8 @@ export function SettingsPage() {
               </p>
             </div>
           ) : null}
+
+          <ReorganizeSection />
         </Card>
 
         <Card title="Import">
@@ -271,6 +288,307 @@ export function SettingsPage() {
           ) : null}
         </Card>
       </div>
+    </div>
+  );
+}
+
+/* --------------------------- Reorganize library --------------------------- */
+
+const REORG_MOVE_PREVIEW = 8;
+
+/**
+ * ReorganizeSection — a maintenance control inside the Library card. It previews
+ * a catalog-driven plan (PlanReorganize), gates the run behind a typed
+ * confirmation, then runs it (StartReorganize) rendering live progress from the
+ * shared import:progress / import:completed events (phase "reorganizing").
+ */
+function ReorganizeSection() {
+  const toast = useToast();
+  const [plan, setPlan] = useState<ReorganizePlanDTO | null>(null);
+  const [planning, setPlanning] = useState(false);
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  const [starting, setStarting] = useState(false);
+  const [running, setRunning] = useState(false);
+  const [sessionId, setSessionId] = useState<string | null>(null);
+  const [progress, setProgress] = useState<ImportProgress | null>(null);
+  const [completed, setCompleted] = useState<ImportCompleted | null>(null);
+  const [cancelling, setCancelling] = useState(false);
+  // Another import (not this reorganize) is active → the one-active guard would
+  // reject a start, so disable the entry point and explain why.
+  const [busyElsewhere, setBusyElsewhere] = useState(false);
+
+  // Detect an already-running operation on mount.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const active = await ImportService.ActiveImport();
+        if (!cancelled && active && !active.done) {
+          if (active.phase === "reorganizing") {
+            setRunning(true);
+            setSessionId(active.sessionId);
+            setProgress(active);
+          } else {
+            setBusyElsewhere(true);
+          }
+        }
+      } catch {
+        /* non-critical */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useWailsEvent<ImportProgress>(WailsEvents.ImportProgress, (data) => {
+    if (running && (sessionId === null || data.sessionId === sessionId)) {
+      setProgress(data);
+    } else if (!running && data.phase !== "reorganizing" && !data.done) {
+      setBusyElsewhere(true);
+    }
+  });
+
+  useWailsEvent<ImportCompleted>(WailsEvents.ImportCompleted, (data) => {
+    if (running && (sessionId === null || data.sessionId === sessionId)) {
+      setRunning(false);
+      setCompleted(data);
+      if (data.status === "completed") {
+        toast.success("Reorganize complete", `${formatNumber(data.filesImported)} file(s) moved into place.`);
+      } else if (data.status === "cancelled") {
+        toast.info("Reorganize cancelled", "Files already moved are kept; the rest were left in place.");
+      } else {
+        toast.warn("Reorganize finished with issues", `${formatNumber(data.failures)} failure(s) — see the Logs page.`);
+      }
+    } else {
+      setBusyElsewhere(false);
+    }
+  });
+
+  const preview = async () => {
+    setPlanning(true);
+    setPlan(null);
+    setCompleted(null);
+    try {
+      const p = await ImportService.PlanReorganize("");
+      setPlan(p);
+    } catch (e) {
+      toast.fromError(e, "Could not compute the reorganize plan");
+    } finally {
+      setPlanning(false);
+    }
+  };
+
+  const start = async () => {
+    setStarting(true);
+    try {
+      const res = await ImportService.StartReorganize();
+      setSessionId(res.sessionId);
+      setRunning(true);
+      setConfirmOpen(false);
+      setPlan(null);
+      setProgress(null);
+      setCompleted(null);
+    } catch (e) {
+      toast.fromError(e, "Could not start reorganize");
+    } finally {
+      setStarting(false);
+    }
+  };
+
+  const cancel = async () => {
+    setCancelling(true);
+    try {
+      await ImportService.CancelImport();
+      toast.info("Cancelling reorganize…");
+    } catch (e) {
+      toast.fromError(e, "Could not cancel reorganize");
+    } finally {
+      setCancelling(false);
+    }
+  };
+
+  const pct = progress?.percent ?? null;
+
+  return (
+    <div className="mt-4 border-t border-zinc-800 pt-4">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <div className="flex items-center gap-1.5 text-[13px] font-medium text-zinc-200">
+            <FolderArrowDownIcon className="h-4 w-4 flex-none text-zinc-400" />
+            Reorganize library
+          </div>
+          <p className="mt-0.5 text-[11px] text-zinc-500">
+            Move already-registered files into the standard{" "}
+            <span className="font-mono">YYYY/YYYY-MM-DD/</span> layout. Same-drive moves only — nothing is copied.
+          </p>
+        </div>
+        {!running ? (
+          <Button
+            size="sm"
+            variant="secondary"
+            icon={ArrowsRightLeftIcon}
+            onClick={() => void preview()}
+            loading={planning}
+            disabled={busyElsewhere}
+          >
+            Reorganize library…
+          </Button>
+        ) : null}
+      </div>
+
+      {busyElsewhere && !running ? (
+        <p className="mt-2 flex items-start gap-1.5 text-[11px] text-amber-300/80">
+          <ExclamationTriangleIcon className="mt-0.5 h-3.5 w-3.5 flex-none" />
+          An import is currently running. Wait for it to finish before reorganizing.
+        </p>
+      ) : null}
+
+      {/* Plan preview (idle, plan computed, not yet running). */}
+      {plan && !running ? (
+        <div className="mt-3 rounded-md border border-zinc-800 bg-zinc-950/40 p-3">
+          <div className="grid grid-cols-3 gap-2 text-center">
+            <PlanStat label="To move" value={plan.moves} tone="accent" />
+            <PlanStat label="Already in place" value={plan.inPlace} />
+            <PlanStat label="Skipped" value={plan.skipped} tone={plan.skipped > 0 ? "warn" : "default"} />
+          </div>
+
+          {plan.moves > 0 ? (
+            <div className="mt-3">
+              <div className="mb-1 text-[11px] font-medium text-zinc-400">Planned moves</div>
+              <ul className="space-y-1">
+                {(plan.movesSample ?? []).slice(0, REORG_MOVE_PREVIEW).map((m) => (
+                  <li key={m.assetId} className="flex items-center gap-1.5 truncate font-mono text-[11px] text-zinc-400">
+                    <span className="truncate text-zinc-500" title={m.from}>
+                      {baseName(m.from)}
+                    </span>
+                    <ArrowsRightLeftIcon className="h-3 w-3 flex-none text-zinc-600" />
+                    <span className="truncate text-zinc-300" title={m.to}>
+                      {relTo(m.to)}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+              <p className="mt-1.5 text-[10px] text-zinc-600">
+                Showing {Math.min(plan.movesSample?.length ?? 0, REORG_MOVE_PREVIEW)} of {formatNumber(plan.moves)} move
+                {plan.moves === 1 ? "" : "s"}
+                {plan.truncated ? " (list capped)" : ""}.
+              </p>
+            </div>
+          ) : null}
+
+          {plan.skipped > 0 ? (
+            <p className="mt-2 text-[11px] text-zinc-500">
+              {formatNumber(plan.skipped)} skipped (missing on disk, cross-volume, or flagged duplicate) — left untouched.
+            </p>
+          ) : null}
+
+          <div className="mt-3 flex items-center justify-end gap-2">
+            <Button size="sm" variant="ghost" onClick={() => setPlan(null)}>
+              Dismiss
+            </Button>
+            <Button
+              size="sm"
+              variant="primary"
+              icon={FolderArrowDownIcon}
+              onClick={() => setConfirmOpen(true)}
+              disabled={plan.moves === 0 || busyElsewhere}
+            >
+              Reorganize {formatNumber(plan.moves)} file{plan.moves === 1 ? "" : "s"}
+            </Button>
+          </div>
+        </div>
+      ) : null}
+
+      {/* Live progress while running. */}
+      {running ? (
+        <div className="mt-3 rounded-md border border-blue-500/30 bg-blue-500/5 p-3">
+          <div className="mb-2 flex items-center justify-between">
+            <div className="flex items-center gap-2 text-[12px] font-medium text-zinc-200">
+              <ArrowPathIcon className="h-4 w-4 animate-spin text-blue-400" />
+              Reorganizing…
+            </div>
+            <Button size="sm" variant="danger" icon={StopIcon} onClick={() => void cancel()} loading={cancelling}>
+              Cancel
+            </Button>
+          </div>
+          <ProgressBar
+            percent={pct}
+            striped
+            size="md"
+            label={progress?.currentFile ? baseName(progress.currentFile) : "Preparing…"}
+            detail={
+              progress ? `${formatNumber(progress.filesDone)} / ${formatNumber(progress.filesTotal)} files` : undefined
+            }
+          />
+        </div>
+      ) : null}
+
+      {/* Completion summary. */}
+      {completed && !running ? (
+        <div className="mt-3 flex items-center justify-between gap-3 rounded-md border border-zinc-800 bg-zinc-950/40 p-3">
+          <div className="flex items-center gap-2 text-[12px] text-zinc-300">
+            <StatusBadge status={completed.status} />
+            <span>
+              {formatNumber(completed.filesImported)} moved · {formatNumber(completed.skipped)} skipped ·{" "}
+              {formatNumber(completed.failures)} failed
+            </span>
+          </div>
+          <Button size="sm" variant="ghost" onClick={() => setCompleted(null)}>
+            Done
+          </Button>
+        </div>
+      ) : null}
+
+      <ConfirmDialog
+        open={confirmOpen}
+        title="Reorganize your library?"
+        variant="primary"
+        requireWord="REORGANIZE"
+        confirmLabel={`Reorganize ${plan ? formatNumber(plan.moves) : ""} file${plan?.moves === 1 ? "" : "s"}`}
+        cancelLabel="Keep as-is"
+        loading={starting}
+        description={
+          <div className="space-y-2">
+            <p>
+              This moves {plan ? formatNumber(plan.moves) : ""} already-archived file(s) into the standard layout. Moves
+              are <span className="font-medium text-zinc-300">same-drive renames</span> — no copying, and every file is
+              re-verified at its new location.
+            </p>
+            <p>
+              Your files&rsquo; folder structure will change, and this cannot be automatically undone. Files that are
+              missing, on another volume, or flagged duplicates are left untouched.
+            </p>
+          </div>
+        }
+        onConfirm={() => void start()}
+        onCancel={() => setConfirmOpen(false)}
+      />
+    </div>
+  );
+}
+
+/** relTo trims a long absolute destination to its last two path segments. */
+function relTo(p: string): string {
+  const parts = p.split("/").filter(Boolean);
+  if (parts.length <= 2) return p;
+  return "…/" + parts.slice(-2).join("/");
+}
+
+function PlanStat({
+  label,
+  value,
+  tone = "default",
+}: {
+  label: string;
+  value: number;
+  tone?: "default" | "accent" | "warn";
+}) {
+  const color = tone === "accent" ? "text-blue-400" : tone === "warn" ? "text-amber-400" : "text-zinc-100";
+  return (
+    <div className="rounded-md border border-zinc-800 bg-zinc-900/60 p-2">
+      <div className={`text-lg font-semibold tabular-nums ${color}`}>{formatNumber(value)}</div>
+      <div className="mt-0.5 text-[10px] text-zinc-500">{label}</div>
     </div>
   );
 }

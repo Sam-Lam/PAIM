@@ -47,7 +47,23 @@ type ImportService struct {
 	sessionID string
 	current   *ImportProgress
 	cache     map[string]scanEntry
+
+	// Reorganize plan cache, filled by PlanReorganize and consumed by
+	// StartReorganize so the run reuses the just-previewed plan. It is recomputed
+	// when stale (see reorgPlanTTL) so a Start long after a Plan never acts on an
+	// out-of-date view of the catalog.
+	reorgPlan   *importer.ReorganizePlan
+	reorgPlanAt time.Time
+	reorgEvent  string
 }
+
+// reorgPlanTTL bounds how long a cached reorganize plan is reused between
+// PlanReorganize and StartReorganize before it is recomputed.
+const reorgPlanTTL = 5 * time.Minute
+
+// reorgDisplayCap bounds how many move/skip entries a plan DTO carries for
+// display; the aggregate counts always reflect the full plan.
+const reorgDisplayCap = 500
 
 // NewImportService constructs an ImportService.
 func NewImportService(pipeline *importer.Pipeline, sessions *repo.SessionRepo, settings *repo.SettingsRepo, dialog Dialoger, emitter Emitter, logger *slog.Logger) *ImportService {

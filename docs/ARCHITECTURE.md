@@ -125,6 +125,23 @@ already exist as verified assets — so a crash mid-copy never duplicates import
 `.paim-partial-*` files under the destination root are deleted on resume (they were never
 recorded as assets).
 
+## Analyze as a background job (dry-run progress) — services, frontend
+
+Scan+DryRun ("Analyze") must behave like the import itself: a re-attachable background
+job with verbose progress, because hashing a large library takes minutes.
+
+- ImportService: `StartAnalyze(ctx, opts)` runs scan+dry-run in a background goroutine
+  under the same one-active-operation guard; `ActiveAnalyze(ctx)` returns the in-flight
+  state (or the finished report) for re-attachment; cancellation via CancelImport.
+  Progress emitted on the existing `import:progress` event, throttled, with phase
+  (`scanning` | `hashing` | `classifying`), FilesDone/FilesTotal, BytesDone/BytesTotal,
+  CurrentFile; completion emits the DryRunReport (new `analyze:completed` event).
+- Frontend Import page: step 2 renders a large ProgressBar with verbose counters —
+  "N of M files · X GB of Y GB · rate · ETA" + current filename + phase label; the scan
+  phase shows a live discovered-file count. On mount, ActiveAnalyze rehydrates straight
+  into step 2 (running) or step 2 (report ready) — navigating away never loses the
+  analysis. The same verbose progress treatment applies to the reorganize plan phase.
+
 ## Initialize (in-place adoption) — internal/importer, Mode = adopt
 
 Motivation: a user's existing library often lives on the very drive that will become the
@@ -228,7 +245,37 @@ The database records what wrote it, and upgrades are explicit, ordered, and back
 - The relative-path conversion for portable libraries is Migration 2 — the first real
   exercise of the framework.
 
-## Archive layout (internal/archive)
+## Reorganize later (library maintenance) — internal/importer, services
+
+Adopting a library with Reorganize off must not be a one-way door. A standalone
+maintenance operation moves ALREADY-REGISTERED assets into the standard
+`YYYY/YYYY-MM-DD Event/[RAW/]` layout at any time.
+
+- Driven from the CATALOG, not a filesystem scan: walk non-deleted, verified assets whose
+  resolved current path differs from their computed destination (CaptureDate → layout;
+  mtime-fallback dates use the recorded ImportDate-era value already in the row — never
+  re-read EXIF). Assets flagged as duplicates (no archive copy) and assets whose file is
+  missing on disk are skipped and reported, never fatal.
+- **Plan first**: `PlanReorganize` returns a dry-run report — total assets, files already
+  in place, planned moves (from → to, with collision-resolved names), skipped (missing /
+  cross-volume / duplicates), estimated time. Nothing modified.
+- **Execute**: same safety protocol as adopt+reorganize — same-volume atomic rename ONLY
+  (cross-volume → skip + report), quick-hash re-verification after each rename, collision
+  via archive.ResolveCollision with exclusive link+remove publish, CurrentArchivePath
+  updated (root-relative) in the same per-file transaction. Live Photo pairs move
+  together; a failed component leaves both recorded consistently.
+- Restart-safe: each file's move+DB update is atomic per file; re-running the plan after a
+  crash simply finds fewer files out of place (crash-mid-rename recovered by checking both
+  paths, as adopt already does). Recorded as an ImportSession (notes mode "reorganize")
+  so it appears in Import History with counters (moved / already-in-place / skipped /
+  failures).
+- Empty-folder sweep after completion: directories left empty by moves are removed
+  (bottom-up, only inside the library root, never removing the root or `.paim*` dirs).
+- Service surface: on ImportService (shares the one-active-operation guard and
+  import:progress events): `PlanReorganize(ctx, eventName?)` and
+  `StartReorganize(ctx)` / cancel via existing CancelImport. UI: Settings → Library card
+  gains "Reorganize library…" opening a plan preview (moves listed, capped display) with
+  a typed-confirmation ConfirmDialog; progress rendered like an import run.
 
 Default (user-configurable via Settings): `<MasterLibrary>/YYYY/YYYY-MM-DD Event/` with RAW
 files in a `RAW/` subfolder; JPEGs and videos side by side. Date from CaptureDate, falling
@@ -299,6 +346,37 @@ verified against archive), duplicate, new, unknown (non-media/unreadable), or
 verification_failed. Summary drives a recommendation that follows the Safe Delete Rules:
 recommend deletion ONLY if every asset is archived + verified + required backups complete.
 Otherwise "Deletion NOT recommended" with counts and reasons.
+
+## Lightweight asset browser & thumbnails — internal/thumbs, services, frontend
+
+Read-only viewing in service of integrity — NOT a DAM. No editing, ratings, albums, or
+export workflows, ever. Purpose: (a) visual confidence in the Duplicate Manager, (b) a
+browse grid proving what's archived, (c) provenance at a glance.
+
+- `internal/thumbs`: content-addressed thumbnail cache at `<root>/.paim/thumbs/` —
+  `<size>/<hash[0:2]>/<quickhash>.jpg`. Generation via macOS QuickLook
+  (`qlmanage -t -s <px>`) which handles HEIC, all supported RAW formats, and video poster
+  frames; converted/compressed to JPEG (quality ~80) via `sips`. Two sizes: 512 (grid)
+  and 2048 (preview), generated lazily on first request; per-key singleflight so
+  concurrent requests generate once; bounded generation concurrency (default 4).
+  Generation failure → cached negative marker (retry after app restart), UI shows a
+  placeholder tile. The cache is disposable and travels with the library; a Settings
+  action can clear it. Missing/moved source file → placeholder, never an error.
+- Serving: Wails v3 asset-server middleware in main.go — `GET /thumb/{assetID}?s=512|2048`
+  resolves the asset (via repo), ensures the thumb, streams the JPEG with long-lived
+  cache headers keyed by quick hash. No filesystem paths cross the bridge.
+- `internal/services` — `BrowserService`: `ListAssets(ctx, filters{query on filename,
+  mediaType, verification/backup status, sessionID, yearMonth}, page, pageSize)` →
+  PageResult of slim DTOs (id, filename, capture date, media type, sizes, statuses,
+  isLivePhotoPair, duplicateOf); `AssetDetail(ctx, id)` → full provenance DTO (original
+  path/source/session, archive path resolved, both hashes, camera/lens/exposure/GPS,
+  backup jobs summary, duplicate relationships). Gated like all catalog services.
+- Frontend: new sidebar item **Library** (after Dashboard): thumbnail grid grouped by
+  month headers, filter bar (type / status / search), pagination; click → detail drawer
+  with 2048 preview + provenance panel + StatusBadges. Duplicate Manager cards gain
+  thumbnails (grid-size) beside the metadata for BOTH sides of every pair. Video tiles
+  get a duration badge; Live Photo pairs a badge and a single logical tile with both
+  components in the drawer.
 
 ## Logging (internal/logging)
 
