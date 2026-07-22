@@ -49,7 +49,9 @@ func NewLogService(db *gorm.DB, logs *repo.LogRepo, dialog Dialoger, emitter Emi
 // buildQuery assembles a repo.LogQuery from the raw filter parameters, parsing
 // the ISO-8601 time bounds (empty bounds are ignored).
 func buildQuery(query, level, subsystem, fromISO, toISO string, page, pageSize int) (repo.LogQuery, error) {
-	q := repo.LogQuery{Text: query, Level: level, Subsystem: subsystem}
+	// Level values are stored uppercase (slog.Level.String()); normalize so the
+	// exact-match filter works regardless of caller casing.
+	q := repo.LogQuery{Text: query, Level: strings.ToUpper(level), Subsystem: subsystem}
 	if fromISO != "" {
 		t, err := time.Parse(time.RFC3339, fromISO)
 		if err != nil {

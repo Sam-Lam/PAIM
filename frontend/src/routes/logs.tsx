@@ -20,7 +20,8 @@ import { useToast } from "../lib/toast";
 import { formatDate, formatNumber } from "../lib/format";
 
 const PAGE_SIZE = 50;
-const LEVELS = ["debug", "info", "warn", "error"];
+// Canonical uppercase — must match slog.Level.String() values stored in the DB.
+const LEVELS = ["DEBUG", "INFO", "WARN", "ERROR"];
 
 /** Convert a datetime-local value ("2026-07-17T15:30") to an ISO string, or "". */
 function localToISO(local: string): string {
