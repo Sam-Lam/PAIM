@@ -8,6 +8,7 @@ import {
   DocumentDuplicateIcon,
   DocumentTextIcon,
   HomeIcon,
+  PhotoIcon,
   PuzzlePieceIcon,
   ServerStackIcon,
   SparklesIcon,
@@ -23,6 +24,7 @@ interface NavEntry {
 // Spec order.
 const NAV: NavEntry[] = [
   { to: "/", label: "Dashboard", icon: HomeIcon, exact: true },
+  { to: "/library", label: "Library", icon: PhotoIcon },
   { to: "/import", label: "Import", icon: ArrowDownTrayIcon },
   { to: "/sources", label: "Sources", icon: ServerStackIcon },
   { to: "/history", label: "Import History", icon: ClockIcon },

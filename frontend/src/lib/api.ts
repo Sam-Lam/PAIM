@@ -4,6 +4,7 @@
 // all backend access is through these bindings.
 export {
   BackupService,
+  BrowserService,
   CleanupService,
   DashboardService,
   DuplicateService,
@@ -32,10 +33,15 @@ export type {
   SourceProgress,
   StartCleanupAnalyzeResult,
   StartSafeToEraseResult,
+  AssetDetailDTO,
+  AssetRefDTO,
   BackupJobDTO,
+  BackupJobRefDTO,
   BackupProgress,
   BackupQueueChanged,
   BackupSummaryDTO,
+  BrowseAssetDTO,
+  BrowseFilters,
   ClassStatDTO,
   CleanupReportDTO,
   CurrentLibraryDTO,

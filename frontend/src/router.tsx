@@ -2,6 +2,7 @@ import { createHashHistory, createRoute, createRouter } from "@tanstack/react-ro
 import { rootRoute } from "./routes/root";
 import { WelcomePage } from "./routes/welcome";
 import { DashboardPage } from "./routes/dashboard";
+import { LibraryPage } from "./routes/library";
 import { ImportPage } from "./routes/import";
 import { SourcesPage } from "./routes/sources";
 import { HistoryPage } from "./routes/history";
@@ -22,6 +23,12 @@ const dashboardRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/",
   component: DashboardPage,
+});
+
+const libraryRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/library",
+  component: LibraryPage,
 });
 
 const importRoute = createRoute({
@@ -85,6 +92,7 @@ const settingsRoute = createRoute({
 const routeTree = rootRoute.addChildren([
   welcomeRoute,
   dashboardRoute,
+  libraryRoute,
   importRoute,
   sourcesRoute,
   historyRoute,

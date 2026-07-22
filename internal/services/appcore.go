@@ -15,6 +15,7 @@ import (
 	"github.com/Sam-Lam/PAIM/internal/metadata"
 	"github.com/Sam-Lam/PAIM/internal/repo"
 	"github.com/Sam-Lam/PAIM/internal/source"
+	"github.com/Sam-Lam/PAIM/internal/thumbs"
 	"github.com/Sam-Lam/PAIM/internal/volumes"
 	"gorm.io/gorm"
 )
@@ -109,6 +110,9 @@ type AppCore struct {
 	Pipeline   *importer.Pipeline
 	Analyzer   *cleanup.Analyzer
 	Identifier *source.Identifier
+	// Thumbs is this library's disposable thumbnail cache
+	// (<root>/.paim/thumbs). The thumbnail HTTP handler serves from it.
+	Thumbs *thumbs.Cache
 }
 
 // CoreDeps carries the library-independent collaborators BuildCore needs. They
@@ -202,6 +206,11 @@ func BuildCore(deps CoreDeps) (*AppCore, error) {
 
 	identifier := source.NewIdentifier(deps.Collector, sources, Hasher{}, mediatype.IsMedia)
 
+	// The thumbnail cache lives under the library root's .paim/thumbs (disposable,
+	// travels with the library). In the dev escape hatch (Root empty) it falls back
+	// to a cwd-relative cache, which is acceptable for that path.
+	thumbCache := thumbs.New(deps.Root, logger)
+
 	return &AppCore{
 		Root:       deps.Root,
 		Meta:       meta,
@@ -216,5 +225,6 @@ func BuildCore(deps CoreDeps) (*AppCore, error) {
 		Pipeline:   pipeline,
 		Analyzer:   analyzer,
 		Identifier: identifier,
+		Thumbs:     thumbCache,
 	}, nil
 }

@@ -273,7 +273,7 @@ func (r *AssetRepo) ListDuplicates(ctx context.Context, page Page) ([]DuplicateP
 
 // AssetQuery filters an asset listing. Nil pointer fields and empty strings are
 // ignored. Text matches OriginalFilename or OriginalFullPath (case-insensitive
-// substring).
+// substring). YearMonth ("2006-01") restricts to a single capture month.
 type AssetQuery struct {
 	MediaType          *domain.MediaType
 	VerificationStatus *domain.VerificationStatus
@@ -281,13 +281,14 @@ type AssetQuery struct {
 	SessionID          string
 	SourceID           string
 	Text               string
+	YearMonth          string
 	Page               Page
 }
 
-// List returns assets matching the query plus the total count of matches
-// (ignoring pagination).
-func (r *AssetRepo) List(ctx context.Context, q AssetQuery) ([]domain.Asset, int64, error) {
-	base := r.db.WithContext(ctx).Model(&domain.Asset{})
+// applyFilters adds every non-empty AssetQuery predicate to a base query. It is
+// shared by List and the month-rollup query so the filter semantics stay
+// identical across the two.
+func (q AssetQuery) applyFilters(base *gorm.DB) *gorm.DB {
 	if q.MediaType != nil {
 		base = base.Where("media_type = ?", *q.MediaType)
 	}
@@ -307,6 +308,18 @@ func (r *AssetRepo) List(ctx context.Context, q AssetQuery) ([]domain.Asset, int
 		like := "%" + q.Text + "%"
 		base = base.Where("original_filename LIKE ? OR original_full_path LIKE ?", like, like)
 	}
+	if q.YearMonth != "" {
+		base = base.Where("strftime('%Y-%m', capture_date) = ?", q.YearMonth)
+	}
+	return base
+}
+
+// List returns assets matching the query plus the total count of matches
+// (ignoring pagination). Results are ordered newest-capture-first; assets with no
+// capture date sort last (SQLite orders NULL below any value, so DESC places them
+// at the end), with import date and creation order as stable tie-breakers.
+func (r *AssetRepo) List(ctx context.Context, q AssetQuery) ([]domain.Asset, int64, error) {
+	base := q.applyFilters(r.db.WithContext(ctx).Model(&domain.Asset{}))
 
 	var total int64
 	if err := base.Count(&total).Error; err != nil {
@@ -314,7 +327,7 @@ func (r *AssetRepo) List(ctx context.Context, q AssetQuery) ([]domain.Asset, int
 	}
 
 	limit, offset := q.Page.apply()
-	rows := base.Order("import_date DESC, created_at DESC")
+	rows := base.Order("capture_date DESC, import_date DESC, created_at DESC")
 	if limit > 0 {
 		rows = rows.Limit(limit)
 	}
@@ -327,4 +340,29 @@ func (r *AssetRepo) List(ctx context.Context, q AssetQuery) ([]domain.Asset, int
 		return nil, 0, fmt.Errorf("repo: list assets: %w", err)
 	}
 	return assets, total, nil
+}
+
+// CaptureMonth pairs a capture month ("2006-01") with the number of non-deleted
+// assets captured in it.
+type CaptureMonth struct {
+	Month string `json:"month"`
+	Count int64  `json:"count"`
+}
+
+// CaptureMonths returns per-month asset counts keyed by capture date, newest
+// month first. Assets without a capture date are excluded (they have no month to
+// group under). Used to populate the browser's month filter and section headers.
+func (r *AssetRepo) CaptureMonths(ctx context.Context) ([]CaptureMonth, error) {
+	var rows []CaptureMonth
+	err := r.db.WithContext(ctx).
+		Model(&domain.Asset{}).
+		Select("strftime('%Y-%m', capture_date) as month, count(*) as count").
+		Where("capture_date IS NOT NULL").
+		Group("month").
+		Order("month DESC").
+		Scan(&rows).Error
+	if err != nil {
+		return nil, fmt.Errorf("repo: capture months: %w", err)
+	}
+	return rows, nil
 }

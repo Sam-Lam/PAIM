@@ -14,8 +14,10 @@ import (
 	"embed"
 	"log"
 	"log/slog"
+	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -27,6 +29,7 @@ import (
 	"github.com/Sam-Lam/PAIM/internal/metadata"
 	"github.com/Sam-Lam/PAIM/internal/repo"
 	"github.com/Sam-Lam/PAIM/internal/services"
+	"github.com/Sam-Lam/PAIM/internal/thumbs"
 	"github.com/Sam-Lam/PAIM/internal/version"
 	"github.com/Sam-Lam/PAIM/internal/volumes"
 
@@ -128,6 +131,7 @@ type composition struct {
 	providerSvc *services.ProviderService
 	logSvc      *services.LogService
 	settingsSvc *services.SettingsService
+	browserSvc  *services.BrowserService
 
 	mu       sync.Mutex
 	core     *services.AppCore
@@ -192,10 +196,12 @@ func run() error {
 	comp.providerSvc = services.NewProviderService(nil, registry, logger)
 	comp.logSvc = services.NewLogService(nil, nil, dialoger, emitter, logger)
 	comp.settingsSvc = services.NewSettingsService(nil, extractor.Available())
+	comp.browserSvc = services.NewBrowserService(nil, nil, nil, nil, logger)
 
 	for _, g := range []interface{ SetGate(*services.LibraryGate) }{
 		comp.dashSvc, comp.importSvc, comp.sourcesSvc, comp.historySvc, comp.dupSvc,
 		comp.cleanupSvc, comp.backupSvc, comp.providerSvc, comp.logSvc, comp.settingsSvc,
+		comp.browserSvc,
 	} {
 		g.SetGate(gate)
 	}
@@ -224,9 +230,11 @@ func run() error {
 			application.NewService(comp.providerSvc),
 			application.NewService(comp.logSvc),
 			application.NewService(comp.settingsSvc),
+			application.NewService(comp.browserSvc),
 		},
 		Assets: application.AssetOptions{
-			Handler: application.AssetFileServerFS(assets),
+			Handler:    application.AssetFileServerFS(assets),
+			Middleware: comp.thumbMiddleware(),
 		},
 		Mac: application.MacOptions{
 			ApplicationShouldTerminateAfterLastWindowClosed: true,
@@ -368,6 +376,35 @@ func (c *composition) emitLibraryProgress(phase, message string) {
 	c.emitter.Emit(services.EventLibraryProgress, services.LibraryProgress{Phase: phase, Message: message})
 }
 
+// thumbMiddleware routes GET /thumb/{assetID} to the thumbnail handler and
+// passes everything else through to the default Wails asset server. The handler
+// is constructed once; it reads the currently-open library per request via
+// thumbBinding, so it always serves from the live catalog and cache.
+func (c *composition) thumbMiddleware() application.Middleware {
+	handler := thumbs.NewHandler(c.thumbBinding, c.logger)
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if strings.HasPrefix(r.URL.Path, thumbs.URLPrefix) {
+				handler.ServeHTTP(w, r)
+				return
+			}
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
+// thumbBinding returns the currently-open library's thumbnail dependencies, or
+// ok=false when no library is open (the handler then responds 503).
+func (c *composition) thumbBinding(_ context.Context) (thumbs.Binding, bool) {
+	c.mu.Lock()
+	core := c.core
+	c.mu.Unlock()
+	if core == nil || core.Thumbs == nil {
+		return thumbs.Binding{}, false
+	}
+	return thumbs.Binding{Assets: core.ThumbResolver(), Cache: core.Thumbs}, true
+}
+
 // openDev opens an explicit database file (PAIM_DB_PATH) in library-less dev mode.
 func (c *composition) openDev(dbPath string) error {
 	gdb, err := db.Open(dbPath)
@@ -419,6 +456,7 @@ func (c *composition) activate(core *services.AppCore, lock *library.Lock) {
 	c.providerSvc.Bind(core)
 	c.logSvc.Bind(core)
 	c.settingsSvc.Bind(core)
+	c.browserSvc.Bind(core)
 
 	if err := core.Manager.Start(c.rootCtx); err != nil {
 		c.logger.Error("could not start backup manager", "error", err.Error())

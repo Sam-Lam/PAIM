@@ -26,6 +26,9 @@ import * as repo$0 from "../repo/models.js";
 import * as source$0 from "../source/models.js";
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore: Unused imports
+import * as thumbs$0 from "../thumbs/models.js";
+// eslint-disable-next-line @typescript-eslint/ban-ts-comment
+// @ts-ignore: Unused imports
 import * as gorm$0 from "../../../../../gorm.io/gorm/models.js";
 
 /**
@@ -449,6 +452,15 @@ export class AppCore {
              */
             this["Identifier"] = null;
         }
+        if (!("Thumbs" in $$source)) {
+            /**
+             * Thumbs is this library's disposable thumbnail cache
+             * (<root>/.paim/thumbs). The thumbnail HTTP handler serves from it.
+             * @member
+             * @type {thumbs$0.Cache | null}
+             */
+            this["Thumbs"] = null;
+        }
 
         Object.assign(this, $$source);
     }
@@ -471,6 +483,7 @@ export class AppCore {
         const $$createField10_0 = $$createType32;
         const $$createField11_0 = $$createType34;
         const $$createField12_0 = $$createType36;
+        const $$createField13_0 = $$createType38;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("Meta" in $$parsedSource) {
             $$parsedSource["Meta"] = $$createField1_0($$parsedSource["Meta"]);
@@ -507,6 +520,9 @@ export class AppCore {
         }
         if ("Identifier" in $$parsedSource) {
             $$parsedSource["Identifier"] = $$createField12_0($$parsedSource["Identifier"]);
+        }
+        if ("Thumbs" in $$parsedSource) {
+            $$parsedSource["Thumbs"] = $$createField13_0($$parsedSource["Thumbs"]);
         }
         return new AppCore(/** @type {Partial<AppCore>} */($$parsedSource));
     }
@@ -686,6 +702,338 @@ export class AssetDTO {
 }
 
 /**
+ * AssetDetailDTO is the full provenance record shown in the detail drawer.
+ */
+export class AssetDetailDTO {
+    /**
+     * Creates a new AssetDetailDTO instance.
+     * @param {Partial<AssetDetailDTO>} [$$source = {}] - The source object to create the AssetDetailDTO.
+     */
+    constructor($$source = {}) {
+        if (!("id" in $$source)) {
+            /**
+             * @member
+             * @type {string}
+             */
+            this["id"] = "";
+        }
+        if (!("originalFilename" in $$source)) {
+            /**
+             * @member
+             * @type {string}
+             */
+            this["originalFilename"] = "";
+        }
+        if (!("originalExtension" in $$source)) {
+            /**
+             * @member
+             * @type {string}
+             */
+            this["originalExtension"] = "";
+        }
+        if (!("originalFullPath" in $$source)) {
+            /**
+             * @member
+             * @type {string}
+             */
+            this["originalFullPath"] = "";
+        }
+        if (!("currentArchivePath" in $$source)) {
+            /**
+             * resolved absolute
+             * @member
+             * @type {string}
+             */
+            this["currentArchivePath"] = "";
+        }
+        if (!("quickHash" in $$source)) {
+            /**
+             * @member
+             * @type {string}
+             */
+            this["quickHash"] = "";
+        }
+        if (!("fullHash" in $$source)) {
+            /**
+             * @member
+             * @type {string}
+             */
+            this["fullHash"] = "";
+        }
+        if (!("fileSize" in $$source)) {
+            /**
+             * @member
+             * @type {number}
+             */
+            this["fileSize"] = 0;
+        }
+        if (!("captureDate" in $$source)) {
+            /**
+             * @member
+             * @type {string | null}
+             */
+            this["captureDate"] = null;
+        }
+        if (!("importDate" in $$source)) {
+            /**
+             * @member
+             * @type {string}
+             */
+            this["importDate"] = "0001-01-01T00:00:00.000Z";
+        }
+        if (!("mediaType" in $$source)) {
+            /**
+             * @member
+             * @type {string}
+             */
+            this["mediaType"] = "";
+        }
+        if (!("width" in $$source)) {
+            /**
+             * @member
+             * @type {number}
+             */
+            this["width"] = 0;
+        }
+        if (!("height" in $$source)) {
+            /**
+             * @member
+             * @type {number}
+             */
+            this["height"] = 0;
+        }
+        if (!("durationSeconds" in $$source)) {
+            /**
+             * @member
+             * @type {number}
+             */
+            this["durationSeconds"] = 0;
+        }
+        if (!("cameraMake" in $$source)) {
+            /**
+             * @member
+             * @type {string}
+             */
+            this["cameraMake"] = "";
+        }
+        if (!("cameraModel" in $$source)) {
+            /**
+             * @member
+             * @type {string}
+             */
+            this["cameraModel"] = "";
+        }
+        if (!("lens" in $$source)) {
+            /**
+             * @member
+             * @type {string}
+             */
+            this["lens"] = "";
+        }
+        if (!("iso" in $$source)) {
+            /**
+             * @member
+             * @type {number}
+             */
+            this["iso"] = 0;
+        }
+        if (!("shutterSpeed" in $$source)) {
+            /**
+             * @member
+             * @type {string}
+             */
+            this["shutterSpeed"] = "";
+        }
+        if (!("aperture" in $$source)) {
+            /**
+             * @member
+             * @type {string}
+             */
+            this["aperture"] = "";
+        }
+        if (!("gpsLatitude" in $$source)) {
+            /**
+             * @member
+             * @type {number | null}
+             */
+            this["gpsLatitude"] = null;
+        }
+        if (!("gpsLongitude" in $$source)) {
+            /**
+             * @member
+             * @type {number | null}
+             */
+            this["gpsLongitude"] = null;
+        }
+        if (!("verificationStatus" in $$source)) {
+            /**
+             * @member
+             * @type {string}
+             */
+            this["verificationStatus"] = "";
+        }
+        if (!("backupStatus" in $$source)) {
+            /**
+             * @member
+             * @type {string}
+             */
+            this["backupStatus"] = "";
+        }
+        if (!("isLivePhotoPair" in $$source)) {
+            /**
+             * @member
+             * @type {boolean}
+             */
+            this["isLivePhotoPair"] = false;
+        }
+        if (!("sourceId" in $$source)) {
+            /**
+             * @member
+             * @type {string}
+             */
+            this["sourceId"] = "";
+        }
+        if (!("sourceLabel" in $$source)) {
+            /**
+             * @member
+             * @type {string}
+             */
+            this["sourceLabel"] = "";
+        }
+        if (!("sourceType" in $$source)) {
+            /**
+             * @member
+             * @type {string}
+             */
+            this["sourceType"] = "";
+        }
+        if (!("sessionId" in $$source)) {
+            /**
+             * @member
+             * @type {string}
+             */
+            this["sessionId"] = "";
+        }
+        if (!("sessionDate" in $$source)) {
+            /**
+             * @member
+             * @type {string | null}
+             */
+            this["sessionDate"] = null;
+        }
+        if (!("backupJobs" in $$source)) {
+            /**
+             * @member
+             * @type {BackupJobRefDTO[]}
+             */
+            this["backupJobs"] = [];
+        }
+        if (!("duplicateOf" in $$source)) {
+            /**
+             * @member
+             * @type {AssetRefDTO | null}
+             */
+            this["duplicateOf"] = null;
+        }
+        if (!("duplicates" in $$source)) {
+            /**
+             * @member
+             * @type {AssetRefDTO[]}
+             */
+            this["duplicates"] = [];
+        }
+        if (!("livePhotoPartner" in $$source)) {
+            /**
+             * @member
+             * @type {AssetRefDTO | null}
+             */
+            this["livePhotoPartner"] = null;
+        }
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new AssetDetailDTO instance from a string or object.
+     * @param {any} [$$source = {}]
+     * @returns {AssetDetailDTO}
+     */
+    static createFrom($$source = {}) {
+        const $$createField30_0 = $$createType40;
+        const $$createField31_0 = $$createType42;
+        const $$createField32_0 = $$createType43;
+        const $$createField33_0 = $$createType42;
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        if ("backupJobs" in $$parsedSource) {
+            $$parsedSource["backupJobs"] = $$createField30_0($$parsedSource["backupJobs"]);
+        }
+        if ("duplicateOf" in $$parsedSource) {
+            $$parsedSource["duplicateOf"] = $$createField31_0($$parsedSource["duplicateOf"]);
+        }
+        if ("duplicates" in $$parsedSource) {
+            $$parsedSource["duplicates"] = $$createField32_0($$parsedSource["duplicates"]);
+        }
+        if ("livePhotoPartner" in $$parsedSource) {
+            $$parsedSource["livePhotoPartner"] = $$createField33_0($$parsedSource["livePhotoPartner"]);
+        }
+        return new AssetDetailDTO(/** @type {Partial<AssetDetailDTO>} */($$parsedSource));
+    }
+}
+
+/**
+ * AssetRefDTO is a slim reference to a related asset (duplicate/original/Live
+ * Photo partner) used for in-drawer navigation.
+ */
+export class AssetRefDTO {
+    /**
+     * Creates a new AssetRefDTO instance.
+     * @param {Partial<AssetRefDTO>} [$$source = {}] - The source object to create the AssetRefDTO.
+     */
+    constructor($$source = {}) {
+        if (!("id" in $$source)) {
+            /**
+             * @member
+             * @type {string}
+             */
+            this["id"] = "";
+        }
+        if (!("filename" in $$source)) {
+            /**
+             * @member
+             * @type {string}
+             */
+            this["filename"] = "";
+        }
+        if (!("mediaType" in $$source)) {
+            /**
+             * @member
+             * @type {string}
+             */
+            this["mediaType"] = "";
+        }
+        if (!("captureDate" in $$source)) {
+            /**
+             * @member
+             * @type {string | null}
+             */
+            this["captureDate"] = null;
+        }
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new AssetRefDTO instance from a string or object.
+     * @param {any} [$$source = {}]
+     * @returns {AssetRefDTO}
+     */
+    static createFrom($$source = {}) {
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        return new AssetRefDTO(/** @type {Partial<AssetRefDTO>} */($$parsedSource));
+    }
+}
+
+/**
  * BackupJobDTO is the JSON-friendly projection of a BackupJob joined with its
  * asset's display filename and archive path.
  */
@@ -788,6 +1136,58 @@ export class BackupJobDTO {
 }
 
 /**
+ * BackupJobRefDTO is the compact per-asset backup-job view in the detail drawer.
+ */
+export class BackupJobRefDTO {
+    /**
+     * Creates a new BackupJobRefDTO instance.
+     * @param {Partial<BackupJobRefDTO>} [$$source = {}] - The source object to create the BackupJobRefDTO.
+     */
+    constructor($$source = {}) {
+        if (!("plugin" in $$source)) {
+            /**
+             * @member
+             * @type {string}
+             */
+            this["plugin"] = "";
+        }
+        if (!("destination" in $$source)) {
+            /**
+             * @member
+             * @type {string}
+             */
+            this["destination"] = "";
+        }
+        if (!("status" in $$source)) {
+            /**
+             * @member
+             * @type {string}
+             */
+            this["status"] = "";
+        }
+        if (!("completedAt" in $$source)) {
+            /**
+             * @member
+             * @type {string | null}
+             */
+            this["completedAt"] = null;
+        }
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new BackupJobRefDTO instance from a string or object.
+     * @param {any} [$$source = {}]
+     * @returns {BackupJobRefDTO}
+     */
+    static createFrom($$source = {}) {
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        return new BackupJobRefDTO(/** @type {Partial<BackupJobRefDTO>} */($$parsedSource));
+    }
+}
+
+/**
  * BackupProgress is the payload for backup:progress, carrying one worker's
  * per-job upload progress.
  */
@@ -860,7 +1260,7 @@ export class BackupQueueChanged {
      * @returns {BackupQueueChanged}
      */
     static createFrom($$source = {}) {
-        const $$createField0_0 = $$createType37;
+        const $$createField0_0 = $$createType44;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("summary" in $$parsedSource) {
             $$parsedSource["summary"] = $$createField0_0($$parsedSource["summary"]);
@@ -904,6 +1304,189 @@ export class BackupSummaryDTO {
     static createFrom($$source = {}) {
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         return new BackupSummaryDTO(/** @type {Partial<BackupSummaryDTO>} */($$parsedSource));
+    }
+}
+
+/**
+ * BrowseAssetDTO is the slim per-tile projection for the grid. It carries only
+ * what a tile and its badges need; full provenance comes from AssetDetail.
+ */
+export class BrowseAssetDTO {
+    /**
+     * Creates a new BrowseAssetDTO instance.
+     * @param {Partial<BrowseAssetDTO>} [$$source = {}] - The source object to create the BrowseAssetDTO.
+     */
+    constructor($$source = {}) {
+        if (!("id" in $$source)) {
+            /**
+             * @member
+             * @type {string}
+             */
+            this["id"] = "";
+        }
+        if (!("filename" in $$source)) {
+            /**
+             * @member
+             * @type {string}
+             */
+            this["filename"] = "";
+        }
+        if (!("captureDate" in $$source)) {
+            /**
+             * @member
+             * @type {string | null}
+             */
+            this["captureDate"] = null;
+        }
+        if (!("mediaType" in $$source)) {
+            /**
+             * @member
+             * @type {string}
+             */
+            this["mediaType"] = "";
+        }
+        if (!("fileSize" in $$source)) {
+            /**
+             * @member
+             * @type {number}
+             */
+            this["fileSize"] = 0;
+        }
+        if (!("width" in $$source)) {
+            /**
+             * @member
+             * @type {number}
+             */
+            this["width"] = 0;
+        }
+        if (!("height" in $$source)) {
+            /**
+             * @member
+             * @type {number}
+             */
+            this["height"] = 0;
+        }
+        if (!("durationSeconds" in $$source)) {
+            /**
+             * @member
+             * @type {number}
+             */
+            this["durationSeconds"] = 0;
+        }
+        if (!("verificationStatus" in $$source)) {
+            /**
+             * @member
+             * @type {string}
+             */
+            this["verificationStatus"] = "";
+        }
+        if (!("backupStatus" in $$source)) {
+            /**
+             * @member
+             * @type {string}
+             */
+            this["backupStatus"] = "";
+        }
+        if (!("isLivePhotoPair" in $$source)) {
+            /**
+             * @member
+             * @type {boolean}
+             */
+            this["isLivePhotoPair"] = false;
+        }
+        if (!("duplicateOfAssetId" in $$source)) {
+            /**
+             * @member
+             * @type {string}
+             */
+            this["duplicateOfAssetId"] = "";
+        }
+        if (!("hasArchiveCopy" in $$source)) {
+            /**
+             * @member
+             * @type {boolean}
+             */
+            this["hasArchiveCopy"] = false;
+        }
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new BrowseAssetDTO instance from a string or object.
+     * @param {any} [$$source = {}]
+     * @returns {BrowseAssetDTO}
+     */
+    static createFrom($$source = {}) {
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        return new BrowseAssetDTO(/** @type {Partial<BrowseAssetDTO>} */($$parsedSource));
+    }
+}
+
+/**
+ * BrowseFilters are the browser grid's optional filters. Empty strings mean "no
+ * filter". YearMonth is "2006-01" (capture month).
+ */
+export class BrowseFilters {
+    /**
+     * Creates a new BrowseFilters instance.
+     * @param {Partial<BrowseFilters>} [$$source = {}] - The source object to create the BrowseFilters.
+     */
+    constructor($$source = {}) {
+        if (!("query" in $$source)) {
+            /**
+             * @member
+             * @type {string}
+             */
+            this["query"] = "";
+        }
+        if (!("mediaType" in $$source)) {
+            /**
+             * @member
+             * @type {string}
+             */
+            this["mediaType"] = "";
+        }
+        if (!("verificationStatus" in $$source)) {
+            /**
+             * @member
+             * @type {string}
+             */
+            this["verificationStatus"] = "";
+        }
+        if (!("backupStatus" in $$source)) {
+            /**
+             * @member
+             * @type {string}
+             */
+            this["backupStatus"] = "";
+        }
+        if (!("sessionId" in $$source)) {
+            /**
+             * @member
+             * @type {string}
+             */
+            this["sessionId"] = "";
+        }
+        if (!("yearMonth" in $$source)) {
+            /**
+             * @member
+             * @type {string}
+             */
+            this["yearMonth"] = "";
+        }
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new BrowseFilters instance from a string or object.
+     * @param {any} [$$source = {}]
+     * @returns {BrowseFilters}
+     */
+    static createFrom($$source = {}) {
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        return new BrowseFilters(/** @type {Partial<BrowseFilters>} */($$parsedSource));
     }
 }
 
@@ -961,7 +1544,7 @@ export class ClassStatDTO {
      * @returns {ClassStatDTO}
      */
     static createFrom($$source = {}) {
-        const $$createField3_0 = $$createType38;
+        const $$createField3_0 = $$createType45;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("files" in $$parsedSource) {
             $$parsedSource["files"] = $$createField3_0($$parsedSource["files"]);
@@ -1166,8 +1749,8 @@ export class CleanupReportDTO {
      * @returns {CleanupReportDTO}
      */
     static createFrom($$source = {}) {
-        const $$createField1_0 = $$createType40;
-        const $$createField9_0 = $$createType41;
+        const $$createField1_0 = $$createType47;
+        const $$createField9_0 = $$createType48;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("classes" in $$parsedSource) {
             $$parsedSource["classes"] = $$createField1_0($$parsedSource["classes"]);
@@ -1314,12 +1897,12 @@ export class DashboardStats {
      * @returns {DashboardStats}
      */
     static createFrom($$source = {}) {
-        const $$createField0_0 = $$createType42;
-        const $$createField1_0 = $$createType44;
-        const $$createField3_0 = $$createType45;
-        const $$createField5_0 = $$createType47;
-        const $$createField6_0 = $$createType47;
-        const $$createField7_0 = $$createType49;
+        const $$createField0_0 = $$createType49;
+        const $$createField1_0 = $$createType51;
+        const $$createField3_0 = $$createType52;
+        const $$createField5_0 = $$createType54;
+        const $$createField6_0 = $$createType54;
+        const $$createField7_0 = $$createType56;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("totals" in $$parsedSource) {
             $$parsedSource["totals"] = $$createField0_0($$parsedSource["totals"]);
@@ -1486,8 +2069,8 @@ export class DuplicatePairDTO {
      * @returns {DuplicatePairDTO}
      */
     static createFrom($$source = {}) {
-        const $$createField0_0 = $$createType50;
-        const $$createField1_0 = $$createType50;
+        const $$createField0_0 = $$createType57;
+        const $$createField1_0 = $$createType57;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("duplicate" in $$parsedSource) {
             $$parsedSource["duplicate"] = $$createField0_0($$parsedSource["duplicate"]);
@@ -2125,8 +2708,8 @@ export class MatchDTO {
      * @returns {MatchDTO}
      */
     static createFrom($$source = {}) {
-        const $$createField1_0 = $$createType46;
-        const $$createField3_0 = $$createType38;
+        const $$createField1_0 = $$createType53;
+        const $$createField3_0 = $$createType45;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("source" in $$parsedSource) {
             $$parsedSource["source"] = $$createField1_0($$parsedSource["source"]);
@@ -2222,8 +2805,8 @@ export class OpenResultDTO {
      * @returns {OpenResultDTO}
      */
     static createFrom($$source = {}) {
-        const $$createField1_0 = $$createType52;
-        const $$createField2_0 = $$createType54;
+        const $$createField1_0 = $$createType59;
+        const $$createField2_0 = $$createType61;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("library" in $$parsedSource) {
             $$parsedSource["library"] = $$createField1_0($$parsedSource["library"]);
@@ -2287,7 +2870,7 @@ export class PageResult {
      * @returns {($$source?: any) => PageResult<T>}
      */
     static createFrom($$createParamT) {
-        const $$createField0_0 = $$createType55($$createParamT);
+        const $$createField0_0 = $$createType62($$createParamT);
         return ($$source = {}) => {
             let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
             if ("items" in $$parsedSource) {
@@ -2574,7 +3157,7 @@ export class RecommendationDTO {
      * @returns {RecommendationDTO}
      */
     static createFrom($$source = {}) {
-        const $$createField3_0 = $$createType38;
+        const $$createField3_0 = $$createType45;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("reasons" in $$parsedSource) {
             $$parsedSource["reasons"] = $$createField3_0($$parsedSource["reasons"]);
@@ -2712,8 +3295,8 @@ export class ReorganizePlanDTO {
      * @returns {ReorganizePlanDTO}
      */
     static createFrom($$source = {}) {
-        const $$createField6_0 = $$createType57;
-        const $$createField7_0 = $$createType59;
+        const $$createField6_0 = $$createType64;
+        const $$createField7_0 = $$createType66;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("movesSample" in $$parsedSource) {
             $$parsedSource["movesSample"] = $$createField6_0($$parsedSource["movesSample"]);
@@ -3131,8 +3714,8 @@ export class SessionDetail {
      * @returns {SessionDetail}
      */
     static createFrom($$source = {}) {
-        const $$createField0_0 = $$createType60;
-        const $$createField1_0 = $$createType49;
+        const $$createField0_0 = $$createType67;
+        const $$createField1_0 = $$createType56;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("session" in $$parsedSource) {
             $$parsedSource["session"] = $$createField0_0($$parsedSource["session"]);
@@ -3905,7 +4488,7 @@ export class VolumeDTO {
      * @returns {VolumeDTO}
      */
     static createFrom($$source = {}) {
-        const $$createField16_0 = $$createType38;
+        const $$createField16_0 = $$createType45;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("warnings" in $$parsedSource) {
             $$parsedSource["warnings"] = $$createField16_0($$parsedSource["warnings"]);
@@ -3983,27 +4566,34 @@ const $$createType33 = cleanup$0.Analyzer.createFrom;
 const $$createType34 = $Create.Nullable($$createType33);
 const $$createType35 = source$0.Identifier.createFrom;
 const $$createType36 = $Create.Nullable($$createType35);
-const $$createType37 = QueueSummaryDTO.createFrom;
-const $$createType38 = $Create.Array($Create.Any);
-const $$createType39 = ClassStatDTO.createFrom;
+const $$createType37 = thumbs$0.Cache.createFrom;
+const $$createType38 = $Create.Nullable($$createType37);
+const $$createType39 = BackupJobRefDTO.createFrom;
 const $$createType40 = $Create.Array($$createType39);
-const $$createType41 = RecommendationDTO.createFrom;
-const $$createType42 = TotalsDTO.createFrom;
-const $$createType43 = MonthCountDTO.createFrom;
-const $$createType44 = $Create.Array($$createType43);
-const $$createType45 = BackupSummaryDTO.createFrom;
-const $$createType46 = SourceDTO.createFrom;
+const $$createType41 = AssetRefDTO.createFrom;
+const $$createType42 = $Create.Nullable($$createType41);
+const $$createType43 = $Create.Array($$createType41);
+const $$createType44 = QueueSummaryDTO.createFrom;
+const $$createType45 = $Create.Array($Create.Any);
+const $$createType46 = ClassStatDTO.createFrom;
 const $$createType47 = $Create.Array($$createType46);
-const $$createType48 = LogEntryDTO.createFrom;
-const $$createType49 = $Create.Array($$createType48);
-const $$createType50 = AssetDTO.createFrom;
-const $$createType51 = CurrentLibraryDTO.createFrom;
-const $$createType52 = $Create.Nullable($$createType51);
-const $$createType53 = LockConflictDTO.createFrom;
-const $$createType54 = $Create.Nullable($$createType53);
-const $$createType55 = /** @type {(...args: any[]) => any} */(($$createParamT) => $Create.Array($$createParamT));
-const $$createType56 = ReorganizeMoveDTO.createFrom;
-const $$createType57 = $Create.Array($$createType56);
-const $$createType58 = ReorganizeSkipDTO.createFrom;
-const $$createType59 = $Create.Array($$createType58);
-const $$createType60 = SessionDTO.createFrom;
+const $$createType48 = RecommendationDTO.createFrom;
+const $$createType49 = TotalsDTO.createFrom;
+const $$createType50 = MonthCountDTO.createFrom;
+const $$createType51 = $Create.Array($$createType50);
+const $$createType52 = BackupSummaryDTO.createFrom;
+const $$createType53 = SourceDTO.createFrom;
+const $$createType54 = $Create.Array($$createType53);
+const $$createType55 = LogEntryDTO.createFrom;
+const $$createType56 = $Create.Array($$createType55);
+const $$createType57 = AssetDTO.createFrom;
+const $$createType58 = CurrentLibraryDTO.createFrom;
+const $$createType59 = $Create.Nullable($$createType58);
+const $$createType60 = LockConflictDTO.createFrom;
+const $$createType61 = $Create.Nullable($$createType60);
+const $$createType62 = /** @type {(...args: any[]) => any} */(($$createParamT) => $Create.Array($$createParamT));
+const $$createType63 = ReorganizeMoveDTO.createFrom;
+const $$createType64 = $Create.Array($$createType63);
+const $$createType65 = ReorganizeSkipDTO.createFrom;
+const $$createType66 = $Create.Array($$createType65);
+const $$createType67 = SessionDTO.createFrom;

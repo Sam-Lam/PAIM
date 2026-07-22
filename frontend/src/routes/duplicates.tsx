@@ -7,6 +7,7 @@ import {
   DocumentDuplicateIcon,
   FolderArrowDownIcon,
   NoSymbolIcon,
+  PhotoIcon,
   Square2StackIcon,
   TrashIcon,
 } from "@heroicons/react/24/outline";
@@ -333,25 +334,52 @@ function AssetColumn({ asset, kind }: { asset: AssetDTO; kind: "duplicate" | "or
         {kind === "duplicate" ? <ArrowRightCircleIcon className="h-4 w-4 text-zinc-600" /> : null}
       </div>
 
-      <div className="truncate text-[13px] font-medium text-zinc-100" title={asset.originalFilename}>
-        {asset.originalFilename}
-      </div>
-      <div
-        className="selectable mt-0.5 truncate font-mono text-[11px] text-zinc-500"
-        title={asset.currentArchivePath || asset.originalFullPath}
-      >
-        {asset.currentArchivePath || asset.originalFullPath || "—"}
-      </div>
+      <div className="flex gap-3">
+        <DupThumb asset={asset} />
+        <div className="min-w-0 flex-1">
+          <div className="truncate text-[13px] font-medium text-zinc-100" title={asset.originalFilename}>
+            {asset.originalFilename}
+          </div>
+          <div
+            className="selectable mt-0.5 truncate font-mono text-[11px] text-zinc-500"
+            title={asset.currentArchivePath || asset.originalFullPath}
+          >
+            {asset.currentArchivePath || asset.originalFullPath || "—"}
+          </div>
 
-      <div className="mt-3 grid grid-cols-2 gap-x-4 gap-y-1 text-[11px]">
-        <Field label="Size" value={formatBytes(asset.fileSize)} />
-        <Field label="Imported" value={formatDate(asset.importDate)} />
+          <div className="mt-3 grid grid-cols-2 gap-x-4 gap-y-1 text-[11px]">
+            <Field label="Size" value={formatBytes(asset.fileSize)} />
+            <Field label="Imported" value={formatDate(asset.importDate)} />
+          </div>
+        </div>
       </div>
 
       <div className="mt-2 space-y-1">
         <HashRow label="Quick" hash={asset.quickHash} />
         <HashRow label="Full" hash={asset.fullHash} />
       </div>
+    </div>
+  );
+}
+
+/** Grid-size thumbnail beside a duplicate/original, with placeholder fallback. */
+function DupThumb({ asset }: { asset: AssetDTO }) {
+  const [errored, setErrored] = useState(false);
+  return (
+    <div className="h-24 w-24 flex-none overflow-hidden rounded-md border border-zinc-800 bg-zinc-900">
+      {errored ? (
+        <div className="flex h-full w-full items-center justify-center">
+          <PhotoIcon className="h-6 w-6 text-zinc-700" />
+        </div>
+      ) : (
+        <img
+          src={`/thumb/${asset.id}`}
+          loading="lazy"
+          alt={asset.originalFilename}
+          onError={() => setErrored(true)}
+          className="h-full w-full object-cover"
+        />
+      )}
     </div>
   );
 }
