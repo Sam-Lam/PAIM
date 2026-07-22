@@ -31,6 +31,7 @@ type DuplicateService struct {
 	db       *gorm.DB
 	assets   *repo.AssetRepo
 	settings *repo.SettingsRepo
+	emitter  Emitter
 	log      *slog.Logger
 	// root is the portable-library root used to resolve stored (relative) archive
 	// paths to absolute for file operations and to relativize new paths for
@@ -49,11 +50,11 @@ func (s *DuplicateService) Bind(core *AppCore) {
 // NewDuplicateService constructs a DuplicateService. The db handle is used only
 // to update an asset's CurrentArchivePath after a move (the AssetRepo exposes no
 // setter for that column).
-func NewDuplicateService(db *gorm.DB, assets *repo.AssetRepo, settings *repo.SettingsRepo, logger *slog.Logger) *DuplicateService {
+func NewDuplicateService(db *gorm.DB, assets *repo.AssetRepo, settings *repo.SettingsRepo, emitter Emitter, logger *slog.Logger) *DuplicateService {
 	if logger == nil {
 		logger = slog.Default()
 	}
-	return &DuplicateService{db: db, assets: assets, settings: settings, log: logger.With(slog.String("subsystem", "duplicate"))}
+	return &DuplicateService{db: db, assets: assets, settings: settings, emitter: emitter, log: logger.With(slog.String("subsystem", "duplicate"))}
 }
 
 // DuplicatePairDTO pairs a duplicate asset with the original it duplicates.
@@ -217,7 +218,20 @@ func (s *DuplicateService) resolveMove(ctx context.Context, assetID, archivePath
 		undo = func() error { return os.Rename(dst, archivePath) }
 	} else {
 		// Cross-volume: copy+verify, then trash the original (never a bare delete).
-		if err := copyVerify(ctx, archivePath, dst); err != nil {
+		// Emit throttled byte progress so the ConfirmDialog can show a copy bar; a
+		// cancelled/closed ctx aborts the copy and the temp partial is removed by
+		// copyVerify's own cleanup path.
+		tr := newThrottle()
+		progressFn := func(bytesDone, bytesTotal int64) {
+			if bytesDone == bytesTotal || tr.allow() {
+				emitSafe(s.emitter, EventDuplicateProgress, DuplicateProgress{
+					AssetID:    assetID,
+					BytesDone:  bytesDone,
+					BytesTotal: bytesTotal,
+				})
+			}
+		}
+		if err := copyVerify(ctx, archivePath, dst, progressFn); err != nil {
 			return err
 		}
 		trashed, err := trashFile(filepath.Dir(archivePath), archivePath)

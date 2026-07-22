@@ -15,9 +15,17 @@ declare module "@wailsio/runtime" {
             "analyze:completed": services$0.AnalyzeCompleted;
             "backup:progress": services$0.BackupProgress;
             "backup:queue-changed": services$0.BackupQueueChanged;
+            "cleanup:completed": services$0.CleanupCompleted;
+            "cleanup:progress": services$0.CleanupProgress;
+            "duplicate:progress": services$0.DuplicateProgress;
             "import:completed": services$0.ImportCompleted;
             "import:progress": services$0.ImportProgress;
+            "library:progress": services$0.LibraryProgress;
+            "log:export-progress": services$0.LogExportProgress;
+            "reorganize:plan-progress": services$0.ReorganizePlanProgress;
+            "source:evaluated": services$0.SourceEvaluated;
             "source:identified": services$0.SourceIdentified;
+            "source:progress": services$0.SourceProgress;
             "volume:mounted": services$0.VolumeEvent;
             "volume:unmounted": services$0.VolumeEvent;
         }

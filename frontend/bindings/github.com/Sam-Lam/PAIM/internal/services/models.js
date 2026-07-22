@@ -111,6 +111,167 @@ export class ActiveAnalyzeDTO {
 }
 
 /**
+ * ActiveCleanupAnalyzeDTO is the re-attachment snapshot returned by
+ * ActiveCleanupAnalyze. State is "running" (Progress holds the latest snapshot),
+ * "completed" (Report, or Cancelled/Error, is populated), or "none". Root echoes
+ * the request so the frontend can restore context after navigation.
+ */
+export class ActiveCleanupAnalyzeDTO {
+    /**
+     * Creates a new ActiveCleanupAnalyzeDTO instance.
+     * @param {Partial<ActiveCleanupAnalyzeDTO>} [$$source = {}] - The source object to create the ActiveCleanupAnalyzeDTO.
+     */
+    constructor($$source = {}) {
+        if (!("state" in $$source)) {
+            /**
+             * @member
+             * @type {string}
+             */
+            this["state"] = "";
+        }
+        if (!("root" in $$source)) {
+            /**
+             * @member
+             * @type {string}
+             */
+            this["root"] = "";
+        }
+        if (!("progress" in $$source)) {
+            /**
+             * @member
+             * @type {CleanupProgress | null}
+             */
+            this["progress"] = null;
+        }
+        if (!("report" in $$source)) {
+            /**
+             * @member
+             * @type {CleanupReportDTO | null}
+             */
+            this["report"] = null;
+        }
+        if (!("cancelled" in $$source)) {
+            /**
+             * @member
+             * @type {boolean}
+             */
+            this["cancelled"] = false;
+        }
+        if (!("error" in $$source)) {
+            /**
+             * @member
+             * @type {string}
+             */
+            this["error"] = "";
+        }
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new ActiveCleanupAnalyzeDTO instance from a string or object.
+     * @param {any} [$$source = {}]
+     * @returns {ActiveCleanupAnalyzeDTO}
+     */
+    static createFrom($$source = {}) {
+        const $$createField2_0 = $$createType6;
+        const $$createField3_0 = $$createType8;
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        if ("progress" in $$parsedSource) {
+            $$parsedSource["progress"] = $$createField2_0($$parsedSource["progress"]);
+        }
+        if ("report" in $$parsedSource) {
+            $$parsedSource["report"] = $$createField3_0($$parsedSource["report"]);
+        }
+        return new ActiveCleanupAnalyzeDTO(/** @type {Partial<ActiveCleanupAnalyzeDTO>} */($$parsedSource));
+    }
+}
+
+/**
+ * ActiveSafeToEraseDTO is the re-attachment snapshot returned by
+ * ActiveSafeToErase. State is "running" (Progress holds the latest snapshot),
+ * "completed" (Report, or Cancelled/Error, is populated), or "none". MountPoint
+ * and SourceID echo the request so the frontend can restore the volume card.
+ */
+export class ActiveSafeToEraseDTO {
+    /**
+     * Creates a new ActiveSafeToEraseDTO instance.
+     * @param {Partial<ActiveSafeToEraseDTO>} [$$source = {}] - The source object to create the ActiveSafeToEraseDTO.
+     */
+    constructor($$source = {}) {
+        if (!("state" in $$source)) {
+            /**
+             * @member
+             * @type {string}
+             */
+            this["state"] = "";
+        }
+        if (!("mountPoint" in $$source)) {
+            /**
+             * @member
+             * @type {string}
+             */
+            this["mountPoint"] = "";
+        }
+        if (!("sourceId" in $$source)) {
+            /**
+             * @member
+             * @type {string}
+             */
+            this["sourceId"] = "";
+        }
+        if (!("progress" in $$source)) {
+            /**
+             * @member
+             * @type {SourceProgress | null}
+             */
+            this["progress"] = null;
+        }
+        if (!("report" in $$source)) {
+            /**
+             * @member
+             * @type {SafeToEraseDTO | null}
+             */
+            this["report"] = null;
+        }
+        if (!("cancelled" in $$source)) {
+            /**
+             * @member
+             * @type {boolean}
+             */
+            this["cancelled"] = false;
+        }
+        if (!("error" in $$source)) {
+            /**
+             * @member
+             * @type {string}
+             */
+            this["error"] = "";
+        }
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new ActiveSafeToEraseDTO instance from a string or object.
+     * @param {any} [$$source = {}]
+     * @returns {ActiveSafeToEraseDTO}
+     */
+    static createFrom($$source = {}) {
+        const $$createField3_0 = $$createType10;
+        const $$createField4_0 = $$createType12;
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        if ("progress" in $$parsedSource) {
+            $$parsedSource["progress"] = $$createField3_0($$parsedSource["progress"]);
+        }
+        if ("report" in $$parsedSource) {
+            $$parsedSource["report"] = $$createField4_0($$parsedSource["report"]);
+        }
+        return new ActiveSafeToEraseDTO(/** @type {Partial<ActiveSafeToEraseDTO>} */($$parsedSource));
+    }
+}
+
+/**
  * AnalyzeCompleted is the payload for analyze:completed, emitted once when a
  * background analyze (scan + dry run) goroutine finishes. Exactly one of the
  * terminal states holds:
@@ -298,18 +459,18 @@ export class AppCore {
      * @returns {AppCore}
      */
     static createFrom($$source = {}) {
-        const $$createField1_0 = $$createType6;
-        const $$createField2_0 = $$createType8;
-        const $$createField3_0 = $$createType10;
-        const $$createField4_0 = $$createType12;
-        const $$createField5_0 = $$createType14;
-        const $$createField6_0 = $$createType16;
-        const $$createField7_0 = $$createType18;
-        const $$createField8_0 = $$createType20;
-        const $$createField9_0 = $$createType22;
-        const $$createField10_0 = $$createType24;
-        const $$createField11_0 = $$createType26;
-        const $$createField12_0 = $$createType28;
+        const $$createField1_0 = $$createType14;
+        const $$createField2_0 = $$createType16;
+        const $$createField3_0 = $$createType18;
+        const $$createField4_0 = $$createType20;
+        const $$createField5_0 = $$createType22;
+        const $$createField6_0 = $$createType24;
+        const $$createField7_0 = $$createType26;
+        const $$createField8_0 = $$createType28;
+        const $$createField9_0 = $$createType30;
+        const $$createField10_0 = $$createType32;
+        const $$createField11_0 = $$createType34;
+        const $$createField12_0 = $$createType36;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("Meta" in $$parsedSource) {
             $$parsedSource["Meta"] = $$createField1_0($$parsedSource["Meta"]);
@@ -699,7 +860,7 @@ export class BackupQueueChanged {
      * @returns {BackupQueueChanged}
      */
     static createFrom($$source = {}) {
-        const $$createField0_0 = $$createType29;
+        const $$createField0_0 = $$createType37;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("summary" in $$parsedSource) {
             $$parsedSource["summary"] = $$createField0_0($$parsedSource["summary"]);
@@ -800,12 +961,119 @@ export class ClassStatDTO {
      * @returns {ClassStatDTO}
      */
     static createFrom($$source = {}) {
-        const $$createField3_0 = $$createType30;
+        const $$createField3_0 = $$createType38;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("files" in $$parsedSource) {
             $$parsedSource["files"] = $$createField3_0($$parsedSource["files"]);
         }
         return new ClassStatDTO(/** @type {Partial<ClassStatDTO>} */($$parsedSource));
+    }
+}
+
+/**
+ * CleanupCompleted is the payload for cleanup:completed, emitted once when a
+ * background cleanup analyze finishes. Exactly one terminal state holds: success
+ * (Report set), cancelled (Cancelled true), or failed (Error set). Root echoes
+ * the analyzed folder so the frontend can restore context on re-attach.
+ */
+export class CleanupCompleted {
+    /**
+     * Creates a new CleanupCompleted instance.
+     * @param {Partial<CleanupCompleted>} [$$source = {}] - The source object to create the CleanupCompleted.
+     */
+    constructor($$source = {}) {
+        if (!("root" in $$source)) {
+            /**
+             * @member
+             * @type {string}
+             */
+            this["root"] = "";
+        }
+        if (!("report" in $$source)) {
+            /**
+             * @member
+             * @type {CleanupReportDTO | null}
+             */
+            this["report"] = null;
+        }
+        if (!("cancelled" in $$source)) {
+            /**
+             * @member
+             * @type {boolean}
+             */
+            this["cancelled"] = false;
+        }
+        if (!("error" in $$source)) {
+            /**
+             * @member
+             * @type {string}
+             */
+            this["error"] = "";
+        }
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new CleanupCompleted instance from a string or object.
+     * @param {any} [$$source = {}]
+     * @returns {CleanupCompleted}
+     */
+    static createFrom($$source = {}) {
+        const $$createField1_0 = $$createType8;
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        if ("report" in $$parsedSource) {
+            $$parsedSource["report"] = $$createField1_0($$parsedSource["report"]);
+        }
+        return new CleanupCompleted(/** @type {Partial<CleanupCompleted>} */($$parsedSource));
+    }
+}
+
+/**
+ * CleanupProgress is the payload for cleanup:progress. FilesDone advances per
+ * classified file; FilesTotal is 0 while the analyzer walks-and-classifies in a
+ * single pass (the total is not known until the walk completes), so the UI
+ * renders an indeterminate count. CurrentFile is the file being classified.
+ */
+export class CleanupProgress {
+    /**
+     * Creates a new CleanupProgress instance.
+     * @param {Partial<CleanupProgress>} [$$source = {}] - The source object to create the CleanupProgress.
+     */
+    constructor($$source = {}) {
+        if (!("filesDone" in $$source)) {
+            /**
+             * @member
+             * @type {number}
+             */
+            this["filesDone"] = 0;
+        }
+        if (!("filesTotal" in $$source)) {
+            /**
+             * @member
+             * @type {number}
+             */
+            this["filesTotal"] = 0;
+        }
+        if (!("currentFile" in $$source)) {
+            /**
+             * @member
+             * @type {string}
+             */
+            this["currentFile"] = "";
+        }
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new CleanupProgress instance from a string or object.
+     * @param {any} [$$source = {}]
+     * @returns {CleanupProgress}
+     */
+    static createFrom($$source = {}) {
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        return new CleanupProgress(/** @type {Partial<CleanupProgress>} */($$parsedSource));
     }
 }
 
@@ -898,8 +1166,8 @@ export class CleanupReportDTO {
      * @returns {CleanupReportDTO}
      */
     static createFrom($$source = {}) {
-        const $$createField1_0 = $$createType32;
-        const $$createField9_0 = $$createType33;
+        const $$createField1_0 = $$createType40;
+        const $$createField9_0 = $$createType41;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("classes" in $$parsedSource) {
             $$parsedSource["classes"] = $$createField1_0($$parsedSource["classes"]);
@@ -1046,12 +1314,12 @@ export class DashboardStats {
      * @returns {DashboardStats}
      */
     static createFrom($$source = {}) {
-        const $$createField0_0 = $$createType34;
-        const $$createField1_0 = $$createType36;
-        const $$createField3_0 = $$createType37;
-        const $$createField5_0 = $$createType39;
-        const $$createField6_0 = $$createType39;
-        const $$createField7_0 = $$createType41;
+        const $$createField0_0 = $$createType42;
+        const $$createField1_0 = $$createType44;
+        const $$createField3_0 = $$createType45;
+        const $$createField5_0 = $$createType47;
+        const $$createField6_0 = $$createType47;
+        const $$createField7_0 = $$createType49;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("totals" in $$parsedSource) {
             $$parsedSource["totals"] = $$createField0_0($$parsedSource["totals"]);
@@ -1218,8 +1486,8 @@ export class DuplicatePairDTO {
      * @returns {DuplicatePairDTO}
      */
     static createFrom($$source = {}) {
-        const $$createField0_0 = $$createType42;
-        const $$createField1_0 = $$createType42;
+        const $$createField0_0 = $$createType50;
+        const $$createField1_0 = $$createType50;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("duplicate" in $$parsedSource) {
             $$parsedSource["duplicate"] = $$createField0_0($$parsedSource["duplicate"]);
@@ -1228,6 +1496,52 @@ export class DuplicatePairDTO {
             $$parsedSource["original"] = $$createField1_0($$parsedSource["original"]);
         }
         return new DuplicatePairDTO(/** @type {Partial<DuplicatePairDTO>} */($$parsedSource));
+    }
+}
+
+/**
+ * DuplicateProgress is the payload for duplicate:progress, carrying the byte
+ * progress of a cross-volume duplicate move (copy+verify).
+ */
+export class DuplicateProgress {
+    /**
+     * Creates a new DuplicateProgress instance.
+     * @param {Partial<DuplicateProgress>} [$$source = {}] - The source object to create the DuplicateProgress.
+     */
+    constructor($$source = {}) {
+        if (!("assetId" in $$source)) {
+            /**
+             * @member
+             * @type {string}
+             */
+            this["assetId"] = "";
+        }
+        if (!("bytesDone" in $$source)) {
+            /**
+             * @member
+             * @type {number}
+             */
+            this["bytesDone"] = 0;
+        }
+        if (!("bytesTotal" in $$source)) {
+            /**
+             * @member
+             * @type {number}
+             */
+            this["bytesTotal"] = 0;
+        }
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new DuplicateProgress instance from a string or object.
+     * @param {any} [$$source = {}]
+     * @returns {DuplicateProgress}
+     */
+    static createFrom($$source = {}) {
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        return new DuplicateProgress(/** @type {Partial<DuplicateProgress>} */($$parsedSource));
     }
 }
 
@@ -1537,6 +1851,62 @@ export class LibraryGate {
 }
 
 /**
+ * LibraryProgress is the payload for library:progress, emitted during a library
+ * open that runs migrations / legacy installation. Phase names the current step
+ * ("backing-up", "installing-legacy", "converting-paths", "verifying",
+ * "migrating"); Done/Total are populated for determinate phases (0 otherwise).
+ * Not cancellable: migrations must run to completion or roll back atomically.
+ */
+export class LibraryProgress {
+    /**
+     * Creates a new LibraryProgress instance.
+     * @param {Partial<LibraryProgress>} [$$source = {}] - The source object to create the LibraryProgress.
+     */
+    constructor($$source = {}) {
+        if (!("phase" in $$source)) {
+            /**
+             * @member
+             * @type {string}
+             */
+            this["phase"] = "";
+        }
+        if (!("message" in $$source)) {
+            /**
+             * @member
+             * @type {string}
+             */
+            this["message"] = "";
+        }
+        if (!("done" in $$source)) {
+            /**
+             * @member
+             * @type {number}
+             */
+            this["done"] = 0;
+        }
+        if (!("total" in $$source)) {
+            /**
+             * @member
+             * @type {number}
+             */
+            this["total"] = 0;
+        }
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new LibraryProgress instance from a string or object.
+     * @param {any} [$$source = {}]
+     * @returns {LibraryProgress}
+     */
+    static createFrom($$source = {}) {
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        return new LibraryProgress(/** @type {Partial<LibraryProgress>} */($$parsedSource));
+    }
+}
+
+/**
  * LockConflictDTO carries the structured details of a refused lock so the
  * frontend can present an informed Force Open confirmation.
  */
@@ -1663,6 +2033,38 @@ export class LogEntryDTO {
 }
 
 /**
+ * LogExportProgress is the payload for log:export-progress, emitted (throttled)
+ * while a log export streams rows to disk. RowsWritten is the running count.
+ */
+export class LogExportProgress {
+    /**
+     * Creates a new LogExportProgress instance.
+     * @param {Partial<LogExportProgress>} [$$source = {}] - The source object to create the LogExportProgress.
+     */
+    constructor($$source = {}) {
+        if (!("rowsWritten" in $$source)) {
+            /**
+             * @member
+             * @type {number}
+             */
+            this["rowsWritten"] = 0;
+        }
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new LogExportProgress instance from a string or object.
+     * @param {any} [$$source = {}]
+     * @returns {LogExportProgress}
+     */
+    static createFrom($$source = {}) {
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        return new LogExportProgress(/** @type {Partial<LogExportProgress>} */($$parsedSource));
+    }
+}
+
+/**
  * MatchDTO is the JSON-friendly result of identifying a volume.
  */
 export class MatchDTO {
@@ -1723,8 +2125,8 @@ export class MatchDTO {
      * @returns {MatchDTO}
      */
     static createFrom($$source = {}) {
-        const $$createField1_0 = $$createType38;
-        const $$createField3_0 = $$createType30;
+        const $$createField1_0 = $$createType46;
+        const $$createField3_0 = $$createType38;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("source" in $$parsedSource) {
             $$parsedSource["source"] = $$createField1_0($$parsedSource["source"]);
@@ -1820,8 +2222,8 @@ export class OpenResultDTO {
      * @returns {OpenResultDTO}
      */
     static createFrom($$source = {}) {
-        const $$createField1_0 = $$createType44;
-        const $$createField2_0 = $$createType46;
+        const $$createField1_0 = $$createType52;
+        const $$createField2_0 = $$createType54;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("library" in $$parsedSource) {
             $$parsedSource["library"] = $$createField1_0($$parsedSource["library"]);
@@ -1885,7 +2287,7 @@ export class PageResult {
      * @returns {($$source?: any) => PageResult<T>}
      */
     static createFrom($$createParamT) {
-        const $$createField0_0 = $$createType47($$createParamT);
+        const $$createField0_0 = $$createType55($$createParamT);
         return ($$source = {}) => {
             let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
             if ("items" in $$parsedSource) {
@@ -2172,7 +2574,7 @@ export class RecommendationDTO {
      * @returns {RecommendationDTO}
      */
     static createFrom($$source = {}) {
-        const $$createField3_0 = $$createType30;
+        const $$createField3_0 = $$createType38;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("reasons" in $$parsedSource) {
             $$parsedSource["reasons"] = $$createField3_0($$parsedSource["reasons"]);
@@ -2310,8 +2712,8 @@ export class ReorganizePlanDTO {
      * @returns {ReorganizePlanDTO}
      */
     static createFrom($$source = {}) {
-        const $$createField6_0 = $$createType49;
-        const $$createField7_0 = $$createType51;
+        const $$createField6_0 = $$createType57;
+        const $$createField7_0 = $$createType59;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("movesSample" in $$parsedSource) {
             $$parsedSource["movesSample"] = $$createField6_0($$parsedSource["movesSample"]);
@@ -2320,6 +2722,46 @@ export class ReorganizePlanDTO {
             $$parsedSource["skippedSample"] = $$createField7_0($$parsedSource["skippedSample"]);
         }
         return new ReorganizePlanDTO(/** @type {Partial<ReorganizePlanDTO>} */($$parsedSource));
+    }
+}
+
+/**
+ * ReorganizePlanProgress is the payload for reorganize:plan-progress, emitted
+ * (throttled) while PlanReorganize walks the catalog. Total is known up front
+ * (after listing archived assets) so the UI can render a determinate bar.
+ */
+export class ReorganizePlanProgress {
+    /**
+     * Creates a new ReorganizePlanProgress instance.
+     * @param {Partial<ReorganizePlanProgress>} [$$source = {}] - The source object to create the ReorganizePlanProgress.
+     */
+    constructor($$source = {}) {
+        if (!("done" in $$source)) {
+            /**
+             * @member
+             * @type {number}
+             */
+            this["done"] = 0;
+        }
+        if (!("total" in $$source)) {
+            /**
+             * @member
+             * @type {number}
+             */
+            this["total"] = 0;
+        }
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new ReorganizePlanProgress instance from a string or object.
+     * @param {any} [$$source = {}]
+     * @returns {ReorganizePlanProgress}
+     */
+    static createFrom($$source = {}) {
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        return new ReorganizePlanProgress(/** @type {Partial<ReorganizePlanProgress>} */($$parsedSource));
     }
 }
 
@@ -2649,6 +3091,8 @@ export class SessionDTO {
 
 /**
  * SessionDetail bundles a session with the log entries produced during its run.
+ * Truncated reports whether the event list was capped (sessionEventsCap); the
+ * counts on the session itself always reflect the full run.
  */
 export class SessionDetail {
     /**
@@ -2670,6 +3114,13 @@ export class SessionDetail {
              */
             this["events"] = [];
         }
+        if (!("truncated" in $$source)) {
+            /**
+             * @member
+             * @type {boolean}
+             */
+            this["truncated"] = false;
+        }
 
         Object.assign(this, $$source);
     }
@@ -2680,8 +3131,8 @@ export class SessionDetail {
      * @returns {SessionDetail}
      */
     static createFrom($$source = {}) {
-        const $$createField0_0 = $$createType52;
-        const $$createField1_0 = $$createType41;
+        const $$createField0_0 = $$createType60;
+        const $$createField1_0 = $$createType49;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("session" in $$parsedSource) {
             $$parsedSource["session"] = $$createField0_0($$parsedSource["session"]);
@@ -2759,6 +3210,45 @@ export class Settings {
     static createFrom($$source = {}) {
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         return new Settings(/** @type {Partial<Settings>} */($$parsedSource));
+    }
+}
+
+/**
+ * SleepGuard holds a macOS power-management assertion for the duration of any
+ * long-running PAIM operation (import, analyze, reorganize, safe-to-erase,
+ * cleanup analyze). While such work is in flight we run `/usr/bin/caffeinate -im`
+ * as a child process, which keeps the system (and, with -m, the disk) awake.
+ * 
+ * WHY: if the Mac sleeps mid-import the filesystem I/O the pipeline depends on is
+ * paused — copies stall, hashing halts, and a multi-hour import of a large card
+ * can silently wedge until the machine is woken. Holding the assertion for the
+ * life of the operation keeps long jobs progressing on an unattended machine.
+ * 
+ * It is refcounted so several concurrent operations share one assertion: the
+ * first Acquire starts the process, the last Release kills it. Shutdown force-
+ * kills it regardless of the count so no caffeinate child outlives the app.
+ * 
+ * The command starter is injected so tests can assert the refcount transitions
+ * without spawning a real process.
+ */
+export class SleepGuard {
+    /**
+     * Creates a new SleepGuard instance.
+     * @param {Partial<SleepGuard>} [$$source = {}] - The source object to create the SleepGuard.
+     */
+    constructor($$source = {}) {
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new SleepGuard instance from a string or object.
+     * @param {any} [$$source = {}]
+     * @returns {SleepGuard}
+     */
+    static createFrom($$source = {}) {
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        return new SleepGuard(/** @type {Partial<SleepGuard>} */($$parsedSource));
     }
 }
 
@@ -2899,6 +3389,71 @@ export class SourceDTO {
 }
 
 /**
+ * SourceEvaluated is the payload for source:evaluated, emitted once when a
+ * background safe-to-erase evaluation finishes. Exactly one terminal state
+ * holds: success (Report set), cancelled (Cancelled true), or failed (Error set).
+ */
+export class SourceEvaluated {
+    /**
+     * Creates a new SourceEvaluated instance.
+     * @param {Partial<SourceEvaluated>} [$$source = {}] - The source object to create the SourceEvaluated.
+     */
+    constructor($$source = {}) {
+        if (!("mountPoint" in $$source)) {
+            /**
+             * @member
+             * @type {string}
+             */
+            this["mountPoint"] = "";
+        }
+        if (!("sourceId" in $$source)) {
+            /**
+             * @member
+             * @type {string}
+             */
+            this["sourceId"] = "";
+        }
+        if (!("report" in $$source)) {
+            /**
+             * @member
+             * @type {SafeToEraseDTO | null}
+             */
+            this["report"] = null;
+        }
+        if (!("cancelled" in $$source)) {
+            /**
+             * @member
+             * @type {boolean}
+             */
+            this["cancelled"] = false;
+        }
+        if (!("error" in $$source)) {
+            /**
+             * @member
+             * @type {string}
+             */
+            this["error"] = "";
+        }
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new SourceEvaluated instance from a string or object.
+     * @param {any} [$$source = {}]
+     * @returns {SourceEvaluated}
+     */
+    static createFrom($$source = {}) {
+        const $$createField2_0 = $$createType12;
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        if ("report" in $$parsedSource) {
+            $$parsedSource["report"] = $$createField2_0($$parsedSource["report"]);
+        }
+        return new SourceEvaluated(/** @type {Partial<SourceEvaluated>} */($$parsedSource));
+    }
+}
+
+/**
  * SourceIdentified is the payload for source:identified, emitted after a volume
  * is identified and persisted.
  */
@@ -2952,6 +3507,75 @@ export class SourceIdentified {
 }
 
 /**
+ * SourceProgress is the payload for source:progress, carrying the progress of a
+ * long-running source operation. Kind is "safe-to-erase" (determinate:
+ * FilesTotal is known) or "identify" (indeterminate: only Scanned advances,
+ * FilesTotal is 0). MountPoint correlates the update with a volume card.
+ */
+export class SourceProgress {
+    /**
+     * Creates a new SourceProgress instance.
+     * @param {Partial<SourceProgress>} [$$source = {}] - The source object to create the SourceProgress.
+     */
+    constructor($$source = {}) {
+        if (!("kind" in $$source)) {
+            /**
+             * @member
+             * @type {string}
+             */
+            this["kind"] = "";
+        }
+        if (!("mountPoint" in $$source)) {
+            /**
+             * @member
+             * @type {string}
+             */
+            this["mountPoint"] = "";
+        }
+        if (!("filesDone" in $$source)) {
+            /**
+             * @member
+             * @type {number}
+             */
+            this["filesDone"] = 0;
+        }
+        if (!("filesTotal" in $$source)) {
+            /**
+             * @member
+             * @type {number}
+             */
+            this["filesTotal"] = 0;
+        }
+        if (!("scanned" in $$source)) {
+            /**
+             * @member
+             * @type {number}
+             */
+            this["scanned"] = 0;
+        }
+        if (!("currentFile" in $$source)) {
+            /**
+             * @member
+             * @type {string}
+             */
+            this["currentFile"] = "";
+        }
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new SourceProgress instance from a string or object.
+     * @param {any} [$$source = {}]
+     * @returns {SourceProgress}
+     */
+    static createFrom($$source = {}) {
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        return new SourceProgress(/** @type {Partial<SourceProgress>} */($$parsedSource));
+    }
+}
+
+/**
  * StartAnalyzeResult is returned immediately from StartAnalyze once the
  * background analyze has been launched. Root echoes the resolved source root; an
  * analyze is sessionless (no ImportSession is created), so it is re-attached via
@@ -2986,6 +3610,39 @@ export class StartAnalyzeResult {
 }
 
 /**
+ * StartCleanupAnalyzeResult is returned immediately from StartCleanupAnalyze once
+ * the background analysis has been launched. Root echoes the analyzed folder; the
+ * analysis is re-attached via ActiveCleanupAnalyze (only one runs at a time).
+ */
+export class StartCleanupAnalyzeResult {
+    /**
+     * Creates a new StartCleanupAnalyzeResult instance.
+     * @param {Partial<StartCleanupAnalyzeResult>} [$$source = {}] - The source object to create the StartCleanupAnalyzeResult.
+     */
+    constructor($$source = {}) {
+        if (!("root" in $$source)) {
+            /**
+             * @member
+             * @type {string}
+             */
+            this["root"] = "";
+        }
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new StartCleanupAnalyzeResult instance from a string or object.
+     * @param {any} [$$source = {}]
+     * @returns {StartCleanupAnalyzeResult}
+     */
+    static createFrom($$source = {}) {
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        return new StartCleanupAnalyzeResult(/** @type {Partial<StartCleanupAnalyzeResult>} */($$parsedSource));
+    }
+}
+
+/**
  * StartImportResult is returned immediately from StartImport once the session is
  * created and the background run has been launched.
  */
@@ -3014,6 +3671,40 @@ export class StartImportResult {
     static createFrom($$source = {}) {
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         return new StartImportResult(/** @type {Partial<StartImportResult>} */($$parsedSource));
+    }
+}
+
+/**
+ * StartSafeToEraseResult is returned immediately from StartSafeToErase once the
+ * background evaluation has been launched. MountPoint echoes the volume; the
+ * evaluation is re-attached via ActiveSafeToErase (keyed by nothing — only one
+ * runs at a time).
+ */
+export class StartSafeToEraseResult {
+    /**
+     * Creates a new StartSafeToEraseResult instance.
+     * @param {Partial<StartSafeToEraseResult>} [$$source = {}] - The source object to create the StartSafeToEraseResult.
+     */
+    constructor($$source = {}) {
+        if (!("mountPoint" in $$source)) {
+            /**
+             * @member
+             * @type {string}
+             */
+            this["mountPoint"] = "";
+        }
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new StartSafeToEraseResult instance from a string or object.
+     * @param {any} [$$source = {}]
+     * @returns {StartSafeToEraseResult}
+     */
+    static createFrom($$source = {}) {
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        return new StartSafeToEraseResult(/** @type {Partial<StartSafeToEraseResult>} */($$parsedSource));
     }
 }
 
@@ -3214,7 +3905,7 @@ export class VolumeDTO {
      * @returns {VolumeDTO}
      */
     static createFrom($$source = {}) {
-        const $$createField16_0 = $$createType30;
+        const $$createField16_0 = $$createType38;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("warnings" in $$parsedSource) {
             $$parsedSource["warnings"] = $$createField16_0($$parsedSource["warnings"]);
@@ -3260,51 +3951,59 @@ const $$createType1 = ImportProgress.createFrom;
 const $$createType2 = $Create.Nullable($$createType1);
 const $$createType3 = DryRunReportDTO.createFrom;
 const $$createType4 = $Create.Nullable($$createType3);
-const $$createType5 = db$0.Meta.createFrom;
+const $$createType5 = CleanupProgress.createFrom;
 const $$createType6 = $Create.Nullable($$createType5);
-const $$createType7 = gorm$0.DB.createFrom;
+const $$createType7 = CleanupReportDTO.createFrom;
 const $$createType8 = $Create.Nullable($$createType7);
-const $$createType9 = repo$0.AssetRepo.createFrom;
+const $$createType9 = SourceProgress.createFrom;
 const $$createType10 = $Create.Nullable($$createType9);
-const $$createType11 = repo$0.SessionRepo.createFrom;
+const $$createType11 = SafeToEraseDTO.createFrom;
 const $$createType12 = $Create.Nullable($$createType11);
-const $$createType13 = repo$0.SourceRepo.createFrom;
+const $$createType13 = db$0.Meta.createFrom;
 const $$createType14 = $Create.Nullable($$createType13);
-const $$createType15 = repo$0.BackupRepo.createFrom;
+const $$createType15 = gorm$0.DB.createFrom;
 const $$createType16 = $Create.Nullable($$createType15);
-const $$createType17 = repo$0.LogRepo.createFrom;
+const $$createType17 = repo$0.AssetRepo.createFrom;
 const $$createType18 = $Create.Nullable($$createType17);
-const $$createType19 = repo$0.SettingsRepo.createFrom;
+const $$createType19 = repo$0.SessionRepo.createFrom;
 const $$createType20 = $Create.Nullable($$createType19);
-const $$createType21 = backup$0.Manager.createFrom;
+const $$createType21 = repo$0.SourceRepo.createFrom;
 const $$createType22 = $Create.Nullable($$createType21);
-const $$createType23 = importer$0.Pipeline.createFrom;
+const $$createType23 = repo$0.BackupRepo.createFrom;
 const $$createType24 = $Create.Nullable($$createType23);
-const $$createType25 = cleanup$0.Analyzer.createFrom;
+const $$createType25 = repo$0.LogRepo.createFrom;
 const $$createType26 = $Create.Nullable($$createType25);
-const $$createType27 = source$0.Identifier.createFrom;
+const $$createType27 = repo$0.SettingsRepo.createFrom;
 const $$createType28 = $Create.Nullable($$createType27);
-const $$createType29 = QueueSummaryDTO.createFrom;
-const $$createType30 = $Create.Array($Create.Any);
-const $$createType31 = ClassStatDTO.createFrom;
-const $$createType32 = $Create.Array($$createType31);
-const $$createType33 = RecommendationDTO.createFrom;
-const $$createType34 = TotalsDTO.createFrom;
-const $$createType35 = MonthCountDTO.createFrom;
-const $$createType36 = $Create.Array($$createType35);
-const $$createType37 = BackupSummaryDTO.createFrom;
-const $$createType38 = SourceDTO.createFrom;
-const $$createType39 = $Create.Array($$createType38);
-const $$createType40 = LogEntryDTO.createFrom;
-const $$createType41 = $Create.Array($$createType40);
-const $$createType42 = AssetDTO.createFrom;
-const $$createType43 = CurrentLibraryDTO.createFrom;
-const $$createType44 = $Create.Nullable($$createType43);
-const $$createType45 = LockConflictDTO.createFrom;
-const $$createType46 = $Create.Nullable($$createType45);
-const $$createType47 = /** @type {(...args: any[]) => any} */(($$createParamT) => $Create.Array($$createParamT));
-const $$createType48 = ReorganizeMoveDTO.createFrom;
+const $$createType29 = backup$0.Manager.createFrom;
+const $$createType30 = $Create.Nullable($$createType29);
+const $$createType31 = importer$0.Pipeline.createFrom;
+const $$createType32 = $Create.Nullable($$createType31);
+const $$createType33 = cleanup$0.Analyzer.createFrom;
+const $$createType34 = $Create.Nullable($$createType33);
+const $$createType35 = source$0.Identifier.createFrom;
+const $$createType36 = $Create.Nullable($$createType35);
+const $$createType37 = QueueSummaryDTO.createFrom;
+const $$createType38 = $Create.Array($Create.Any);
+const $$createType39 = ClassStatDTO.createFrom;
+const $$createType40 = $Create.Array($$createType39);
+const $$createType41 = RecommendationDTO.createFrom;
+const $$createType42 = TotalsDTO.createFrom;
+const $$createType43 = MonthCountDTO.createFrom;
+const $$createType44 = $Create.Array($$createType43);
+const $$createType45 = BackupSummaryDTO.createFrom;
+const $$createType46 = SourceDTO.createFrom;
+const $$createType47 = $Create.Array($$createType46);
+const $$createType48 = LogEntryDTO.createFrom;
 const $$createType49 = $Create.Array($$createType48);
-const $$createType50 = ReorganizeSkipDTO.createFrom;
-const $$createType51 = $Create.Array($$createType50);
-const $$createType52 = SessionDTO.createFrom;
+const $$createType50 = AssetDTO.createFrom;
+const $$createType51 = CurrentLibraryDTO.createFrom;
+const $$createType52 = $Create.Nullable($$createType51);
+const $$createType53 = LockConflictDTO.createFrom;
+const $$createType54 = $Create.Nullable($$createType53);
+const $$createType55 = /** @type {(...args: any[]) => any} */(($$createParamT) => $Create.Array($$createParamT));
+const $$createType56 = ReorganizeMoveDTO.createFrom;
+const $$createType57 = $Create.Array($$createType56);
+const $$createType58 = ReorganizeSkipDTO.createFrom;
+const $$createType59 = $Create.Array($$createType58);
+const $$createType60 = SessionDTO.createFrom;

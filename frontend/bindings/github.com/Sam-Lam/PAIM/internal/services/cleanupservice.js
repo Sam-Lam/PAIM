@@ -9,6 +9,11 @@
  * Analyze result carries a recommendation the UI presents; any actual deletion
  * is the user's responsibility in Finder. A DeleteAnalyzedFolder method is
  * intentionally not implemented.
+ * 
+ * Analysis is a re-attachable background job (StartCleanupAnalyze /
+ * ActiveCleanupAnalyze / CancelCleanupAnalyze) because hashing a large folder
+ * against the archive takes minutes; the synchronous Analyze remains for simple
+ * callers and tests.
  * @module
  */
 
@@ -21,6 +26,19 @@ import { Call as $Call, CancellablePromise as $CancellablePromise, Create as $Cr
 import * as $models from "./models.js";
 
 /**
+ * ActiveCleanupAnalyze returns the current analysis state for re-attachment:
+ * "running" with the latest progress snapshot, "completed" with the report (or a
+ * cancelled/failed marker), or "none". A completed snapshot lapses to "none"
+ * after cleanupReportTTL.
+ * @returns {$CancellablePromise<$models.ActiveCleanupAnalyzeDTO>}
+ */
+export function ActiveCleanupAnalyze() {
+    return $Call.ByID(1621347092).then(/** @type {($result: any) => any} */(($result) => {
+        return $$createType0($result);
+    }));
+}
+
+/**
  * Analyze performs a strictly read-only classification of every media file under
  * root against the archive and returns the report plus its delete-safety
  * recommendation. It is synchronous but honors ctx cancellation between files.
@@ -29,7 +47,7 @@ import * as $models from "./models.js";
  */
 export function Analyze(root) {
     return $Call.ByID(2471023610, root).then(/** @type {($result: any) => any} */(($result) => {
-        return $$createType0($result);
+        return $$createType1($result);
     }));
 }
 
@@ -40,6 +58,15 @@ export function Analyze(root) {
  */
 export function Bind(core) {
     return $Call.ByID(3355625145, core);
+}
+
+/**
+ * CancelCleanupAnalyze cancels the active cleanup analysis (if any). It is a
+ * no-op when nothing is running.
+ * @returns {$CancellablePromise<void>}
+ */
+export function CancelCleanupAnalyze() {
+    return $Call.ByID(3112709864);
 }
 
 /**
@@ -60,5 +87,34 @@ export function SetGate(gate) {
     return $Call.ByID(3390353397, gate);
 }
 
+/**
+ * SetSleepGuard injects the shared sleep guard. Called once by main.go after
+ * construction; left unset (no-op) in unit tests.
+ * @param {$models.SleepGuard | null} g
+ * @returns {$CancellablePromise<void>}
+ */
+export function SetSleepGuard(g) {
+    return $Call.ByID(3404511190, g);
+}
+
+/**
+ * StartCleanupAnalyze launches a background cleanup analysis of root. Only one may
+ * run at a time (ErrCleanupInProgress otherwise). It emits throttled
+ * cleanup:progress (verbose per-file count + current file; the total is unknown
+ * during the single-pass walk-and-classify, so FilesTotal stays 0) and a terminal
+ * cleanup:completed when it finishes; the completed report is retained for
+ * re-attachment (ActiveCleanupAnalyze) for cleanupReportTTL. Cancel via
+ * CancelCleanupAnalyze.
+ * @param {string} root
+ * @returns {$CancellablePromise<$models.StartCleanupAnalyzeResult>}
+ */
+export function StartCleanupAnalyze(root) {
+    return $Call.ByID(890602810, root).then(/** @type {($result: any) => any} */(($result) => {
+        return $$createType2($result);
+    }));
+}
+
 // Private type creation functions
-const $$createType0 = $models.CleanupReportDTO.createFrom;
+const $$createType0 = $models.ActiveCleanupAnalyzeDTO.createFrom;
+const $$createType1 = $models.CleanupReportDTO.createFrom;
+const $$createType2 = $models.StartCleanupAnalyzeResult.createFrom;

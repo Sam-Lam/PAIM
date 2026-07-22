@@ -50,7 +50,7 @@ func (p *Pipeline) ResumeSession(ctx context.Context, sessionID string, progress
 	// hits this too.)
 	if root := opts.DestinationRoot; root != "" {
 		progressFn.emit(Progress{Phase: PhasePreparing})
-		removed, err := p.cleanStrayPartials(ctx, root)
+		removed, err := p.cleanStrayPartials(ctx, root, progressFn)
 		if err != nil {
 			p.log.Warn("resume: cleaning stray partials", "error", err.Error())
 		} else if removed > 0 {
@@ -73,9 +73,16 @@ func (p *Pipeline) ResumeSession(ctx context.Context, sessionID string, progress
 	return p.runImport(ctx, session, scan, opts, &state, progressFn)
 }
 
+// strayPartialProgressInterval is how often (in files checked) the stray-partial
+// sweep reports a "checked N files" progress update, so a multi-second walk over
+// a large archive never looks hung before scanning begins.
+const strayPartialProgressInterval = 512
+
 // cleanStrayPartials deletes every ".paim-partial-*" file under root, logging
-// each removal, and returns the count removed.
-func (p *Pipeline) cleanStrayPartials(ctx context.Context, root string) (int, error) {
+// each removal, and returns the count removed. It emits a periodic checked-file
+// count into the existing PhasePreparing progress (progressFn may be nil) so the
+// UI shows forward motion during the walk.
+func (p *Pipeline) cleanStrayPartials(ctx context.Context, root string, progressFn ProgressFunc) (int, error) {
 	if _, err := os.Stat(root); err != nil {
 		if os.IsNotExist(err) {
 			return 0, nil
@@ -83,6 +90,7 @@ func (p *Pipeline) cleanStrayPartials(ctx context.Context, root string) (int, er
 		return 0, fmt.Errorf("clean partials: stat root %q: %w", root, err)
 	}
 	removed := 0
+	checked := 0
 	walkErr := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return nil // skip unreadable entries
@@ -92,6 +100,10 @@ func (p *Pipeline) cleanStrayPartials(ctx context.Context, root string) (int, er
 		}
 		if d.IsDir() {
 			return nil
+		}
+		checked++
+		if checked%strayPartialProgressInterval == 0 {
+			progressFn.emit(Progress{Phase: PhasePreparing, FilesDone: checked, CurrentFile: path})
 		}
 		if strings.HasPrefix(d.Name(), partialPrefix) {
 			if rmErr := os.Remove(path); rmErr != nil {

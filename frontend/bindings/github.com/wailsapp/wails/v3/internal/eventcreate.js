@@ -15,11 +15,19 @@ function configure() {
         "analyze:completed": $$createType0,
         "backup:progress": $$createType1,
         "backup:queue-changed": $$createType2,
-        "import:completed": $$createType3,
-        "import:progress": $$createType4,
-        "source:identified": $$createType5,
-        "volume:mounted": $$createType6,
-        "volume:unmounted": $$createType6,
+        "cleanup:completed": $$createType3,
+        "cleanup:progress": $$createType4,
+        "duplicate:progress": $$createType5,
+        "import:completed": $$createType6,
+        "import:progress": $$createType7,
+        "library:progress": $$createType8,
+        "log:export-progress": $$createType9,
+        "reorganize:plan-progress": $$createType10,
+        "source:evaluated": $$createType11,
+        "source:identified": $$createType12,
+        "source:progress": $$createType13,
+        "volume:mounted": $$createType14,
+        "volume:unmounted": $$createType14,
     }));
 }
 
@@ -27,9 +35,17 @@ function configure() {
 const $$createType0 = services$0.AnalyzeCompleted.createFrom;
 const $$createType1 = services$0.BackupProgress.createFrom;
 const $$createType2 = services$0.BackupQueueChanged.createFrom;
-const $$createType3 = services$0.ImportCompleted.createFrom;
-const $$createType4 = services$0.ImportProgress.createFrom;
-const $$createType5 = services$0.SourceIdentified.createFrom;
-const $$createType6 = services$0.VolumeEvent.createFrom;
+const $$createType3 = services$0.CleanupCompleted.createFrom;
+const $$createType4 = services$0.CleanupProgress.createFrom;
+const $$createType5 = services$0.DuplicateProgress.createFrom;
+const $$createType6 = services$0.ImportCompleted.createFrom;
+const $$createType7 = services$0.ImportProgress.createFrom;
+const $$createType8 = services$0.LibraryProgress.createFrom;
+const $$createType9 = services$0.LogExportProgress.createFrom;
+const $$createType10 = services$0.ReorganizePlanProgress.createFrom;
+const $$createType11 = services$0.SourceEvaluated.createFrom;
+const $$createType12 = services$0.SourceIdentified.createFrom;
+const $$createType13 = services$0.SourceProgress.createFrom;
+const $$createType14 = services$0.VolumeEvent.createFrom;
 
 configure();

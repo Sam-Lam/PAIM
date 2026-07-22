@@ -91,14 +91,24 @@ func renameFile(src, dst string) error {
 	return nil
 }
 
+// byteProgressFn reports copy progress in bytes (done, total). It may be nil.
+type byteProgressFn func(bytesDone, bytesTotal int64)
+
 // copyVerify copies src to dst (via a temp file + fsync + atomic rename) and
 // verifies the copy with a full BLAKE3 comparison before returning. It mirrors
 // the importer/localfs data-safety protocol. The destination directory is
-// created if necessary.
-func copyVerify(ctx context.Context, src, dst string) error {
+// created if necessary. progressFn (which may be nil) receives byte progress
+// during the copy phase. A cancelled ctx aborts the copy and removes the temp
+// partial (verified via the existing cleanup paths below).
+func copyVerify(ctx context.Context, src, dst string, progressFn byteProgressFn) error {
 	srcFull, err := hashing.FullHash(ctx, src)
 	if err != nil {
 		return err
+	}
+
+	var total int64
+	if info, err := os.Stat(src); err == nil {
+		total = info.Size()
 	}
 
 	dstDir := filepath.Dir(dst)
@@ -117,7 +127,7 @@ func copyVerify(ctx context.Context, src, dst string) error {
 	if err != nil {
 		return fmt.Errorf("services: create temp %q: %w", tmp, err)
 	}
-	if err := copyChunked(ctx, out, in); err != nil {
+	if err := copyChunked(ctx, out, in, total, progressFn); err != nil {
 		_ = out.Close()
 		_ = os.Remove(tmp)
 		return fmt.Errorf("services: copy %q -> %q: %w", src, tmp, err)
@@ -158,9 +168,11 @@ func copyVerify(ctx context.Context, src, dst string) error {
 const copyBufferSize = 1 << 20
 
 // copyChunked streams src into dst in fixed-size chunks, checking ctx between
-// chunks so a cancelled context aborts the copy promptly.
-func copyChunked(ctx context.Context, dst io.Writer, src io.Reader) error {
+// chunks so a cancelled context aborts the copy promptly. It reports cumulative
+// byte progress via progressFn (which may be nil) after each chunk.
+func copyChunked(ctx context.Context, dst io.Writer, src io.Reader, total int64, progressFn byteProgressFn) error {
 	buf := make([]byte, copyBufferSize)
+	var done int64
 	for {
 		if err := ctx.Err(); err != nil {
 			return err
@@ -169,6 +181,10 @@ func copyChunked(ctx context.Context, dst io.Writer, src io.Reader) error {
 		if n > 0 {
 			if _, werr := dst.Write(buf[:n]); werr != nil {
 				return werr
+			}
+			done += int64(n)
+			if progressFn != nil {
+				progressFn(done, total)
 			}
 		}
 		if rerr == io.EOF {

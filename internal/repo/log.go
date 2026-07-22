@@ -41,14 +41,18 @@ func (r *LogRepo) BatchInsert(ctx context.Context, entries []domain.LogEntry) er
 }
 
 // LogQuery filters a log listing. Empty/zero fields are ignored. Text matches the
-// Message column (case-insensitive substring).
+// Message column (case-insensitive substring); MetadataText matches the
+// MetadataJSON column (case-insensitive substring) — used to gather the log
+// entries that reference a particular session ID without loading a whole time
+// window into memory.
 type LogQuery struct {
-	Text      string
-	Level     string
-	Subsystem string
-	Since     time.Time
-	Until     time.Time
-	Page      Page
+	Text         string
+	Level        string
+	Subsystem    string
+	MetadataText string
+	Since        time.Time
+	Until        time.Time
+	Page         Page
 }
 
 func (r *LogRepo) filtered(ctx context.Context, q LogQuery) *gorm.DB {
@@ -61,6 +65,9 @@ func (r *LogRepo) filtered(ctx context.Context, q LogQuery) *gorm.DB {
 	}
 	if q.Subsystem != "" {
 		base = base.Where("subsystem = ?", q.Subsystem)
+	}
+	if q.MetadataText != "" {
+		base = base.Where("metadata_json LIKE ?", "%"+q.MetadataText+"%")
 	}
 	if !q.Since.IsZero() {
 		base = base.Where("timestamp >= ?", q.Since)
@@ -107,4 +114,59 @@ func (r *LogRepo) ListForExport(ctx context.Context, q LogQuery) ([]domain.LogEn
 		return nil, fmt.Errorf("repo: list logs for export: %w", err)
 	}
 	return entries, nil
+}
+
+// StreamForExport streams every log entry matching q to fn in ascending
+// chronological order, in pages of pageSize rows, so a large export never holds
+// the whole result set in memory. Pagination on the query itself is ignored.
+// A non-nil error from fn aborts the stream and is returned.
+func (r *LogRepo) StreamForExport(ctx context.Context, q LogQuery, pageSize int, fn func(domain.LogEntry) error) error {
+	if pageSize <= 0 {
+		pageSize = 5000
+	}
+	offset := 0
+	for {
+		var page []domain.LogEntry
+		err := r.filtered(ctx, q).
+			Order("timestamp ASC, id ASC").
+			Limit(pageSize).Offset(offset).
+			Find(&page).Error
+		if err != nil {
+			return fmt.Errorf("repo: stream logs for export: %w", err)
+		}
+		for i := range page {
+			if err := fn(page[i]); err != nil {
+				return err
+			}
+		}
+		if len(page) < pageSize {
+			return nil
+		}
+		offset += pageSize
+	}
+}
+
+// ListForSession returns up to cap+0 log entries whose MetadataJSON references
+// sessionID within the query's time window, in ascending chronological order,
+// plus whether the result was truncated at the cap. It pushes the sessionID
+// match into SQL (metadata_json LIKE) instead of scanning a whole window in
+// memory. A non-positive cap applies a sane default.
+func (r *LogRepo) ListForSession(ctx context.Context, q LogQuery, cap int) ([]domain.LogEntry, bool, error) {
+	if cap <= 0 {
+		cap = 5000
+	}
+	var entries []domain.LogEntry
+	// Fetch one extra row to detect truncation without a separate COUNT.
+	err := r.filtered(ctx, q).
+		Order("timestamp ASC, id ASC").
+		Limit(cap + 1).
+		Find(&entries).Error
+	if err != nil {
+		return nil, false, fmt.Errorf("repo: list session events: %w", err)
+	}
+	truncated := len(entries) > cap
+	if truncated {
+		entries = entries[:cap]
+	}
+	return entries, truncated, nil
 }

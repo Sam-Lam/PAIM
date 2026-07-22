@@ -3,12 +3,15 @@ import { ClockIcon, FolderOpenIcon, FolderPlusIcon, ArrowUpTrayIcon } from "@her
 import { Button, Card, ConfirmDialog, Spinner } from "../components";
 import {
   LibraryService,
+  WailsEvents,
   type LegacyStatusDTO,
+  type LibraryProgress,
   type LockConflictDTO,
   type OpenResultDTO,
   type RecentLibraryDTO,
 } from "../lib/api";
 import { useLibrary } from "../lib/library";
+import { useWailsEvent } from "../lib/hooks";
 import { useToast } from "../lib/toast";
 
 const APP_VERSION = "0.1.0";
@@ -34,6 +37,13 @@ export function WelcomePage() {
   const [conflict, setConflict] = useState<Conflict | null>(null);
   const [forcing, setForcing] = useState(false);
   const [relaunch, setRelaunch] = useState(false);
+  // Live migration/open phase, so a legacy migration or catalog upgrade shows
+  // labeled progress and a prominent "don't quit" warning instead of a bare spinner.
+  const [phase, setPhase] = useState<LibraryProgress | null>(null);
+
+  useWailsEvent<LibraryProgress>(WailsEvents.LibraryProgress, (p) => {
+    setPhase(p.phase === "done" ? null : p);
+  });
 
   useEffect(() => {
     let cancelled = false;
@@ -80,8 +90,13 @@ export function WelcomePage() {
       toast.fromError(e, failMsg);
     } finally {
       setBusy(false);
+      setPhase(null);
     }
   };
+
+  // A migrating/legacy-install phase must not be interrupted — the catalog is
+  // being rewritten. Surface it prominently.
+  const migrationInFlight = phase?.phase === "migrating" || phase?.phase === "installing-legacy";
 
   const createLibrary = async () => {
     const path = await pickFolder(toast);
@@ -143,8 +158,24 @@ export function WelcomePage() {
             <Button icon={FolderOpenIcon} variant="secondary" onClick={() => void openLibrary()} disabled={busy}>
               Open existing…
             </Button>
-            {busy ? <Spinner /> : null}
+            {busy && !phase ? <Spinner /> : null}
+            {busy && phase ? (
+              <span className="flex items-center gap-2 text-[12px] text-zinc-400">
+                <Spinner />
+                {phase.message || phaseLabel(phase.phase)}
+              </span>
+            ) : null}
           </div>
+
+          {migrationInFlight ? (
+            <div className="mt-3 flex items-start gap-2 rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-[12px] font-medium text-amber-200">
+              <ArrowUpTrayIcon className="mt-0.5 h-4 w-4 flex-none" />
+              <span>
+                Upgrading library catalog — don't quit PAIM. This backs up and converts your catalog and must finish
+                before the library opens.
+              </span>
+            </div>
+          ) : null}
         </Card>
 
         {recent.length > 0 ? (
@@ -248,5 +279,24 @@ async function pickFolder(toast: ReturnType<typeof useToast>): Promise<string> {
   } catch (e) {
     toast.fromError(e, "Could not open folder picker");
     return "";
+  }
+}
+
+// phaseLabel maps a library:progress phase to human text (fallback when the
+// event carries no message).
+function phaseLabel(phase: string): string {
+  switch (phase) {
+    case "installing-legacy":
+      return "Copying and verifying legacy catalog…";
+    case "migrating":
+      return "Upgrading library catalog…";
+    case "backing-up":
+      return "Backing up catalog…";
+    case "converting-paths":
+      return "Converting archive paths…";
+    case "verifying":
+      return "Verifying…";
+    default:
+      return "Working…";
   }
 }

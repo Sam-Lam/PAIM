@@ -99,7 +99,7 @@ func TestReorganizePlanMixed(t *testing.T) {
 	h.write("dup-b.jpg", "same-dup-bytes", reorg2023)
 	h.adopt()
 
-	plan, err := h.pipe.PlanReorganize(context.Background(), ReorganizeOptions{})
+	plan, err := h.pipe.PlanReorganize(context.Background(), ReorganizeOptions{}, nil)
 	if err != nil {
 		t.Fatalf("plan: %v", err)
 	}
@@ -146,7 +146,7 @@ func TestReorganizePlanMissingFileSkipped(t *testing.T) {
 		t.Fatalf("remove: %v", err)
 	}
 
-	plan, err := h.pipe.PlanReorganize(context.Background(), ReorganizeOptions{})
+	plan, err := h.pipe.PlanReorganize(context.Background(), ReorganizeOptions{}, nil)
 	if err != nil {
 		t.Fatalf("plan: %v", err)
 	}
@@ -171,7 +171,7 @@ func TestReorganizePlanCollisionAmongPlannedTargets(t *testing.T) {
 	h.write(filepath.Join("b", "clash.jpg"), "payload-two-different", reorg2023)
 	h.adopt()
 
-	plan, err := h.pipe.PlanReorganize(context.Background(), ReorganizeOptions{})
+	plan, err := h.pipe.PlanReorganize(context.Background(), ReorganizeOptions{}, nil)
 	if err != nil {
 		t.Fatalf("plan: %v", err)
 	}
@@ -265,7 +265,7 @@ func TestReorganizeRunCancellationMidRun(t *testing.T) {
 	}
 	h.adopt()
 
-	plan, err := h.pipe.PlanReorganize(context.Background(), ReorganizeOptions{})
+	plan, err := h.pipe.PlanReorganize(context.Background(), ReorganizeOptions{}, nil)
 	if err != nil {
 		t.Fatalf("plan: %v", err)
 	}
@@ -358,5 +358,36 @@ func TestReorganizeLivePhotoPairMovesTogether(t *testing.T) {
 	}
 	if m2.LivePhotoPartnerID == nil || *m2.LivePhotoPartnerID != s2.ID {
 		t.Fatalf("motion→still link lost after move")
+	}
+}
+
+// TestReorganizePlanProgress verifies PlanReorganize drives the progress
+// callback with the total known up front and advancing to completion.
+func TestReorganizePlanProgress(t *testing.T) {
+	h := newReorgHarness(t)
+	h.write("loose1.jpg", "b1", reorg2023)
+	h.write("loose2.jpg", "b2", reorg2023)
+	h.write("loose3.jpg", "b3", reorg2023)
+	h.adopt()
+
+	type sample struct{ done, total int }
+	var samples []sample
+	plan, err := h.pipe.PlanReorganize(context.Background(), ReorganizeOptions{}, func(done, total int) {
+		samples = append(samples, sample{done, total})
+	})
+	if err != nil {
+		t.Fatalf("plan: %v", err)
+	}
+	if len(samples) == 0 {
+		t.Fatal("no progress callbacks from PlanReorganize")
+	}
+	for i, s := range samples {
+		if s.total != plan.TotalAssets {
+			t.Fatalf("sample %d total = %d, want %d (known up front)", i, s.total, plan.TotalAssets)
+		}
+	}
+	last := samples[len(samples)-1]
+	if last.done != plan.TotalAssets {
+		t.Fatalf("final progress done = %d, want %d", last.done, plan.TotalAssets)
 	}
 }

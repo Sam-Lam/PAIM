@@ -26,9 +26,12 @@ export function Bind(core) {
 }
 
 /**
- * Export writes all log entries matching the filters (ignoring pagination) to a
+ * Export streams all log entries matching the filters (ignoring pagination) to a
  * user-chosen file in json or csv format via a native save dialog and returns
- * the written path. It returns "" when the user cancels the dialog.
+ * the written path. It returns "" when the user cancels the dialog. Rows are
+ * pulled from the DB in pages (logExportPageSize) and written to disk one at a
+ * time — CSV row-by-row, JSON as a streamed array — so memory stays flat on a
+ * large log, and log:export-progress (rows written) is emitted throttled.
  * @param {string} query
  * @param {string} level
  * @param {string} subsystem

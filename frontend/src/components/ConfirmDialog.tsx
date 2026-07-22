@@ -18,6 +18,9 @@ export interface ConfirmDialogProps {
   requireWord?: string;
   /** Shows a spinner and disables buttons while the action runs. */
   loading?: boolean;
+  /** Optional content rendered under the description while loading (e.g. a byte
+   * progress bar for a long copy). */
+  loadingContent?: ReactNode;
   onConfirm: () => void;
   onCancel: () => void;
 }
@@ -31,6 +34,7 @@ export function ConfirmDialog({
   variant = "danger",
   requireWord,
   loading = false,
+  loadingContent,
   onConfirm,
   onCancel,
 }: ConfirmDialogProps) {
@@ -77,6 +81,8 @@ export function ConfirmDialog({
             {description != null ? (
               <div className="mt-1.5 text-[13px] leading-relaxed text-zinc-400">{description}</div>
             ) : null}
+
+            {loading && loadingContent != null ? <div className="mt-3">{loadingContent}</div> : null}
 
             {requireWord ? (
               <div className="mt-3">

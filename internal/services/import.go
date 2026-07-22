@@ -34,6 +34,7 @@ type scanEntry struct {
 // single active import: StartImport and ResumeSession reject concurrent starts.
 type ImportService struct {
 	gated
+	sleepAware
 	pipeline *importer.Pipeline
 	sessions *repo.SessionRepo
 	dialog   Dialoger
@@ -339,6 +340,7 @@ func (s *ImportService) StartAnalyze(ctx context.Context, opts ImportOptions) (S
 	s.analyze = &analyzeRun{opts: echo, running: true, at: time.Now()}
 	s.mu.Unlock()
 
+	s.sleep.Acquire()
 	go s.runAnalyze(runCtx, absRoot, echo, iopts)
 	return StartAnalyzeResult{Root: absRoot}, nil
 }
@@ -352,6 +354,7 @@ func (s *ImportService) runAnalyze(ctx context.Context, absRoot string, echo Imp
 		s.active = false
 		s.cancel = nil
 		s.mu.Unlock()
+		s.sleep.Release()
 	}()
 
 	tr := newThrottle()
@@ -525,6 +528,7 @@ func (s *ImportService) ResumeSession(ctx context.Context, sessionID string) (St
 	s.analyze = nil // a resumed import supersedes any retained analyze snapshot
 	s.mu.Unlock()
 
+	s.sleep.Acquire()
 	go s.run(runCtx, session.ID)
 	return StartImportResult{SessionID: session.ID}, nil
 }
@@ -559,6 +563,7 @@ func (s *ImportService) launch(ctx context.Context, state resumeState) (StartImp
 	s.analyze = nil // a new import supersedes any retained analyze snapshot
 	s.mu.Unlock()
 
+	s.sleep.Acquire()
 	go s.run(runCtx, session)
 	return StartImportResult{SessionID: session}, nil
 }
@@ -570,6 +575,7 @@ func (s *ImportService) run(ctx context.Context, sessionID string) {
 		s.active = false
 		s.cancel = nil
 		s.mu.Unlock()
+		s.sleep.Release()
 	}()
 
 	tr := newThrottle()

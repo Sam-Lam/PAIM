@@ -107,6 +107,7 @@ func createIndexes(gdb *gorm.DB) error {
 		{"idx_assets_source_id", "assets", "source_id"},
 		{"idx_assets_session_id", "assets", "session_id"},
 		{"idx_assets_duplicate_of", "assets", "duplicate_of_asset_id"},
+		{"idx_assets_import_date", "assets", "import_date"},
 		{"idx_backup_jobs_asset_id", "backup_jobs", "asset_id"},
 		{"idx_backup_jobs_status", "backup_jobs", "status"},
 		{"idx_log_entries_timestamp", "log_entries", "timestamp"},

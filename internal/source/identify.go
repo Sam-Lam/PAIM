@@ -91,8 +91,10 @@ func NewIdentifier(describer VolumeDescriber, store SourceStore, hasher FileHash
 }
 
 // Identify describes the volume at mountPoint, builds a candidate source record,
-// computes its content fingerprint, and scores it against known sources.
-func (id *Identifier) Identify(ctx context.Context, mountPoint string) (*Match, error) {
+// computes its content fingerprint, and scores it against known sources. The
+// fingerprint walk (the slow part) reports scanned-file progress via progressFn
+// (which may be nil) and honours ctx cancellation between entries.
+func (id *Identifier) Identify(ctx context.Context, mountPoint string, progressFn func(scanned int)) (*Match, error) {
 	info, err := id.describer.Describe(ctx, mountPoint)
 	if err != nil {
 		return nil, fmt.Errorf("source: describe %q: %w", mountPoint, err)
@@ -105,7 +107,7 @@ func (id *Identifier) Identify(ctx context.Context, mountPoint string) (*Match, 
 	var fp *Fingerprint
 	var fpReason string
 	if id.hasher != nil && id.isMedia != nil {
-		f, ferr := ComputeFingerprint(ctx, mountPoint, id.hasher, id.isMedia, nil)
+		f, ferr := ComputeFingerprint(ctx, mountPoint, id.hasher, id.isMedia, progressFn)
 		if ferr != nil {
 			fpReason = fmt.Sprintf("Content fingerprint unavailable: %v", ferr)
 		} else {

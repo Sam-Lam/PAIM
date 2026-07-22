@@ -22,7 +22,7 @@ func newDuplicateHarness(t *testing.T) (*DuplicateService, *gorm.DB, *repo.Asset
 	}
 	assets := repo.NewAssetRepo(gdb)
 	settings := repo.NewSettingsRepo(gdb)
-	svc := NewDuplicateService(gdb, assets, settings, nil)
+	svc := NewDuplicateService(gdb, assets, settings, nil, nil)
 	return svc, gdb, assets
 }
 

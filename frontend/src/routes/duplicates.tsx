@@ -22,10 +22,12 @@ import {
 import {
   CleanupService,
   DuplicateService,
+  WailsEvents,
   type AssetDTO,
   type DuplicatePairDTO,
+  type DuplicateProgress,
 } from "../lib/api";
-import { useAsyncData } from "../lib/hooks";
+import { useAsyncData, useWailsEvent } from "../lib/hooks";
 import { useToast } from "../lib/toast";
 import { formatBytes, formatDate, formatNumber } from "../lib/format";
 
@@ -51,6 +53,10 @@ export function DuplicatesPage() {
   const dupes = useAsyncData(() => DuplicateService.ListDuplicates(page, PAGE_SIZE));
   const [pending, setPending] = useState<PendingAction | null>(null);
   const [working, setWorking] = useState(false);
+  // Byte progress for a cross-volume move (copy+verify), shown in the dialog.
+  const [moveProgress, setMoveProgress] = useState<DuplicateProgress | null>(null);
+
+  useWailsEvent<DuplicateProgress>(WailsEvents.DuplicateProgress, (p) => setMoveProgress(p));
 
   useEffect(() => {
     void dupes.run().catch((e) => toast.fromError(e, "Failed to load duplicates"));
@@ -67,6 +73,7 @@ export function DuplicatesPage() {
   const runAction = async () => {
     if (!pending) return;
     setWorking(true);
+    setMoveProgress(null);
     try {
       await DuplicateService.ResolveDuplicate(pending.duplicateAssetID, pending.action, pending.destFolder);
       toast.success(ACTION_DONE_LABEL[pending.action]);
@@ -76,6 +83,7 @@ export function DuplicatesPage() {
       toast.fromError(e, "Could not resolve duplicate");
     } finally {
       setWorking(false);
+      setMoveProgress(null);
     }
   };
 
@@ -238,6 +246,24 @@ export function DuplicatesPage() {
         variant={pending?.variant ?? "primary"}
         requireWord={pending?.requireWord}
         loading={working}
+        loadingContent={
+          moveProgress && moveProgress.bytesTotal > 0 ? (
+            <div>
+              <div className="mb-1 flex items-center justify-between text-[11px] text-zinc-500">
+                <span>Copying across volumes…</span>
+                <span className="tabular-nums">
+                  {formatBytes(moveProgress.bytesDone)} / {formatBytes(moveProgress.bytesTotal)}
+                </span>
+              </div>
+              <div className="h-1.5 w-full overflow-hidden rounded-full bg-zinc-800">
+                <div
+                  className="h-full rounded-full bg-blue-500 transition-all"
+                  style={{ width: `${Math.min(100, Math.round((moveProgress.bytesDone / moveProgress.bytesTotal) * 100))}%` }}
+                />
+              </div>
+            </div>
+          ) : null
+        }
         onConfirm={() => void runAction()}
         onCancel={() => (working ? undefined : setPending(null))}
       />

@@ -2,7 +2,11 @@ package services
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"log/slog"
+	"sync"
+	"time"
 
 	"github.com/Sam-Lam/PAIM/internal/hashing"
 	"github.com/Sam-Lam/PAIM/internal/mediatype"
@@ -10,6 +14,29 @@ import (
 	"github.com/Sam-Lam/PAIM/internal/source"
 	"github.com/Sam-Lam/PAIM/internal/volumes"
 )
+
+// ErrSafeToEraseInProgress is returned by StartSafeToErase when an evaluation is
+// already running (only one safe-to-erase evaluation is permitted at a time).
+var ErrSafeToEraseInProgress = errors.New("services: a safe-to-erase evaluation is already running")
+
+// safeEraseReportTTL bounds how long a completed safe-to-erase report is retained
+// for re-attachment (ActiveSafeToErase) after the evaluation finishes.
+const safeEraseReportTTL = 15 * time.Minute
+
+// safeEraseRun is the in-memory state of a single background safe-to-erase
+// evaluation. running is true while the goroutine is live; once it finishes,
+// report/err/cancelled hold the terminal outcome and at records the completion
+// time for the TTL.
+type safeEraseRun struct {
+	mountPoint string
+	sourceID   string
+	progress   *SourceProgress // latest throttled snapshot
+	report     *SafeToEraseDTO // populated on success
+	err        string          // populated on failure
+	cancelled  bool            // populated when cancelled
+	running    bool
+	at         time.Time // completion time (for TTL) once running is false
+}
 
 // Hasher adapts internal/hashing to the source package's FileHasher and
 // FullHasher interfaces (QuickHash(path) / FullHash(path)). source.Identifier is
@@ -57,6 +84,7 @@ func (a assetLookupAdapter) FindByQuickHash(ctx context.Context, quickHash strin
 // safe-to-erase.
 type SourcesService struct {
 	gated
+	sleepAware
 	collector  *volumes.Collector
 	identifier *source.Identifier
 	sources    *repo.SourceRepo
@@ -64,6 +92,12 @@ type SourcesService struct {
 	watcher    *volumes.Watcher
 	emitter    Emitter
 	log        *slog.Logger
+
+	mu             sync.Mutex
+	active         bool
+	cancel         context.CancelFunc
+	run            *safeEraseRun
+	identifyCancel context.CancelFunc
 }
 
 // Bind wires the SourcesService to an open library's identifier and repos in
@@ -120,7 +154,33 @@ func (s *SourcesService) IdentifyVolume(ctx context.Context, mountPoint string) 
 	if err := s.guard(); err != nil {
 		return MatchDTO{}, err
 	}
-	match, err := s.identifier.Identify(ctx, mountPoint)
+
+	// Wire a cancellable context so a Cancel link can abort the (walk-bound)
+	// fingerprint scan. The call is synchronous, but CancelIdentify cancels this
+	// derived context to unwind the walk promptly.
+	idCtx, cancel := context.WithCancel(ctx)
+	s.mu.Lock()
+	s.identifyCancel = cancel
+	s.mu.Unlock()
+	defer func() {
+		cancel()
+		s.mu.Lock()
+		s.identifyCancel = nil
+		s.mu.Unlock()
+	}()
+
+	tr := newThrottle()
+	progressFn := func(scanned int) {
+		if tr.allow() {
+			emitSafe(s.emitter, EventSourceProgress, SourceProgress{
+				Kind:       "identify",
+				MountPoint: mountPoint,
+				Scanned:    scanned,
+			})
+		}
+	}
+
+	match, err := s.identifier.Identify(idCtx, mountPoint, progressFn)
 	if err != nil {
 		return MatchDTO{}, err
 	}
@@ -184,23 +244,99 @@ type SafeToEraseDTO struct {
 	BackupIncomplete int    `json:"backupIncomplete"`
 }
 
-// EvaluateSafeToErase walks the volume at mountPoint, decides whether it is safe
-// to erase, persists the conclusion on the source (when sourceID is set), and
-// returns the report.
-func (s *SourcesService) EvaluateSafeToErase(ctx context.Context, sourceID, mountPoint string) (SafeToEraseDTO, error) {
+// StartSafeToEraseResult is returned immediately from StartSafeToErase once the
+// background evaluation has been launched. MountPoint echoes the volume; the
+// evaluation is re-attached via ActiveSafeToErase (keyed by nothing — only one
+// runs at a time).
+type StartSafeToEraseResult struct {
+	MountPoint string `json:"mountPoint"`
+}
+
+// ActiveSafeToEraseDTO is the re-attachment snapshot returned by
+// ActiveSafeToErase. State is "running" (Progress holds the latest snapshot),
+// "completed" (Report, or Cancelled/Error, is populated), or "none". MountPoint
+// and SourceID echo the request so the frontend can restore the volume card.
+type ActiveSafeToEraseDTO struct {
+	State      string          `json:"state"`
+	MountPoint string          `json:"mountPoint"`
+	SourceID   string          `json:"sourceId"`
+	Progress   *SourceProgress `json:"progress"`
+	Report     *SafeToEraseDTO `json:"report"`
+	Cancelled  bool            `json:"cancelled"`
+	Error      string          `json:"error"`
+}
+
+// StartSafeToErase launches a background safe-to-erase evaluation of the volume
+// at mountPoint. Only one evaluation may run at a time (ErrSafeToEraseInProgress
+// otherwise). It emits throttled source:progress (kind "safe-to-erase") while
+// hashing and a terminal source:evaluated when it finishes; the completed report
+// is retained for re-attachment (ActiveSafeToErase) for safeEraseReportTTL. A
+// running evaluation is cancelled via CancelSafeToErase.
+func (s *SourcesService) StartSafeToErase(ctx context.Context, sourceID, mountPoint string) (StartSafeToEraseResult, error) {
 	if err := s.guard(); err != nil {
-		return SafeToEraseDTO{}, err
+		return StartSafeToEraseResult{}, err
 	}
-	report, err := s.identifier.EvaluateSafeToErase(ctx, sourceID, mountPoint, assetLookupAdapter{assets: s.assets}, mediatype.IsMedia)
+	if mountPoint == "" {
+		return StartSafeToEraseResult{}, fmt.Errorf("services: start safe-to-erase: empty mount point")
+	}
+
+	s.mu.Lock()
+	if s.active {
+		s.mu.Unlock()
+		return StartSafeToEraseResult{}, ErrSafeToEraseInProgress
+	}
+	s.active = true
+	runCtx, cancel := context.WithCancel(context.Background())
+	s.cancel = cancel
+	s.run = &safeEraseRun{mountPoint: mountPoint, sourceID: sourceID, running: true, at: time.Now()}
+	s.mu.Unlock()
+
+	s.sleep.Acquire()
+	go s.runSafeToErase(runCtx, sourceID, mountPoint)
+	return StartSafeToEraseResult{MountPoint: mountPoint}, nil
+}
+
+// runSafeToErase performs the evaluation, emitting throttled progress and a
+// terminal event, and persists the conclusion on the source (when sourceID set).
+func (s *SourcesService) runSafeToErase(ctx context.Context, sourceID, mountPoint string) {
+	defer func() {
+		s.mu.Lock()
+		s.active = false
+		s.cancel = nil
+		s.mu.Unlock()
+		s.sleep.Release()
+	}()
+
+	tr := newThrottle()
+	progressFn := func(filesDone, filesTotal int, currentFile string) {
+		p := SourceProgress{
+			Kind:        "safe-to-erase",
+			MountPoint:  mountPoint,
+			FilesDone:   filesDone,
+			FilesTotal:  filesTotal,
+			CurrentFile: currentFile,
+		}
+		s.mu.Lock()
+		if s.run != nil {
+			s.run.progress = &p
+		}
+		s.mu.Unlock()
+		if tr.allow() {
+			emitSafe(s.emitter, EventSourceProgress, p)
+		}
+	}
+
+	report, err := s.identifier.EvaluateSafeToErase(ctx, sourceID, mountPoint, assetLookupAdapter{assets: s.assets}, mediatype.IsMedia, progressFn)
 	if err != nil {
-		return SafeToEraseDTO{}, err
+		s.finishSafeToErase(mountPoint, sourceID, nil, err)
+		return
 	}
 	if sourceID != "" {
-		if err := s.sources.SetSafeToErase(ctx, sourceID, report.Safe, report.Reason); err != nil {
+		if err := s.sources.SetSafeToErase(context.Background(), sourceID, report.Safe, report.Reason); err != nil {
 			s.log.Warn("could not persist safe-to-erase", "sourceId", sourceID, "error", err.Error())
 		}
 	}
-	return SafeToEraseDTO{
+	dto := SafeToEraseDTO{
 		SourceID:         report.SourceID,
 		Safe:             report.Safe,
 		Reason:           report.Reason,
@@ -209,7 +345,98 @@ func (s *SourcesService) EvaluateSafeToErase(ctx context.Context, sourceID, moun
 		New:              report.New,
 		Unverified:       report.Unverified,
 		BackupIncomplete: report.BackupIncomplete,
+	}
+	s.finishSafeToErase(mountPoint, sourceID, &dto, nil)
+}
+
+// finishSafeToErase records the terminal state and emits source:evaluated. A
+// context-cancelled run is reported as Cancelled (not an error).
+func (s *SourcesService) finishSafeToErase(mountPoint, sourceID string, report *SafeToEraseDTO, runErr error) {
+	cancelled := false
+	errMsg := ""
+	if runErr != nil {
+		if errors.Is(runErr, context.Canceled) {
+			cancelled = true
+		} else {
+			errMsg = runErr.Error()
+			s.log.Warn("safe-to-erase failed", "mountPoint", mountPoint, "error", errMsg)
+		}
+	}
+	s.mu.Lock()
+	if s.run != nil {
+		s.run.running = false
+		s.run.report = report
+		s.run.cancelled = cancelled
+		s.run.err = errMsg
+		s.run.at = time.Now()
+	}
+	s.mu.Unlock()
+
+	emitSafe(s.emitter, EventSourceEvaluated, SourceEvaluated{
+		MountPoint: mountPoint,
+		SourceID:   sourceID,
+		Report:     report,
+		Cancelled:  cancelled,
+		Error:      errMsg,
+	})
+}
+
+// ActiveSafeToErase returns the current evaluation state for re-attachment:
+// "running" with the latest progress snapshot, "completed" with the report (or a
+// cancelled/failed marker), or "none". A completed snapshot lapses to "none"
+// after safeEraseReportTTL.
+func (s *SourcesService) ActiveSafeToErase(ctx context.Context) (ActiveSafeToEraseDTO, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	r := s.run
+	if r == nil {
+		return ActiveSafeToEraseDTO{State: "none"}, nil
+	}
+	if r.running {
+		dto := ActiveSafeToEraseDTO{State: "running", MountPoint: r.mountPoint, SourceID: r.sourceID}
+		if r.progress != nil {
+			p := *r.progress
+			dto.Progress = &p
+		}
+		return dto, nil
+	}
+	if time.Since(r.at) > safeEraseReportTTL {
+		s.run = nil
+		return ActiveSafeToEraseDTO{State: "none"}, nil
+	}
+	return ActiveSafeToEraseDTO{
+		State:      "completed",
+		MountPoint: r.mountPoint,
+		SourceID:   r.sourceID,
+		Report:     r.report,
+		Cancelled:  r.cancelled,
+		Error:      r.err,
 	}, nil
+}
+
+// CancelSafeToErase cancels the active safe-to-erase evaluation (if any). It is a
+// no-op when nothing is running.
+func (s *SourcesService) CancelSafeToErase(ctx context.Context) error {
+	s.mu.Lock()
+	cancel := s.cancel
+	s.mu.Unlock()
+	if cancel != nil {
+		cancel()
+	}
+	return nil
+}
+
+// CancelIdentify aborts an in-flight IdentifyVolume call (if any) by cancelling
+// its derived context, unwinding the fingerprint walk. It is a no-op when no
+// identification is running.
+func (s *SourcesService) CancelIdentify(ctx context.Context) error {
+	s.mu.Lock()
+	cancel := s.identifyCancel
+	s.mu.Unlock()
+	if cancel != nil {
+		cancel()
+	}
+	return nil
 }
 
 // StartWatching runs the volume watcher until ctx is cancelled, emitting

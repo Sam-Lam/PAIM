@@ -267,11 +267,19 @@ function SessionDetailPanel({ session, cache }: { session: SessionDTO; cache: Ma
             <ExclamationTriangleIcon className="h-4 w-4" /> No log events recorded for this session.
           </p>
         ) : (
-          <ul className="space-y-1">
-            {events.map((ev) => (
-              <EventRow key={ev.id} event={ev} />
-            ))}
-          </ul>
+          <>
+            <ul className="space-y-1">
+              {events.map((ev) => (
+                <EventRow key={ev.id} event={ev} />
+              ))}
+            </ul>
+            {detail?.truncated ? (
+              <p className="mt-2 flex items-center gap-2 text-[11px] text-amber-300/80">
+                <ExclamationTriangleIcon className="h-3.5 w-3.5 flex-none" /> Showing the first{" "}
+                {formatNumber(events.length)} events — this session produced more than are displayed.
+              </p>
+            ) : null}
+          </>
         )}
       </div>
     </div>

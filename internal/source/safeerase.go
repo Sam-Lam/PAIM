@@ -60,11 +60,23 @@ type SafeToEraseReport struct {
 	BackupIncomplete int `json:"backupIncomplete"`
 }
 
+// SafeToEraseProgress reports safe-to-erase evaluation progress: how many media
+// files have been hashed/classified so far, the total discovered by enumeration,
+// and the file currently being examined. FilesTotal is known before the first
+// hash (enumeration completes up front) so the UI can render a determinate bar.
+type SafeToEraseProgress func(filesDone, filesTotal int, currentFile string)
+
 // EvaluateSafeToErase walks the media files under root and reports whether the
 // source is safe to erase. Every media file must map — by quick hash, confirmed
 // by full hash on a quick-hash collision — to a verified asset whose required
 // backups are complete. Any New, Unverified, or BackupIncomplete file makes the
 // volume unsafe.
+//
+// It runs in two phases so progress is determinate: first it enumerates every
+// media file under root (fast, no hashing) to learn the total, then it hashes
+// and classifies each one, invoking progressFn (which may be nil) per file. The
+// hashing phase is the slow part on a large card, which is why it is a
+// re-attachable background job at the service layer.
 //
 // lookup and isMedia are injected (rather than being constructor dependencies of
 // the Identifier) because they are only needed for this evaluation.
@@ -74,6 +86,7 @@ func (id *Identifier) EvaluateSafeToErase(
 	root string,
 	lookup AssetLookup,
 	isMedia func(ext string) bool,
+	progressFn SafeToEraseProgress,
 ) (*SafeToEraseReport, error) {
 	if lookup == nil {
 		return nil, fmt.Errorf("source: evaluate safe-to-erase %q: nil asset lookup", sourceID)
@@ -88,6 +101,9 @@ func (id *Identifier) EvaluateSafeToErase(
 	report := &SafeToEraseReport{SourceID: sourceID}
 	fullHasher, _ := id.hasher.(FullHasher)
 
+	// Phase 1: enumerate media files (no hashing) so the total is known before the
+	// slow classification phase begins.
+	var mediaFiles []string
 	walkErr := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			if d != nil && d.IsDir() {
@@ -111,13 +127,31 @@ func (id *Identifier) EvaluateSafeToErase(
 		if !isMedia(normaliseExt(name)) {
 			return nil
 		}
-
-		report.TotalMedia++
-		classifyFile(ctx, id.hasher, fullHasher, lookup, path, report)
+		mediaFiles = append(mediaFiles, path)
 		return nil
 	})
 	if walkErr != nil {
 		return nil, fmt.Errorf("source: walk %q for safe-to-erase: %w", root, walkErr)
+	}
+
+	total := len(mediaFiles)
+	report.TotalMedia = total
+	if progressFn != nil {
+		progressFn(0, total, "")
+	}
+
+	// Phase 2: hash and classify each media file, reporting progress per file.
+	for i, path := range mediaFiles {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return nil, ctxErr
+		}
+		if progressFn != nil {
+			progressFn(i, total, path)
+		}
+		classifyFile(ctx, id.hasher, fullHasher, lookup, path, report)
+	}
+	if progressFn != nil {
+		progressFn(total, total, "")
 	}
 
 	finalizeReport(report)

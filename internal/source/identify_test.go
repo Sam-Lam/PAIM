@@ -177,7 +177,7 @@ func TestIdentify_ConfidenceScoring(t *testing.T) {
 			store := newFakeStore()
 			c.setup(store)
 			id := NewIdentifier(fakeDescriber{info: &c.info}, store, nil, nil) // hasher/isMedia nil: skip fingerprint
-			m, err := id.Identify(context.Background(), "/Volumes/X")
+			m, err := id.Identify(context.Background(), "/Volumes/X", nil)
 			if err != nil {
 				t.Fatalf("Identify: %v", err)
 			}
@@ -224,7 +224,7 @@ func TestIdentify_ContentFingerprintMatch(t *testing.T) {
 	id := NewIdentifier(fakeDescriber{info: info}, store, fakeHasher{}, isMediaTest)
 
 	// Identify uses the mount root as the fingerprint source; point it at root.
-	m, err := id.Identify(context.Background(), root)
+	m, err := id.Identify(context.Background(), root, nil)
 	if err != nil {
 		t.Fatalf("Identify: %v", err)
 	}
@@ -259,7 +259,7 @@ func TestIdentify_PathOnlyMatch(t *testing.T) {
 
 	info := &volumes.Info{ConnectionType: volumes.ConnectionSDXC}
 	id := NewIdentifier(fakeDescriber{info: info}, store, fakeHasher{}, isMediaTest)
-	m, err := id.Identify(context.Background(), root)
+	m, err := id.Identify(context.Background(), root, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -285,7 +285,7 @@ func TestIdentify_CandidateFieldsAndLabelNotIdentity(t *testing.T) {
 	}
 	store := newFakeStore() // nothing known
 	id := NewIdentifier(fakeDescriber{info: info}, store, nil, nil)
-	m, err := id.Identify(context.Background(), "/Volumes/NO NAME")
+	m, err := id.Identify(context.Background(), "/Volumes/NO NAME", nil)
 	if err != nil {
 		t.Fatal(err)
 	}

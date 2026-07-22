@@ -17,6 +17,19 @@ import { Call as $Call, CancellablePromise as $CancellablePromise, Create as $Cr
 import * as $models from "./models.js";
 
 /**
+ * ActiveSafeToErase returns the current evaluation state for re-attachment:
+ * "running" with the latest progress snapshot, "completed" with the report (or a
+ * cancelled/failed marker), or "none". A completed snapshot lapses to "none"
+ * after safeEraseReportTTL.
+ * @returns {$CancellablePromise<$models.ActiveSafeToEraseDTO>}
+ */
+export function ActiveSafeToErase() {
+    return $Call.ByID(1201452976).then(/** @type {($result: any) => any} */(($result) => {
+        return $$createType0($result);
+    }));
+}
+
+/**
  * Bind wires the SourcesService to an open library's identifier and repos in
  * place.
  * @param {$models.AppCore | null} core
@@ -27,17 +40,22 @@ export function Bind(core) {
 }
 
 /**
- * EvaluateSafeToErase walks the volume at mountPoint, decides whether it is safe
- * to erase, persists the conclusion on the source (when sourceID is set), and
- * returns the report.
- * @param {string} sourceID
- * @param {string} mountPoint
- * @returns {$CancellablePromise<$models.SafeToEraseDTO>}
+ * CancelIdentify aborts an in-flight IdentifyVolume call (if any) by cancelling
+ * its derived context, unwinding the fingerprint walk. It is a no-op when no
+ * identification is running.
+ * @returns {$CancellablePromise<void>}
  */
-export function EvaluateSafeToErase(sourceID, mountPoint) {
-    return $Call.ByID(2071845607, sourceID, mountPoint).then(/** @type {($result: any) => any} */(($result) => {
-        return $$createType0($result);
-    }));
+export function CancelIdentify() {
+    return $Call.ByID(1936244550);
+}
+
+/**
+ * CancelSafeToErase cancels the active safe-to-erase evaluation (if any). It is a
+ * no-op when nothing is running.
+ * @returns {$CancellablePromise<void>}
+ */
+export function CancelSafeToErase() {
+    return $Call.ByID(4142348336);
 }
 
 /**
@@ -84,6 +102,33 @@ export function SetGate(gate) {
 }
 
 /**
+ * SetSleepGuard injects the shared sleep guard. Called once by main.go after
+ * construction; left unset (no-op) in unit tests.
+ * @param {$models.SleepGuard | null} g
+ * @returns {$CancellablePromise<void>}
+ */
+export function SetSleepGuard(g) {
+    return $Call.ByID(1264687288, g);
+}
+
+/**
+ * StartSafeToErase launches a background safe-to-erase evaluation of the volume
+ * at mountPoint. Only one evaluation may run at a time (ErrSafeToEraseInProgress
+ * otherwise). It emits throttled source:progress (kind "safe-to-erase") while
+ * hashing and a terminal source:evaluated when it finishes; the completed report
+ * is retained for re-attachment (ActiveSafeToErase) for safeEraseReportTTL. A
+ * running evaluation is cancelled via CancelSafeToErase.
+ * @param {string} sourceID
+ * @param {string} mountPoint
+ * @returns {$CancellablePromise<$models.StartSafeToEraseResult>}
+ */
+export function StartSafeToErase(sourceID, mountPoint) {
+    return $Call.ByID(3941016818, sourceID, mountPoint).then(/** @type {($result: any) => any} */(($result) => {
+        return $$createType6($result);
+    }));
+}
+
+/**
  * StartWatching runs the volume watcher until ctx is cancelled, emitting
  * volume:mounted / volume:unmounted for each change. It is invoked once from
  * main.go in a background goroutine; the watcher establishes its baseline from
@@ -95,9 +140,10 @@ export function StartWatching() {
 }
 
 // Private type creation functions
-const $$createType0 = $models.SafeToEraseDTO.createFrom;
+const $$createType0 = $models.ActiveSafeToEraseDTO.createFrom;
 const $$createType1 = $models.MatchDTO.createFrom;
 const $$createType2 = $models.SourceDTO.createFrom;
 const $$createType3 = $Create.Array($$createType2);
 const $$createType4 = $models.VolumeDTO.createFrom;
 const $$createType5 = $Create.Array($$createType4);
+const $$createType6 = $models.StartSafeToEraseResult.createFrom;

@@ -88,7 +88,7 @@ func (p *Pipeline) reorgLog() *slog.Logger {
 // resolution considers BOTH names already on disk AND names already claimed by
 // earlier planned moves, so two planned moves can never target the same path.
 // Nothing on disk or in the DB is modified.
-func (p *Pipeline) PlanReorganize(ctx context.Context, opts ReorganizeOptions) (*ReorganizePlan, error) {
+func (p *Pipeline) PlanReorganize(ctx context.Context, opts ReorganizeOptions, progressFn func(done, total int)) (*ReorganizePlan, error) {
 	assets, err := p.assets.ListActiveArchived(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("reorganize: list assets: %w", err)
@@ -96,13 +96,21 @@ func (p *Pipeline) PlanReorganize(ctx context.Context, opts ReorganizeOptions) (
 	lay := p.effectiveLayout(p.libraryRoot)
 	plan := &ReorganizePlan{EventName: opts.EventName, Entries: make([]ReorganizeEntry, 0, len(assets))}
 
+	total := len(assets)
+	if progressFn != nil {
+		progressFn(0, total)
+	}
+
 	// claimed holds absolute destination paths already assigned to a planned move,
 	// so inter-move collisions resolve to distinct names deterministically.
 	claimed := make(map[string]bool)
 
-	for _, a := range assets {
+	for i, a := range assets {
 		if err := ctx.Err(); err != nil {
 			return nil, fmt.Errorf("reorganize: plan: %w", err)
+		}
+		if progressFn != nil {
+			progressFn(i, total)
 		}
 		plan.TotalAssets++
 		currentAbs := library.ResolvePath(p.libraryRoot, a.CurrentArchivePath)
@@ -179,6 +187,9 @@ func (p *Pipeline) PlanReorganize(ctx context.Context, opts ReorganizeOptions) (
 		plan.Entries = append(plan.Entries, entry)
 	}
 
+	if progressFn != nil {
+		progressFn(total, total)
+	}
 	p.reorgLog().Info("reorganize plan computed",
 		"total", plan.TotalAssets, "moves", plan.Moves, "inPlace", plan.InPlace, "skipped", plan.Skipped)
 	return plan, nil
@@ -260,7 +271,7 @@ func (p *Pipeline) RunReorganizeSession(ctx context.Context, sessionID string, p
 
 	if plan == nil {
 		var err error
-		plan, err = p.PlanReorganize(ctx, ReorganizeOptions{})
+		plan, err = p.PlanReorganize(ctx, ReorganizeOptions{}, nil)
 		if err != nil {
 			p.finishReorg(sessionID, domain.SessionStatusFailed)
 			return p.reload(sessionID), fmt.Errorf("reorganize: plan: %w", err)

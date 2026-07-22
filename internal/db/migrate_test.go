@@ -208,3 +208,71 @@ func TestOpenLibraryMigratesLegacyCatalog(t *testing.T) {
 		t.Fatalf("legacy path not converted: %q", got)
 	}
 }
+
+// TestMigrateRelativePathsBatchingCorrectness inserts more assets than the batch
+// chunk size (500) spanning inside-root and outside-root paths and asserts the
+// batched CASE/IN conversion produces byte-for-byte the same result the naive
+// per-row filepath.Rel+ToSlash conversion would, across every chunk boundary.
+func TestMigrateRelativePathsBatchingCorrectness(t *testing.T) {
+	root := t.TempDir()
+	gdb, dbPath := openAt(t, root)
+	setVersion(t, gdb, 1)
+
+	outsideBase := t.TempDir()
+	type expect struct {
+		id   string
+		want string
+	}
+	var expects []expect
+	const n = 1100 // > 2 chunks of 500
+	for i := 0; i < n; i++ {
+		var p, want string
+		if i%5 == 0 {
+			// Outside the root: kept absolute.
+			p = filepath.Join(outsideBase, "e", strconvItoa(i)+".JPG")
+			want = p
+		} else {
+			p = filepath.Join(root, "2024", "2024-01-0"+strconvItoa(i%9+1), "IMG"+strconvItoa(i)+".JPG")
+			rel, err := filepath.Rel(root, p)
+			if err != nil {
+				t.Fatalf("rel: %v", err)
+			}
+			want = filepath.ToSlash(rel)
+		}
+		id := insertAsset(t, gdb, p)
+		expects = append(expects, expect{id: id, want: want})
+	}
+
+	if _, err := Migrate(gdb, dbPath, root, LibraryMigrations(root)); err != nil {
+		t.Fatalf("Migrate: %v", err)
+	}
+
+	for _, e := range expects {
+		if got := assetPath(t, gdb, e.id); got != e.want {
+			t.Fatalf("asset %s path = %q, want %q", e.id, got, e.want)
+		}
+	}
+}
+
+// strconvItoa avoids importing strconv just for the test loop above.
+func strconvItoa(i int) string {
+	if i == 0 {
+		return "0"
+	}
+	neg := i < 0
+	if neg {
+		i = -i
+	}
+	var b [20]byte
+	pos := len(b)
+	for i > 0 {
+		pos--
+		b[pos] = byte('0' + i%10)
+		i /= 10
+	}
+	if neg {
+		pos--
+		b[pos] = '-'
+	}
+	return string(b[pos:])
+}

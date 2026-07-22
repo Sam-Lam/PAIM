@@ -14,10 +14,10 @@ import {
   type BadgeTone,
   type DataTableColumn,
 } from "../components";
-import { LogService, type LogEntryDTO } from "../lib/api";
-import { useAsyncData, usePoll } from "../lib/hooks";
+import { LogService, WailsEvents, type LogEntryDTO, type LogExportProgress } from "../lib/api";
+import { useAsyncData, usePoll, useWailsEvent } from "../lib/hooks";
 import { useToast } from "../lib/toast";
-import { formatDate } from "../lib/format";
+import { formatDate, formatNumber } from "../lib/format";
 
 const PAGE_SIZE = 50;
 const LEVELS = ["debug", "info", "warn", "error"];
@@ -48,6 +48,11 @@ export function LogsPage() {
   const [toLocal, setToLocal] = useState("");
   const [page, setPage] = useState(1);
   const [exporting, setExporting] = useState(false);
+  const [exportRows, setExportRows] = useState(0);
+
+  useWailsEvent<LogExportProgress>(WailsEvents.LogExportProgress, (p) => {
+    setExportRows(p.rowsWritten);
+  });
 
   const fromISO = localToISO(fromLocal);
   const toISO = localToISO(toLocal);
@@ -88,6 +93,7 @@ export function LogsPage() {
 
   const doExport = async (format: "json" | "csv") => {
     setExporting(true);
+    setExportRows(0);
     try {
       const path = await LogService.Export(query, level, subsystem, fromISO, toISO, format);
       if (path) toast.success("Log exported", path);
@@ -167,10 +173,15 @@ export function LogsPage() {
         description="Search, filter, and export the structured application log. Expand a row to see its metadata."
         actions={
           <>
-            <Button icon={ArrowDownTrayIcon} variant="secondary" onClick={() => void doExport("json")} loading={exporting}>
+            {exporting ? (
+              <span className="flex items-center text-[11px] text-zinc-500 tabular-nums">
+                Exporting… {exportRows > 0 ? `${formatNumber(exportRows)} rows` : ""}
+              </span>
+            ) : null}
+            <Button icon={ArrowDownTrayIcon} variant="secondary" onClick={() => void doExport("json")} loading={exporting} disabled={exporting}>
               Export JSON
             </Button>
-            <Button icon={ArrowDownTrayIcon} variant="secondary" onClick={() => void doExport("csv")} loading={exporting}>
+            <Button icon={ArrowDownTrayIcon} variant="secondary" onClick={() => void doExport("csv")} loading={exporting} disabled={exporting}>
               Export CSV
             </Button>
           </>

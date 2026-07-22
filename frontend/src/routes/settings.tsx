@@ -20,6 +20,7 @@ import {
   type ImportProgress,
   type RecentLibraryDTO,
   type ReorganizePlanDTO,
+  type ReorganizePlanProgress,
 } from "../lib/api";
 import { useWailsEvent } from "../lib/hooks";
 import { useLibrary } from "../lib/library";
@@ -306,6 +307,7 @@ function ReorganizeSection() {
   const toast = useToast();
   const [plan, setPlan] = useState<ReorganizePlanDTO | null>(null);
   const [planning, setPlanning] = useState(false);
+  const [planProgress, setPlanProgress] = useState<ReorganizePlanProgress | null>(null);
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [starting, setStarting] = useState(false);
   const [running, setRunning] = useState(false);
@@ -349,6 +351,10 @@ function ReorganizeSection() {
     }
   });
 
+  useWailsEvent<ReorganizePlanProgress>(WailsEvents.ReorganizePlanProgress, (data) => {
+    setPlanProgress(data);
+  });
+
   useWailsEvent<ImportCompleted>(WailsEvents.ImportCompleted, (data) => {
     if (running && (sessionId === null || data.sessionId === sessionId)) {
       setRunning(false);
@@ -367,6 +373,7 @@ function ReorganizeSection() {
 
   const preview = async () => {
     setPlanning(true);
+    setPlanProgress(null);
     setPlan(null);
     setCompleted(null);
     try {
@@ -376,6 +383,7 @@ function ReorganizeSection() {
       toast.fromError(e, "Could not compute the reorganize plan");
     } finally {
       setPlanning(false);
+      setPlanProgress(null);
     }
   };
 
@@ -442,6 +450,31 @@ function ReorganizeSection() {
           <ExclamationTriangleIcon className="mt-0.5 h-3.5 w-3.5 flex-none" />
           An import is currently running. Wait for it to finish before reorganizing.
         </p>
+      ) : null}
+
+      {/* Determinate progress while the plan is being computed from the catalog. */}
+      {planning ? (
+        <div className="mt-3 rounded-md border border-zinc-800 bg-zinc-950/40 p-3">
+          <div className="mb-1 flex items-center justify-between text-[11px] text-zinc-400">
+            <span>Computing plan…</span>
+            {planProgress && planProgress.total > 0 ? (
+              <span className="tabular-nums">
+                {formatNumber(planProgress.done)} / {formatNumber(planProgress.total)}
+              </span>
+            ) : null}
+          </div>
+          <div className="h-1.5 w-full overflow-hidden rounded-full bg-zinc-800">
+            <div
+              className="h-full rounded-full bg-blue-500 transition-all"
+              style={{
+                width:
+                  planProgress && planProgress.total > 0
+                    ? `${Math.min(100, Math.round((planProgress.done / planProgress.total) * 100))}%`
+                    : "15%",
+              }}
+            />
+          </div>
+        </div>
       ) : null}
 
       {/* Plan preview (idle, plan computed, not yet running). */}

@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "@tanstack/react-router";
 import {
   ArrowDownTrayIcon,
@@ -24,9 +24,12 @@ import {
 import {
   SourcesService,
   WailsEvents,
+  type ActiveSafeToEraseDTO,
   type MatchDTO,
   type SafeToEraseDTO,
   type SourceDTO,
+  type SourceEvaluated,
+  type SourceProgress,
   type VolumeDTO,
 } from "../lib/api";
 import { useAsyncData, usePoll, useWailsEvent } from "../lib/hooks";
@@ -37,6 +40,19 @@ export function SourcesPage() {
   const toast = useToast();
   const volumes = useAsyncData(() => SourcesService.ListVolumes());
   const known = useAsyncData(() => SourcesService.ListKnownSources());
+
+  // A single safe-to-erase evaluation runs at a time; its state is tracked here
+  // and routed to the matching volume card by mountPoint. Re-attaching on mount
+  // means navigating away and back never loses a running evaluation or its report.
+  const [erase, setErase] = useState<ActiveSafeToEraseDTO | null>(null);
+  // Live "Scanned N files…" counts for in-flight Identify calls, keyed by mount.
+  const [identifyScan, setIdentifyScan] = useState<Record<string, number>>({});
+
+  useEffect(() => {
+    void SourcesService.ActiveSafeToErase()
+      .then((dto) => setErase(dto.state === "none" ? null : dto))
+      .catch(() => undefined);
+  }, []);
 
   const refreshAll = () => {
     void volumes.run().catch((e) => toast.fromError(e, "Failed to list volumes"));
@@ -55,6 +71,25 @@ export function SourcesPage() {
     void volumes.run({ silent: true });
   });
   useWailsEvent(WailsEvents.SourceIdentified, () => {
+    void known.run({ silent: true });
+  });
+  useWailsEvent<SourceProgress>(WailsEvents.SourceProgress, (p) => {
+    if (p.kind === "safe-to-erase") {
+      setErase({ state: "running", mountPoint: p.mountPoint, sourceId: "", progress: p, report: null, cancelled: false, error: "" });
+    } else if (p.kind === "identify") {
+      setIdentifyScan((m) => ({ ...m, [p.mountPoint]: p.scanned }));
+    }
+  });
+  useWailsEvent<SourceEvaluated>(WailsEvents.SourceEvaluated, (e) => {
+    setErase({
+      state: "completed",
+      mountPoint: e.mountPoint,
+      sourceId: e.sourceId,
+      progress: null,
+      report: e.report,
+      cancelled: e.cancelled,
+      error: e.error,
+    });
     void known.run({ silent: true });
   });
 
@@ -93,7 +128,13 @@ export function SourcesPage() {
           ) : (
             <div className="grid gap-3 lg:grid-cols-2">
               {volumes.data.map((v) => (
-                <VolumeCard key={v.mountPoint} volume={v} onIdentified={() => void known.run({ silent: true })} />
+                <VolumeCard
+                  key={v.mountPoint}
+                  volume={v}
+                  onIdentified={() => void known.run({ silent: true })}
+                  erase={erase && erase.mountPoint === v.mountPoint ? erase : null}
+                  identifyScanned={identifyScan[v.mountPoint]}
+                />
               ))}
             </div>
           )}
@@ -115,19 +156,29 @@ function connectionIcon(v: VolumeDTO) {
   return ServerStackIcon;
 }
 
-function VolumeCard({ volume, onIdentified }: { volume: VolumeDTO; onIdentified: () => void }) {
+function VolumeCard({
+  volume,
+  onIdentified,
+  erase,
+  identifyScanned,
+}: {
+  volume: VolumeDTO;
+  onIdentified: () => void;
+  erase: ActiveSafeToEraseDTO | null;
+  identifyScanned?: number;
+}) {
   const toast = useToast();
   const navigate = useNavigate();
   const [match, setMatch] = useState<MatchDTO | null>(null);
-  const [safe, setSafe] = useState<SafeToEraseDTO | null>(null);
   const [identifying, setIdentifying] = useState(false);
-  const [evaluating, setEvaluating] = useState(false);
 
   const Icon = connectionIcon(volume);
   const usedPct =
     volume.capacityBytes > 0
       ? Math.min(100, Math.round(((volume.capacityBytes - volume.freeBytes) / volume.capacityBytes) * 100))
       : 0;
+
+  const evaluating = erase?.state === "running";
 
   const identify = async () => {
     setIdentifying(true);
@@ -143,15 +194,15 @@ function VolumeCard({ volume, onIdentified }: { volume: VolumeDTO; onIdentified:
   };
 
   const evaluate = async () => {
-    setEvaluating(true);
     try {
-      const report = await SourcesService.EvaluateSafeToErase(match?.sourceId ?? "", volume.mountPoint);
-      setSafe(report);
+      await SourcesService.StartSafeToErase(match?.sourceId ?? "", volume.mountPoint);
     } catch (e) {
       toast.fromError(e, "Safe-to-erase evaluation failed");
-    } finally {
-      setEvaluating(false);
     }
+  };
+
+  const cancelEvaluate = () => {
+    void SourcesService.CancelSafeToErase().catch(() => undefined);
   };
 
   return (
@@ -202,11 +253,19 @@ function VolumeCard({ volume, onIdentified }: { volume: VolumeDTO; onIdentified:
       </div>
 
       {/* Actions */}
-      <div className="mt-4 flex flex-wrap gap-2">
+      <div className="mt-4 flex flex-wrap items-center gap-2">
         <Button icon={FingerPrintIcon} onClick={identify} loading={identifying}>
           Identify
         </Button>
-        <Button icon={ShieldCheckIcon} onClick={evaluate} loading={evaluating} variant="secondary">
+        {identifying ? (
+          <span className="flex items-center gap-2 text-[11px] text-zinc-500">
+            <span className="tabular-nums">Scanned {formatNumber(identifyScanned ?? 0)} files…</span>
+            <button className="text-blue-400 hover:underline" onClick={() => void SourcesService.CancelIdentify()}>
+              Cancel
+            </button>
+          </span>
+        ) : null}
+        <Button icon={ShieldCheckIcon} onClick={evaluate} loading={evaluating} disabled={evaluating} variant="secondary">
           Evaluate Safe to Erase
         </Button>
         <Button
@@ -219,8 +278,49 @@ function VolumeCard({ volume, onIdentified }: { volume: VolumeDTO; onIdentified:
       </div>
 
       {match ? <MatchPanel match={match} /> : null}
-      {safe ? <SafeToErasePanel report={safe} /> : null}
+      {erase?.state === "running" ? (
+        <SafeToEraseProgress progress={erase.progress} onCancel={cancelEvaluate} />
+      ) : null}
+      {erase?.state === "completed" && erase.report ? <SafeToErasePanel report={erase.report} /> : null}
+      {erase?.state === "completed" && erase.cancelled ? (
+        <p className="mt-3 text-[11px] text-zinc-500">Safe-to-erase evaluation cancelled.</p>
+      ) : null}
+      {erase?.state === "completed" && erase.error ? (
+        <p className="mt-3 text-[11px] text-red-400">Evaluation failed: {erase.error}</p>
+      ) : null}
     </Card>
+  );
+}
+
+// SafeToEraseProgress renders the determinate progress panel on a volume card
+// while a background safe-to-erase evaluation is hashing its files.
+function SafeToEraseProgress({ progress, onCancel }: { progress: SourceProgress | null; onCancel: () => void }) {
+  const done = progress?.filesDone ?? 0;
+  const total = progress?.filesTotal ?? 0;
+  const pct = total > 0 ? Math.min(100, Math.round((done / total) * 100)) : 0;
+  return (
+    <div className="mt-3 rounded-lg border border-zinc-800 bg-zinc-950/40 p-3">
+      <div className="mb-2 flex items-center justify-between">
+        <h4 className="text-xs font-semibold text-zinc-300">Evaluating safe to erase…</h4>
+        <button className="text-[11px] text-blue-400 hover:underline" onClick={onCancel}>
+          Cancel
+        </button>
+      </div>
+      <div className="h-2 w-full overflow-hidden rounded-full bg-zinc-800">
+        <div className="h-full rounded-full bg-blue-500 transition-all" style={{ width: `${pct}%` }} />
+      </div>
+      <div className="mt-1 flex items-center justify-between text-[10px] text-zinc-500">
+        <span className="tabular-nums">
+          {formatNumber(done)} of {formatNumber(total)} files hashed
+        </span>
+        <span>{pct}%</span>
+      </div>
+      {progress?.currentFile ? (
+        <p className="selectable mt-1 truncate text-[10px] text-zinc-600" title={progress.currentFile}>
+          {progress.currentFile}
+        </p>
+      ) : null}
+    </div>
   );
 }
 

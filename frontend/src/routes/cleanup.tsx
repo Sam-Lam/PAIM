@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   ArchiveBoxIcon,
   ChevronDownIcon,
@@ -13,8 +13,16 @@ import {
   SparklesIcon,
   XCircleIcon,
 } from "@heroicons/react/24/outline";
-import { Button, Card, LoadingBlock, PageHeader } from "../components";
-import { CleanupService, type ClassStatDTO, type CleanupReportDTO } from "../lib/api";
+import { Button, Card, PageHeader } from "../components";
+import {
+  CleanupService,
+  WailsEvents,
+  type ClassStatDTO,
+  type CleanupCompleted,
+  type CleanupProgress,
+  type CleanupReportDTO,
+} from "../lib/api";
+import { useWailsEvent } from "../lib/hooks";
 import { useToast } from "../lib/toast";
 import { baseName, formatBytes, formatNumber } from "../lib/format";
 
@@ -51,7 +59,41 @@ export function CleanupPage() {
   const toast = useToast();
   const [root, setRoot] = useState("");
   const [analyzing, setAnalyzing] = useState(false);
+  const [progress, setProgress] = useState<CleanupProgress | null>(null);
   const [report, setReport] = useState<CleanupReportDTO | null>(null);
+
+  // Re-attach to a running/completed analysis on mount so navigating away and
+  // back never loses a long analysis or its cached report (15-minute TTL).
+  useEffect(() => {
+    void CleanupService.ActiveCleanupAnalyze()
+      .then((dto) => {
+        if (dto.state === "running") {
+          setAnalyzing(true);
+          setRoot(dto.root);
+          setProgress(dto.progress ?? null);
+        } else if (dto.state === "completed" && dto.report) {
+          setReport(dto.report);
+          setRoot(dto.root);
+        }
+      })
+      .catch(() => undefined);
+  }, []);
+
+  useWailsEvent<CleanupProgress>(WailsEvents.CleanupProgress, (p) => {
+    setAnalyzing(true);
+    setProgress(p);
+  });
+  useWailsEvent<CleanupCompleted>(WailsEvents.CleanupCompleted, (c) => {
+    setAnalyzing(false);
+    setProgress(null);
+    if (c.error) {
+      toast.error(`Analysis failed: ${c.error}`);
+    } else if (c.cancelled) {
+      toast.info("Analysis cancelled");
+    } else if (c.report) {
+      setReport(c.report);
+    }
+  });
 
   const pick = async () => {
     try {
@@ -68,15 +110,18 @@ export function CleanupPage() {
       return;
     }
     setAnalyzing(true);
+    setProgress(null);
     setReport(null);
     try {
-      const result = await CleanupService.Analyze(root);
-      setReport(result);
+      await CleanupService.StartCleanupAnalyze(root);
     } catch (e) {
-      toast.fromError(e, "Analysis failed");
-    } finally {
       setAnalyzing(false);
+      toast.fromError(e, "Analysis failed");
     }
+  };
+
+  const cancel = () => {
+    void CleanupService.CancelCleanupAnalyze().catch(() => undefined);
   };
 
   const anyTruncated = report?.classes?.some((c) => c.truncated) ?? false;
@@ -114,7 +159,28 @@ export function CleanupPage() {
 
       {analyzing ? (
         <Card>
-          <LoadingBlock label="Read-only analysis — hashing and classifying every media file…" />
+          <div className="flex items-center justify-between">
+            <div className="min-w-0">
+              <p className="text-sm font-medium text-zinc-200">
+                Read-only analysis — hashing and classifying every media file…
+              </p>
+              <p className="mt-1 text-[12px] text-zinc-500 tabular-nums">
+                {formatNumber(progress?.filesDone ?? 0)} files checked
+              </p>
+              {progress?.currentFile ? (
+                <p className="selectable mt-1 truncate font-mono text-[11px] text-zinc-600" title={progress.currentFile}>
+                  {progress.currentFile}
+                </p>
+              ) : null}
+            </div>
+            <Button variant="secondary" onClick={cancel}>
+              Cancel
+            </Button>
+          </div>
+          {/* Indeterminate: the total is unknown during the single-pass walk. */}
+          <div className="mt-3 h-1.5 w-full overflow-hidden rounded-full bg-zinc-800">
+            <div className="h-full w-1/3 animate-pulse rounded-full bg-blue-500" />
+          </div>
         </Card>
       ) : report ? (
         <div className="space-y-5">

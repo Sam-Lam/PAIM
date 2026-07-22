@@ -28,6 +28,14 @@ const (
 	EventVolumeMounted      = "volume:mounted"
 	EventVolumeUnmounted    = "volume:unmounted"
 	EventSourceIdentified   = "source:identified"
+	EventSourceProgress     = "source:progress"
+	EventSourceEvaluated    = "source:evaluated"
+	EventCleanupProgress    = "cleanup:progress"
+	EventCleanupCompleted   = "cleanup:completed"
+	EventReorganizePlan     = "reorganize:plan-progress"
+	EventLogExportProgress  = "log:export-progress"
+	EventDuplicateProgress  = "duplicate:progress"
+	EventLibraryProgress    = "library:progress"
 )
 
 // Emitter delivers a typed event payload to the frontend. It is implemented in
@@ -116,6 +124,85 @@ type SourceIdentified struct {
 	SourceID   string `json:"sourceId"`
 	Confidence int    `json:"confidence"`
 	IsKnown    bool   `json:"isKnown"`
+}
+
+// SourceProgress is the payload for source:progress, carrying the progress of a
+// long-running source operation. Kind is "safe-to-erase" (determinate:
+// FilesTotal is known) or "identify" (indeterminate: only Scanned advances,
+// FilesTotal is 0). MountPoint correlates the update with a volume card.
+type SourceProgress struct {
+	Kind        string `json:"kind"`
+	MountPoint  string `json:"mountPoint"`
+	FilesDone   int    `json:"filesDone"`
+	FilesTotal  int    `json:"filesTotal"`
+	Scanned     int    `json:"scanned"`
+	CurrentFile string `json:"currentFile"`
+}
+
+// SourceEvaluated is the payload for source:evaluated, emitted once when a
+// background safe-to-erase evaluation finishes. Exactly one terminal state
+// holds: success (Report set), cancelled (Cancelled true), or failed (Error set).
+type SourceEvaluated struct {
+	MountPoint string          `json:"mountPoint"`
+	SourceID   string          `json:"sourceId"`
+	Report     *SafeToEraseDTO `json:"report"`
+	Cancelled  bool            `json:"cancelled"`
+	Error      string          `json:"error"`
+}
+
+// CleanupProgress is the payload for cleanup:progress. FilesDone advances per
+// classified file; FilesTotal is 0 while the analyzer walks-and-classifies in a
+// single pass (the total is not known until the walk completes), so the UI
+// renders an indeterminate count. CurrentFile is the file being classified.
+type CleanupProgress struct {
+	FilesDone   int    `json:"filesDone"`
+	FilesTotal  int    `json:"filesTotal"`
+	CurrentFile string `json:"currentFile"`
+}
+
+// CleanupCompleted is the payload for cleanup:completed, emitted once when a
+// background cleanup analyze finishes. Exactly one terminal state holds: success
+// (Report set), cancelled (Cancelled true), or failed (Error set). Root echoes
+// the analyzed folder so the frontend can restore context on re-attach.
+type CleanupCompleted struct {
+	Root      string            `json:"root"`
+	Report    *CleanupReportDTO `json:"report"`
+	Cancelled bool              `json:"cancelled"`
+	Error     string            `json:"error"`
+}
+
+// ReorganizePlanProgress is the payload for reorganize:plan-progress, emitted
+// (throttled) while PlanReorganize walks the catalog. Total is known up front
+// (after listing archived assets) so the UI can render a determinate bar.
+type ReorganizePlanProgress struct {
+	Done  int `json:"done"`
+	Total int `json:"total"`
+}
+
+// LogExportProgress is the payload for log:export-progress, emitted (throttled)
+// while a log export streams rows to disk. RowsWritten is the running count.
+type LogExportProgress struct {
+	RowsWritten int `json:"rowsWritten"`
+}
+
+// DuplicateProgress is the payload for duplicate:progress, carrying the byte
+// progress of a cross-volume duplicate move (copy+verify).
+type DuplicateProgress struct {
+	AssetID    string `json:"assetId"`
+	BytesDone  int64  `json:"bytesDone"`
+	BytesTotal int64  `json:"bytesTotal"`
+}
+
+// LibraryProgress is the payload for library:progress, emitted during a library
+// open that runs migrations / legacy installation. Phase names the current step
+// ("backing-up", "installing-legacy", "converting-paths", "verifying",
+// "migrating"); Done/Total are populated for determinate phases (0 otherwise).
+// Not cancellable: migrations must run to completion or roll back atomically.
+type LibraryProgress struct {
+	Phase   string `json:"phase"`
+	Message string `json:"message"`
+	Done    int    `json:"done"`
+	Total   int    `json:"total"`
 }
 
 // throttleInterval bounds progress emission to at most one event per 100ms

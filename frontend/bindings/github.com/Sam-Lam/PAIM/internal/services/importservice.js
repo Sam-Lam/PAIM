@@ -133,6 +133,16 @@ export function SetGate(gate) {
 }
 
 /**
+ * SetSleepGuard injects the shared sleep guard. Called once by main.go after
+ * construction; left unset (no-op) in unit tests.
+ * @param {$models.SleepGuard | null} g
+ * @returns {$CancellablePromise<void>}
+ */
+export function SetSleepGuard(g) {
+    return $Call.ByID(1017095179, g);
+}
+
+/**
  * StartAnalyze runs scan + dry-run ("Analyze") in a background goroutine under
  * the SAME one-active-operation guard as imports and reorganizes: while an
  * analyze runs, StartImport/ResumeSession/StartReorganize are refused with

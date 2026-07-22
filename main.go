@@ -47,6 +47,14 @@ func init() {
 	application.RegisterEvent[services.VolumeEvent](services.EventVolumeMounted)
 	application.RegisterEvent[services.VolumeEvent](services.EventVolumeUnmounted)
 	application.RegisterEvent[services.SourceIdentified](services.EventSourceIdentified)
+	application.RegisterEvent[services.SourceProgress](services.EventSourceProgress)
+	application.RegisterEvent[services.SourceEvaluated](services.EventSourceEvaluated)
+	application.RegisterEvent[services.CleanupProgress](services.EventCleanupProgress)
+	application.RegisterEvent[services.CleanupCompleted](services.EventCleanupCompleted)
+	application.RegisterEvent[services.ReorganizePlanProgress](services.EventReorganizePlan)
+	application.RegisterEvent[services.LogExportProgress](services.EventLogExportProgress)
+	application.RegisterEvent[services.DuplicateProgress](services.EventDuplicateProgress)
+	application.RegisterEvent[services.LibraryProgress](services.EventLibraryProgress)
 }
 
 // wailsEmitter adapts the Wails event manager to services.Emitter. Its app
@@ -104,6 +112,7 @@ type composition struct {
 	collector  *volumes.Collector
 	watcher    *volumes.Watcher
 	gate       *services.LibraryGate
+	sleep      *services.SleepGuard
 	config     *library.ConfigStore
 	appVersion string
 	rootCtx    context.Context
@@ -151,6 +160,7 @@ func run() error {
 	collector := volumes.NewCollector(logger)
 	watcher := volumes.NewWatcher(logger)
 	gate := services.NewLibraryGate()
+	sleep := services.NewSleepGuard(logger)
 
 	rootCtx, rootCancel := context.WithCancel(context.Background())
 
@@ -163,6 +173,7 @@ func run() error {
 		collector:  collector,
 		watcher:    watcher,
 		gate:       gate,
+		sleep:      sleep,
 		config:     configStore,
 		appVersion: appVersion,
 		rootCtx:    rootCtx,
@@ -175,11 +186,11 @@ func run() error {
 	comp.importSvc = services.NewImportService(nil, nil, nil, dialoger, emitter, logger)
 	comp.sourcesSvc = services.NewSourcesService(collector, nil, nil, nil, watcher, emitter, logger)
 	comp.historySvc = services.NewHistoryService(nil, nil, logger)
-	comp.dupSvc = services.NewDuplicateService(nil, nil, nil, logger)
-	comp.cleanupSvc = services.NewCleanupService(nil, dialoger, logger)
+	comp.dupSvc = services.NewDuplicateService(nil, nil, nil, emitter, logger)
+	comp.cleanupSvc = services.NewCleanupService(nil, dialoger, emitter, logger)
 	comp.backupSvc = services.NewBackupService(nil, nil, nil, emitter, logger)
 	comp.providerSvc = services.NewProviderService(nil, registry, logger)
-	comp.logSvc = services.NewLogService(nil, nil, dialoger, logger)
+	comp.logSvc = services.NewLogService(nil, nil, dialoger, emitter, logger)
 	comp.settingsSvc = services.NewSettingsService(nil, extractor.Available())
 
 	for _, g := range []interface{ SetGate(*services.LibraryGate) }{
@@ -187,6 +198,15 @@ func run() error {
 		comp.cleanupSvc, comp.backupSvc, comp.providerSvc, comp.logSvc, comp.settingsSvc,
 	} {
 		g.SetGate(gate)
+	}
+
+	// Long-running operations hold a macOS sleep assertion (see SleepGuard) so an
+	// unattended import/analyze/reorganize/safe-to-erase/cleanup does not stall
+	// when the Mac sleeps. Only the services that run such jobs need it.
+	for _, sa := range []interface{ SetSleepGuard(*services.SleepGuard) }{
+		comp.importSvc, comp.sourcesSvc, comp.cleanupSvc,
+	} {
+		sa.SetSleepGuard(sleep)
 	}
 
 	app := application.New(application.Options{
@@ -274,6 +294,10 @@ func (c *composition) Open(ctx context.Context, root string, force, migrateLegac
 	}
 
 	if migrateLegacy {
+		// Copying + verifying the legacy catalog can take a while on a large DB.
+		// Surface a labeled phase so Welcome can show progress and a "don't quit"
+		// warning. Not cancellable: a half-installed catalog must never be left.
+		c.emitLibraryProgress("installing-legacy", "Copying and verifying legacy catalog…")
 		if err := library.InstallLegacy(ctx, "", root); err != nil {
 			return services.OpenOutcome{}, err
 		}
@@ -294,6 +318,12 @@ func (c *composition) Open(ctx context.Context, root string, force, migrateLegac
 		return services.OpenOutcome{}, lockErr
 	}
 
+	// Opening the catalog runs the migration framework (backup + pending
+	// migrations) when the library is behind. Emit a determinate-ish "migrating"
+	// phase so the Welcome screen shows the upgrade is underway and warns the user
+	// not to quit; migrations are not cancellable (they run to completion or roll
+	// back atomically).
+	c.emitLibraryProgress("migrating", "Upgrading library catalog — don't quit PAIM")
 	core, err := services.BuildCore(services.CoreDeps{
 		Root:       root,
 		AppVersion: c.appVersion,
@@ -326,8 +356,16 @@ func (c *composition) Open(ctx context.Context, root string, force, migrateLegac
 		OpenedAt:      time.Now(),
 	}
 	c.libSvc.SetCurrent(cur)
+	c.emitLibraryProgress("done", "Library ready")
 	c.logger.Info("library opened", "library", root, "schema", schema)
 	return services.OpenOutcome{Current: cur}, nil
+}
+
+// emitLibraryProgress emits a library:progress event describing a phase of a
+// library open that runs migrations / legacy installation, so the Welcome screen
+// can render labeled phases and a "don't quit" warning instead of a bare spinner.
+func (c *composition) emitLibraryProgress(phase, message string) {
+	c.emitter.Emit(services.EventLibraryProgress, services.LibraryProgress{Phase: phase, Message: message})
 }
 
 // openDev opens an explicit database file (PAIM_DB_PATH) in library-less dev mode.
@@ -423,6 +461,8 @@ func (c *composition) shutdown() {
 	if core != nil {
 		core.Manager.Stop()
 	}
+	// Force-stop the sleep assertion so no caffeinate child outlives the app.
+	c.sleep.Shutdown()
 	if err := c.extractor.Close(); err != nil {
 		c.logger.Warn("shutdown: close extractor", "error", err.Error())
 	}

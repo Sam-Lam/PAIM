@@ -185,7 +185,17 @@ func migrateRelativePaths(root string) func(tx *gorm.DB) error {
 		if err := tx.Unscoped().Where("current_archive_path <> ''").Find(&assets).Error; err != nil {
 			return wrap("load assets for path conversion", err)
 		}
-		converted, kept := 0, 0
+
+		// Compute every new (relative) path in Go — the conversion result is
+		// byte-for-byte identical to the previous per-row loop — then flush the
+		// updates in batches so the whole migration is a handful of statements
+		// instead of one UPDATE per asset (the minute-plus tail on large catalogs).
+		type update struct {
+			id      string
+			newPath string
+		}
+		var updates []update
+		kept := 0
 		for _, a := range assets {
 			p := a.CurrentArchivePath
 			if !filepath.IsAbs(p) {
@@ -196,15 +206,45 @@ func migrateRelativePaths(root string) func(tx *gorm.DB) error {
 				kept++
 				continue
 			}
-			newPath := filepath.ToSlash(rel)
-			if err := tx.Unscoped().Model(&domain.Asset{}).Where("id = ?", a.ID).
-				Update("current_archive_path", newPath).Error; err != nil {
-				return wrap(fmt.Sprintf("update asset %s archive path", a.ID), err)
-			}
-			converted++
+			updates = append(updates, update{id: a.ID, newPath: filepath.ToSlash(rel)})
 		}
+
+		const chunk = 500
+		for start := 0; start < len(updates); start += chunk {
+			end := start + chunk
+			if end > len(updates) {
+				end = len(updates)
+			}
+			batch := updates[start:end]
+
+			// One statement per chunk:
+			//   UPDATE assets SET current_archive_path = CASE id
+			//       WHEN ? THEN ? ... END
+			//   WHERE id IN (?, ?, ...)
+			var sb strings.Builder
+			sb.WriteString("UPDATE assets SET current_archive_path = CASE id")
+			args := make([]interface{}, 0, len(batch)*3)
+			for _, u := range batch {
+				sb.WriteString(" WHEN ? THEN ?")
+				args = append(args, u.id, u.newPath)
+			}
+			sb.WriteString(" END WHERE id IN (")
+			for i, u := range batch {
+				if i > 0 {
+					sb.WriteString(", ")
+				}
+				sb.WriteString("?")
+				args = append(args, u.id)
+			}
+			sb.WriteString(")")
+
+			if err := tx.Exec(sb.String(), args...).Error; err != nil {
+				return wrap(fmt.Sprintf("batch update archive paths [%d:%d]", start, end), err)
+			}
+		}
+
 		slog.Default().Info("db: archive paths converted to relative",
-			"subsystem", "db", "root", root, "converted", converted, "keptAbsolute", kept)
+			"subsystem", "db", "root", root, "converted", len(updates), "keptAbsolute", kept)
 		return nil
 	}
 }

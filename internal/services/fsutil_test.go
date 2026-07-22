@@ -19,7 +19,7 @@ func TestCopyVerifyChunkedCopiesAndVerifies(t *testing.T) {
 	}
 
 	dst := filepath.Join(dir, "nested", "dst.bin")
-	if err := copyVerify(context.Background(), src, dst); err != nil {
+	if err := copyVerify(context.Background(), src, dst, nil); err != nil {
 		t.Fatalf("copyVerify: %v", err)
 	}
 
@@ -49,7 +49,7 @@ func TestCopyVerifyHonorsCancellation(t *testing.T) {
 	cancel() // already cancelled
 
 	dst := filepath.Join(dir, "dst.bin")
-	if err := copyVerify(ctx, src, dst); err == nil {
+	if err := copyVerify(ctx, src, dst, nil); err == nil {
 		t.Fatalf("expected cancellation error")
 	}
 	if _, err := os.Stat(dst); !os.IsNotExist(err) {

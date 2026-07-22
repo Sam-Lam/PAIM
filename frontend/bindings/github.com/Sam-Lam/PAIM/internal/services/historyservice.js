@@ -41,9 +41,10 @@ export function ListSessions(page, pageSize) {
 
 /**
  * SessionEvents returns the session plus the log entries that reference it. The
- * LogRepo cannot query MetadataJSON directly, so entries are gathered from the
- * import subsystem within the session's time window and filtered in memory to
- * those whose MetadataJSON mentions the session ID.
+ * sessionID match is pushed into SQL (metadata_json LIKE) and bounded by the
+ * session's time window, so a large log never has to be loaded and string-
+ * scanned in memory. The result is capped at sessionEventsCap with a truncation
+ * flag in the DTO.
  * @param {string} sessionID
  * @returns {$CancellablePromise<$models.SessionDetail>}
  */

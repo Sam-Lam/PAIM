@@ -1,6 +1,7 @@
 package services
 
 import (
+	"bufio"
 	"context"
 	"encoding/csv"
 	"encoding/json"
@@ -15,14 +16,19 @@ import (
 	"gorm.io/gorm"
 )
 
+// logExportPageSize is the DB page size used when streaming an export, so a large
+// log never has to be materialized in memory all at once.
+const logExportPageSize = 5000
+
 // LogService searches, enumerates, and exports persisted log entries for the
 // Logs page.
 type LogService struct {
 	gated
-	db     *gorm.DB
-	logs   *repo.LogRepo
-	dialog Dialoger
-	log    *slog.Logger
+	db      *gorm.DB
+	logs    *repo.LogRepo
+	dialog  Dialoger
+	emitter Emitter
+	log     *slog.Logger
 }
 
 // Bind wires the LogService to an open library's catalog in place.
@@ -33,11 +39,11 @@ func (s *LogService) Bind(core *AppCore) {
 
 // NewLogService constructs a LogService. The db handle backs the distinct
 // subsystem query (LogRepo exposes no DISTINCT helper).
-func NewLogService(db *gorm.DB, logs *repo.LogRepo, dialog Dialoger, logger *slog.Logger) *LogService {
+func NewLogService(db *gorm.DB, logs *repo.LogRepo, dialog Dialoger, emitter Emitter, logger *slog.Logger) *LogService {
 	if logger == nil {
 		logger = slog.Default()
 	}
-	return &LogService{db: db, logs: logs, dialog: dialog, log: logger}
+	return &LogService{db: db, logs: logs, dialog: dialog, emitter: emitter, log: logger}
 }
 
 // buildQuery assembles a repo.LogQuery from the raw filter parameters, parsing
@@ -106,9 +112,12 @@ func (s *LogService) Subsystems(ctx context.Context) ([]string, error) {
 	return out, nil
 }
 
-// Export writes all log entries matching the filters (ignoring pagination) to a
+// Export streams all log entries matching the filters (ignoring pagination) to a
 // user-chosen file in json or csv format via a native save dialog and returns
-// the written path. It returns "" when the user cancels the dialog.
+// the written path. It returns "" when the user cancels the dialog. Rows are
+// pulled from the DB in pages (logExportPageSize) and written to disk one at a
+// time — CSV row-by-row, JSON as a streamed array — so memory stays flat on a
+// large log, and log:export-progress (rows written) is emitted throttled.
 func (s *LogService) Export(ctx context.Context, query, level, subsystem, fromISO, toISO, format string) (string, error) {
 	if err := s.guard(); err != nil {
 		return "", err
@@ -118,10 +127,6 @@ func (s *LogService) Export(ctx context.Context, query, level, subsystem, fromIS
 		return "", err
 	}
 	q.Page = repo.Page{}
-	entries, err := s.logs.ListForExport(ctx, q)
-	if err != nil {
-		return "", err
-	}
 
 	format = strings.ToLower(format)
 	if format != "json" && format != "csv" {
@@ -140,35 +145,32 @@ func (s *LogService) Export(ctx context.Context, query, level, subsystem, fromIS
 		return "", nil // cancelled
 	}
 
-	if format == "json" {
-		if err := writeJSON(path, entries); err != nil {
-			return "", err
-		}
-	} else {
-		if err := writeCSV(path, entries); err != nil {
-			return "", err
+	tr := newThrottle()
+	rows := 0
+	progress := func() {
+		rows++
+		if tr.allow() {
+			emitSafe(s.emitter, EventLogExportProgress, LogExportProgress{RowsWritten: rows})
 		}
 	}
-	s.log.Info("logs exported", "path", path, "format", format, "count", len(entries))
+
+	if format == "json" {
+		err = s.streamJSON(ctx, path, q, progress)
+	} else {
+		err = s.streamCSV(ctx, path, q, progress)
+	}
+	if err != nil {
+		_ = os.Remove(path)
+		return "", err
+	}
+	emitSafe(s.emitter, EventLogExportProgress, LogExportProgress{RowsWritten: rows})
+	s.log.Info("logs exported", "path", path, "format", format, "count", rows)
 	return path, nil
 }
 
-func writeJSON(path string, entries []domain.LogEntry) error {
-	dtos := make([]LogEntryDTO, 0, len(entries))
-	for _, e := range entries {
-		dtos = append(dtos, toLogEntryDTO(e))
-	}
-	raw, err := json.MarshalIndent(dtos, "", "  ")
-	if err != nil {
-		return fmt.Errorf("services: marshal logs: %w", err)
-	}
-	if err := os.WriteFile(path, raw, 0o644); err != nil {
-		return fmt.Errorf("services: write %q: %w", path, err)
-	}
-	return nil
-}
-
-func writeCSV(path string, entries []domain.LogEntry) error {
+// streamCSV writes the query's matching entries to path as CSV, one row at a
+// time, flushing periodically so memory stays flat.
+func (s *LogService) streamCSV(ctx context.Context, path string, q repo.LogQuery, progress func()) error {
 	f, err := os.Create(path)
 	if err != nil {
 		return fmt.Errorf("services: create %q: %w", path, err)
@@ -179,21 +181,79 @@ func writeCSV(path string, entries []domain.LogEntry) error {
 	if err := w.Write([]string{"timestamp", "level", "subsystem", "message", "metadata"}); err != nil {
 		return fmt.Errorf("services: write csv header: %w", err)
 	}
-	for _, e := range entries {
-		row := []string{
+	n := 0
+	streamErr := s.logs.StreamForExport(ctx, q, logExportPageSize, func(e domain.LogEntry) error {
+		if err := w.Write([]string{
 			e.Timestamp.Format(time.RFC3339),
 			e.Level,
 			e.Subsystem,
 			e.Message,
 			e.MetadataJSON,
-		}
-		if err := w.Write(row); err != nil {
+		}); err != nil {
 			return fmt.Errorf("services: write csv row: %w", err)
 		}
+		progress()
+		if n++; n%1000 == 0 {
+			w.Flush()
+			if err := w.Error(); err != nil {
+				return fmt.Errorf("services: flush csv: %w", err)
+			}
+		}
+		return nil
+	})
+	if streamErr != nil {
+		return streamErr
 	}
 	w.Flush()
 	if err := w.Error(); err != nil {
 		return fmt.Errorf("services: flush csv: %w", err)
+	}
+	return nil
+}
+
+// streamJSON writes the query's matching entries to path as a streamed JSON
+// array of LogEntryDTO, marshaling each entry individually so the whole result
+// set is never held in memory at once.
+func (s *LogService) streamJSON(ctx context.Context, path string, q repo.LogQuery, progress func()) error {
+	f, err := os.Create(path)
+	if err != nil {
+		return fmt.Errorf("services: create %q: %w", path, err)
+	}
+	defer f.Close()
+
+	bw := bufio.NewWriter(f)
+	if _, err := bw.WriteString("[\n"); err != nil {
+		return fmt.Errorf("services: write %q: %w", path, err)
+	}
+	first := true
+	streamErr := s.logs.StreamForExport(ctx, q, logExportPageSize, func(e domain.LogEntry) error {
+		raw, err := json.Marshal(toLogEntryDTO(e))
+		if err != nil {
+			return fmt.Errorf("services: marshal log entry: %w", err)
+		}
+		if !first {
+			if _, err := bw.WriteString(",\n"); err != nil {
+				return err
+			}
+		}
+		first = false
+		if _, err := bw.WriteString("  "); err != nil {
+			return err
+		}
+		if _, err := bw.Write(raw); err != nil {
+			return err
+		}
+		progress()
+		return nil
+	})
+	if streamErr != nil {
+		return streamErr
+	}
+	if _, err := bw.WriteString("\n]\n"); err != nil {
+		return fmt.Errorf("services: write %q: %w", path, err)
+	}
+	if err := bw.Flush(); err != nil {
+		return fmt.Errorf("services: flush %q: %w", path, err)
 	}
 	return nil
 }

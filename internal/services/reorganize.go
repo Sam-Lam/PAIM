@@ -49,7 +49,18 @@ func (s *ImportService) PlanReorganize(ctx context.Context, eventName string) (*
 	if err := s.guard(); err != nil {
 		return nil, err
 	}
-	plan, err := s.pipeline.PlanReorganize(ctx, importer.ReorganizeOptions{EventName: eventName})
+	// Emit throttled determinate progress while planning. The call stays
+	// synchronous — the events reach the frontend over the event bridge during the
+	// in-flight call, independent of the returned promise — so the Settings page
+	// can render a live bar and a Cancel (via CancelImport-style ctx cancellation
+	// of this call) without a background job.
+	tr := newThrottle()
+	progressFn := func(done, total int) {
+		if done == total || tr.allow() {
+			emitSafe(s.emitter, EventReorganizePlan, ReorganizePlanProgress{Done: done, Total: total})
+		}
+	}
+	plan, err := s.pipeline.PlanReorganize(ctx, importer.ReorganizeOptions{EventName: eventName}, progressFn)
 	if err != nil {
 		return nil, err
 	}
@@ -123,7 +134,7 @@ func (s *ImportService) StartReorganize(ctx context.Context) (StartImportResult,
 
 	if !fresh {
 		// Recompute from the catalog with the last-previewed event (or empty).
-		recomputed, err := s.pipeline.PlanReorganize(ctx, importer.ReorganizeOptions{EventName: event})
+		recomputed, err := s.pipeline.PlanReorganize(ctx, importer.ReorganizeOptions{EventName: event}, nil)
 		if err != nil {
 			s.mu.Lock()
 			s.active = false
@@ -150,6 +161,7 @@ func (s *ImportService) StartReorganize(ctx context.Context) (StartImportResult,
 	s.reorgPlan = nil // consumed
 	s.mu.Unlock()
 
+	s.sleep.Acquire()
 	go s.runReorganize(runCtx, sessionID, plan)
 	return StartImportResult{SessionID: sessionID}, nil
 }
@@ -177,6 +189,7 @@ func (s *ImportService) runReorganize(ctx context.Context, sessionID string, pla
 		s.active = false
 		s.cancel = nil
 		s.mu.Unlock()
+		s.sleep.Release()
 	}()
 
 	tr := newThrottle()

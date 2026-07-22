@@ -48,7 +48,7 @@ func TestEvaluateSafeToErase_AllArchivedSafe(t *testing.T) {
 	}}
 
 	id := newIdentifierForErase()
-	rep, err := id.EvaluateSafeToErase(context.Background(), "src-1", root, lookup, isMediaTest)
+	rep, err := id.EvaluateSafeToErase(context.Background(), "src-1", root, lookup, isMediaTest, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -73,7 +73,7 @@ func TestEvaluateSafeToErase_NewFileUnsafe(t *testing.T) {
 	}}
 
 	id := newIdentifierForErase()
-	rep, err := id.EvaluateSafeToErase(context.Background(), "src-1", root, lookup, isMediaTest)
+	rep, err := id.EvaluateSafeToErase(context.Background(), "src-1", root, lookup, isMediaTest, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -97,7 +97,7 @@ func TestEvaluateSafeToErase_UnverifiedUnsafe(t *testing.T) {
 	}}
 
 	id := newIdentifierForErase()
-	rep, err := id.EvaluateSafeToErase(context.Background(), "src-1", root, lookup, isMediaTest)
+	rep, err := id.EvaluateSafeToErase(context.Background(), "src-1", root, lookup, isMediaTest, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -121,7 +121,7 @@ func TestEvaluateSafeToErase_BackupIncompleteUnsafe(t *testing.T) {
 	}}
 
 	id := newIdentifierForErase()
-	rep, err := id.EvaluateSafeToErase(context.Background(), "src-1", root, lookup, isMediaTest)
+	rep, err := id.EvaluateSafeToErase(context.Background(), "src-1", root, lookup, isMediaTest, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -155,7 +155,7 @@ func TestEvaluateSafeToErase_QuickHashCollisionResolvedByFullHash(t *testing.T) 
 	}}
 
 	id := NewIdentifier(nil, nil, h, nil)
-	rep, err := id.EvaluateSafeToErase(context.Background(), "src-1", root, lookup, isMediaTest)
+	rep, err := id.EvaluateSafeToErase(context.Background(), "src-1", root, lookup, isMediaTest, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -171,7 +171,7 @@ func TestEvaluateSafeToErase_EmptyVolumeSafe(t *testing.T) {
 	root := t.TempDir()
 	writeFile(t, filepath.Join(root, "readme.txt"), "no media here")
 	id := newIdentifierForErase()
-	rep, err := id.EvaluateSafeToErase(context.Background(), "src-1", root, fakeLookup{}, isMediaTest)
+	rep, err := id.EvaluateSafeToErase(context.Background(), "src-1", root, fakeLookup{}, isMediaTest, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
