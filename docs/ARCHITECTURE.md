@@ -378,6 +378,68 @@ browse grid proving what's archived, (c) provenance at a glance.
   get a duration badge; Live Photo pairs a badge and a single logical tile with both
   components in the drawer.
 
+## Hot catalog (SSD working copy) — DEFERRED, NOT IMPLEMENTED
+
+Design sketch retained for future consideration; deliberately not built (2026-07-22 —
+the divergence/staleness tradeoffs below need real-world motivation before accepting
+them). Do not implement without explicit direction.
+
+For libraries on slow media (HDD/NAS), the LIVE catalog can be hosted on the fast
+internal disk while the library folder keeps a periodically-synced authoritative
+snapshot. Per-machine, opt-in ("Performance: host catalog on this Mac's SSD").
+
+- **Layout**: working copy at `~/Library/Application Support/PAIM/hot/<libraryID>/paim.db`
+  (libraryID = a UUID stored in library_meta at creation; also written to
+  `<root>/.paim/library.json` so the id survives snapshot replacement). The thumbnail
+  cache moves to the same hot dir (disposable — no sync needed, regenerated on demand).
+  The **lock file stays on the drive** — it guards the library across machines regardless
+  of where the working copy lives.
+- **Generation counter**: `library_meta.Generation` (int64) increments on every open-for-
+  write session close and every snapshot. The HDD snapshot (`<root>/.paim/paim.db`)
+  carries the generation it was synced at.
+- **Snapshot sync** (hot → drive): WAL-checkpoint the working copy, copy to
+  `<root>/.paim/paim.db.tmp`, BLAKE3-verify, atomic rename over the snapshot. Runs:
+  on graceful quit, after every completed import/reorganize session, and on a timer
+  (default every 6h while open; setting). Snapshot failures (drive ejected) are
+  surfaced, never silent; the app keeps working on the hot copy and retries.
+- **Open reconciliation** (the divergence guard): opening a library in hot mode compares
+  three generations — local working copy, drive snapshot, and `library.json`'s
+  last-writer machine id. If snapshot.generation > working.generation (another machine
+  wrote since we last synced), the local working copy is STALE: it is discarded and
+  re-seeded from the snapshot (with the stale copy renamed aside, never deleted). If
+  working > snapshot (normal: we crashed before syncing or simply are ahead), open the
+  working copy and snapshot soon. Never merge; never guess. A machine WITHOUT a hot
+  copy (or with hot mode off) opens the snapshot directly as today — which is why the
+  snapshot must stay fresh: it IS the library everywhere else.
+- **Honest tradeoff surfaced in UI**: with hot mode on, the drive's copy can lag by up
+  to the sync interval; ejecting without quitting PAIM means the drive carries the last
+  snapshot, not the last minute. Settings copy explains this; "Sync snapshot now"
+  button provided; quit always syncs.
+
+## Thumbnail warm-up — internal/thumbs, services
+
+Browsing should be instant, so thumbnails can be generated ahead of time instead of
+lazily on first view.
+
+- `thumbs.Warmer`: a cancellable background job that walks a set of asset IDs and
+  ensures 512px thumbs (2048 optional, default off) with bounded concurrency (default 2
+  — must not starve imports/backups), progress events (`thumbs:progress` done/total),
+  registered in the activity tracker (quit guard aware) and sleep-guarded.
+- Triggers: (a) **after import** — when an import/adopt session completes and the
+  "Generate thumbnails after import" setting is on (default ON), warm exactly that
+  session's assets; runs AFTER completion, never inline during the import (the import
+  already saturates disk I/O; interleaving qlmanage would slow both). (b) **manual** —
+  "Pre-generate all thumbnails" in Settings (and Library page empty-cache hint) warms
+  the whole catalog for existing libraries; resumable (skips cached), shows progress in
+  the Library page header while running.
+
+## Library view: fit toggle — frontend
+
+The Library grid gets a view toggle (icon button in the filter bar): **Crop** (current
+`object-cover` squares) vs **Fit** (`object-contain` within the square, letterboxed on
+the tile background, preserving aspect ratio). Preference persisted per machine
+(localStorage) and applied immediately; detail-drawer preview is always fit (unchanged).
+
 ## Quit guard — main.go, services, frontend
 
 Quitting must never surprise the user about in-flight work. Safety already comes from the

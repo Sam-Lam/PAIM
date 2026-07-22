@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ArrowPathIcon,
+  ArrowsPointingInIcon,
+  ArrowsPointingOutIcon,
   CheckIcon,
   ClipboardDocumentIcon,
   FilmIcon,
@@ -79,6 +81,14 @@ export function LibraryPage() {
   const [verification, setVerification] = useState("");
   const [backup, setBackup] = useState("");
   const [month, setMonth] = useState("");
+  // Tile rendering: crop to square (cover) or fit within it (contain). Persisted per machine.
+  const [fitTiles, setFitTiles] = useState(() => localStorage.getItem("paim.library.fit") === "1");
+  const toggleFit = () => {
+    setFitTiles((v) => {
+      localStorage.setItem("paim.library.fit", v ? "0" : "1");
+      return !v;
+    });
+  };
 
   // Accumulated grid state ("Load more" pagination).
   const [items, setItems] = useState<BrowseAssetDTO[]>([]);
@@ -238,6 +248,18 @@ export function LibraryPage() {
               Clear
             </Button>
           ) : null}
+
+          <div className="ml-auto">
+            <Button
+              size="sm"
+              variant="ghost"
+              icon={fitTiles ? ArrowsPointingInIcon : ArrowsPointingOutIcon}
+              onClick={toggleFit}
+              title={fitTiles ? "Crop tiles to square" : "Fit full image in tile"}
+            >
+              {fitTiles ? "Crop" : "Fit"}
+            </Button>
+          </div>
         </div>
       </Card>
 
@@ -272,7 +294,7 @@ export function LibraryPage() {
               <h2 className="mb-2 text-[13px] font-semibold text-zinc-300">{g.label}</h2>
               <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6">
                 {g.items.map((asset) => (
-                  <Thumb key={asset.id} asset={asset} onClick={() => setSelectedId(asset.id)} />
+                  <Thumb key={asset.id} asset={asset} fit={fitTiles} onClick={() => setSelectedId(asset.id)} />
                 ))}
               </div>
             </section>
@@ -296,7 +318,7 @@ export function LibraryPage() {
 }
 
 /** A single grid tile: lazy 512 thumbnail with badges and a placeholder fallback. */
-function Thumb({ asset, onClick }: { asset: BrowseAssetDTO; onClick: () => void }) {
+function Thumb({ asset, onClick, fit }: { asset: BrowseAssetDTO; onClick: () => void; fit: boolean }) {
   const [errored, setErrored] = useState(false);
   const isVideo = asset.mediaType === "video";
   return (
@@ -313,7 +335,7 @@ function Thumb({ asset, onClick }: { asset: BrowseAssetDTO; onClick: () => void 
           loading="lazy"
           alt={asset.filename}
           onError={() => setErrored(true)}
-          className="h-full w-full object-cover transition duration-200 group-hover:scale-[1.04]"
+          className={`h-full w-full transition duration-200 group-hover:scale-[1.04] ${fit ? "object-contain" : "object-cover"}`}
         />
       )}
 
