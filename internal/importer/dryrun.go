@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/Sam-Lam/PAIM/internal/archive"
-	"github.com/Sam-Lam/PAIM/internal/hashing"
 	"github.com/Sam-Lam/PAIM/internal/mediatype"
 )
 
@@ -39,6 +38,18 @@ type DryRunReport struct {
 	QuickHashes  map[string]string
 	FullHashes   map[string]string
 	Dispositions map[string]Disposition
+	// Scans records the size and mtime each path had at dry-run time. A subsequent
+	// import reuses QuickHashes/FullHashes for a path ONLY when the file still has
+	// this exact size and mtime, so a file edited between analyze and import is
+	// re-hashed instead of carrying a stale hash into verification.
+	Scans map[string]ScanMeta
+}
+
+// ScanMeta is the size and mtime a file had when the dry run hashed it. It is the
+// staleness gate for reusing that file's precomputed hashes at import time.
+type ScanMeta struct {
+	Size    int64
+	ModTime int64 // unix seconds, matching FileInfo.ModTime
 }
 
 // throughputFloor is the assumed lower bound on disk throughput (100 MiB/s) used
@@ -64,6 +75,7 @@ func (p *Pipeline) DryRun(ctx context.Context, scan *ScanResult, opts Options, p
 		QuickHashes:  make(map[string]string, len(scan.Files)),
 		FullHashes:   make(map[string]string, len(scan.Files)),
 		Dispositions: make(map[string]Disposition, len(scan.Files)),
+		Scans:        make(map[string]ScanMeta, len(scan.Files)),
 	}
 
 	quick, hashedBytes, elapsed, err := p.hashAll(ctx, scan.Files, opts.concurrency(), scan.TotalBytes, progressFn)
@@ -88,6 +100,8 @@ func (p *Pipeline) DryRun(ctx context.Context, scan *ScanResult, opts Options, p
 			return nil, fmt.Errorf("dry run: %w", err)
 		}
 		report.Files++
+		// Record the analyze-time size+mtime so a later import can gate hash reuse.
+		report.Scans[fi.Path] = ScanMeta{Size: fi.Size, ModTime: fi.ModTime}
 		switch fi.Kind {
 		case mediatype.Photo, mediatype.RawPhoto:
 			report.Photos++
@@ -95,7 +109,7 @@ func (p *Pipeline) DryRun(ctx context.Context, scan *ScanResult, opts Options, p
 			report.Videos++
 		}
 
-		cls, err := p.classify(ctx, fi.Path, quick[fi.Path])
+		cls, err := p.classify(ctx, fi.Path, quick[fi.Path], "")
 		if err != nil {
 			// A read failure during dry run is non-fatal to the prediction; treat
 			// the file as new and note it.
@@ -193,7 +207,7 @@ func (p *Pipeline) predictIntraBatchDuplicates(ctx context.Context, scan *ScanRe
 			}
 			fh := report.FullHashes[fi.Path]
 			if fh == "" {
-				computed, err := hashing.FullHash(ctx, fi.Path)
+				computed, err := p.fullHash(ctx, fi.Path)
 				if err != nil {
 					p.log.Warn("dry run: intra-batch full hash failed", "path", fi.Path, "error", err.Error())
 					continue
@@ -258,7 +272,7 @@ func (p *Pipeline) hashAll(ctx context.Context, files []FileInfo, concurrency in
 					results <- result{path: j.fi.Path, err: err}
 					continue
 				}
-				h, err := hashing.QuickHash(j.fi.Path)
+				h, err := p.quickHash(j.fi.Path)
 				// Bytes actually read by the quick hash: whole file for small
 				// files, else two 4 MiB chunks.
 				read := j.fi.Size

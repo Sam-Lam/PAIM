@@ -21,6 +21,20 @@ import (
 // atomic: the file is at exactly one path and the re-scan finds and reconciles
 // it.
 func (p *Pipeline) ResumeSession(ctx context.Context, sessionID string, progressFn ProgressFunc) (*domain.ImportSession, error) {
+	return p.resumeSession(ctx, sessionID, nil, progressFn)
+}
+
+// ResumeSessionPrecomputed is ResumeSession with a dry-run report threaded in so
+// the import reuses its quick/full hashes (staleness-gated) instead of
+// re-hashing every file. It is the path StartImport drives after an Analyze; the
+// plain ResumeSession (nil report) remains the correct crash-resume path where
+// re-hashing from scratch is intended. A nil report here behaves exactly like
+// ResumeSession.
+func (p *Pipeline) ResumeSessionPrecomputed(ctx context.Context, sessionID string, precomputed *DryRunReport, progressFn ProgressFunc) (*domain.ImportSession, error) {
+	return p.resumeSession(ctx, sessionID, precomputed, progressFn)
+}
+
+func (p *Pipeline) resumeSession(ctx context.Context, sessionID string, precomputed *DryRunReport, progressFn ProgressFunc) (*domain.ImportSession, error) {
 	session, err := p.sessions.GetByID(ctx, sessionID)
 	if err != nil {
 		return nil, fmt.Errorf("resume: load session %q: %w", sessionID, err)
@@ -39,6 +53,9 @@ func (p *Pipeline) ResumeSession(ctx context.Context, sessionID string, progress
 	if opts.DestinationRoot == "" {
 		opts.DestinationRoot = session.DestinationRoot
 	}
+	// Runtime-only hash handoff: never persisted in Notes, so a genuine crash
+	// resume (which reloads from Notes with no precomputed) correctly re-hashes.
+	opts.Precomputed = precomputed
 
 	p.log.Info("resuming import session", "sessionId", sessionID, "mode", opts.mode(), "source", opts.SourceRoot)
 

@@ -47,6 +47,7 @@ import (
 	"runtime"
 
 	"github.com/Sam-Lam/PAIM/internal/archive"
+	"github.com/Sam-Lam/PAIM/internal/hashing"
 	"github.com/Sam-Lam/PAIM/internal/metadata"
 	"github.com/Sam-Lam/PAIM/internal/repo"
 	"gorm.io/gorm"
@@ -111,8 +112,10 @@ type Options struct {
 	// Concurrency bounds the hashing worker pool. Zero means runtime.NumCPU.
 	Concurrency int
 	// Precomputed, when non-nil, supplies quick/full hashes from a prior DryRun so
-	// they are not recomputed. Its per-path hashes are reused when the path and
-	// size still match.
+	// they are not recomputed. A per-path hash is reused ONLY when the freshly
+	// scanned file's size AND mtime still match what the dry run recorded for that
+	// path (see DryRunReport.Scans); any changed or newly-appeared file falls
+	// through to normal hashing so a stale hash can never reach verification.
 	Precomputed *DryRunReport
 }
 
@@ -186,6 +189,16 @@ type Pipeline struct {
 	// copy completes but before verification. It exists solely to let tests
 	// corrupt the partial and exercise the verification-failure path.
 	afterCopyHook func(partialPath string)
+
+	// quickHash and fullHash are the identity-hashing seams the pipeline computes
+	// through (quick-hash lookups and full-hash confirmation/baselines). They
+	// default to the hashing package functions; tests replace them to count (or
+	// fault) hash computations and thereby prove that precomputed dry-run hashes
+	// are being reused rather than recomputed. Verification hashing (VerifyCopy,
+	// the post-reorganize re-hash) deliberately does NOT route through these — it
+	// is a data-integrity check, not identity computation.
+	quickHash func(path string) (string, error)
+	fullHash  func(ctx context.Context, path string) (string, error)
 }
 
 // Config carries the dependencies for a Pipeline. All fields except Logger and
@@ -226,6 +239,8 @@ func New(cfg Config) *Pipeline {
 		log:         log,
 		backup:      backup,
 		libraryRoot: cfg.LibraryRoot,
+		quickHash:   hashing.QuickHash,
+		fullHash:    hashing.FullHash,
 	}
 }
 

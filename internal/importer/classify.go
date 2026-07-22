@@ -5,7 +5,6 @@ import (
 	"fmt"
 
 	"github.com/Sam-Lam/PAIM/internal/domain"
-	"github.com/Sam-Lam/PAIM/internal/hashing"
 	"github.com/Sam-Lam/PAIM/internal/library"
 )
 
@@ -38,11 +37,14 @@ type classification struct {
 // classify decides whether a file is new, a duplicate, or already imported. It
 // performs Stage 1 (quick hash lookup) and, on a collision, Stage 2 (full-hash
 // confirmation), backfilling the existing asset's FullHash when it was null. It
-// never writes anything except the FullHash backfill. quickHash may be supplied
-// (reused from a dry run) or empty to compute it here.
-func (p *Pipeline) classify(ctx context.Context, path string, quickHash string) (classification, error) {
+// never writes anything except the FullHash backfill. quickHash and fullHash may
+// be supplied (reused from a dry run, already staleness-gated by the caller) or
+// empty to compute them here. A supplied fullHash is threaded onto the returned
+// classification even for a brand-new file so adopt mode can reuse it as the
+// in-place baseline instead of re-reading the whole file.
+func (p *Pipeline) classify(ctx context.Context, path string, quickHash, fullHash string) (classification, error) {
 	if quickHash == "" {
-		qh, err := hashing.QuickHash(path)
+		qh, err := p.quickHash(path)
 		if err != nil {
 			return classification{}, fmt.Errorf("classify: quick hash %q: %w", path, err)
 		}
@@ -62,13 +64,18 @@ func (p *Pipeline) classify(ctx context.Context, path string, quickHash string) 
 		}
 	}
 	if len(verified) == 0 {
-		return classification{Disposition: DispositionNew, QuickHash: quickHash}, nil
+		// New content. Carry a precomputed full hash forward (adopt baseline reuse);
+		// it is empty for the common case where the dry run only quick-hashed.
+		return classification{Disposition: DispositionNew, QuickHash: quickHash, FullHash: fullHash}, nil
 	}
 
-	// Stage 2: confirm identity with a full hash.
-	fullHash, err := hashing.FullHash(ctx, path)
-	if err != nil {
-		return classification{}, fmt.Errorf("classify: full hash %q: %w", path, err)
+	// Stage 2: confirm identity with a full hash (reusing a precomputed one).
+	if fullHash == "" {
+		fh, err := p.fullHash(ctx, path)
+		if err != nil {
+			return classification{}, fmt.Errorf("classify: full hash %q: %w", path, err)
+		}
+		fullHash = fh
 	}
 
 	var duplicateOf string
@@ -81,7 +88,7 @@ func (p *Pipeline) classify(ctx context.Context, path string, quickHash string) 
 				continue
 			}
 			archiveAbs := library.ResolvePath(p.libraryRoot, a.CurrentArchivePath)
-			computed, herr := hashing.FullHash(ctx, archiveAbs)
+			computed, herr := p.fullHash(ctx, archiveAbs)
 			if herr != nil {
 				// The archived file may be offline; skip this candidate rather than
 				// fail the whole classification.

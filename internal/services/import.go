@@ -476,9 +476,10 @@ func (s *ImportService) ActiveAnalyze(ctx context.Context) (ActiveAnalyzeDTO, er
 //
 // The run is driven through pipeline.ResumeSession against the freshly created
 // session so the service owns the session ID up front and can stamp it on every
-// emitted progress event. Quick hashes are recomputed at import time (they are
-// cheap relative to the copy); the dry-run cache is used to validate the request
-// and to power instant UI stats, not to seed hashes.
+// emitted progress event. When a fresh Analyze/dry-run for this exact root is
+// cached (see precomputedFor), its report is threaded into the run so quick and
+// full hashes are reused rather than recomputed — eliminating a full second hash
+// pass over the library. Without a cache the import re-hashes, which is correct.
 func (s *ImportService) StartImport(ctx context.Context, opts ImportOptions) (StartImportResult, error) {
 	if err := s.guard(); err != nil {
 		return StartImportResult{}, err
@@ -503,7 +504,24 @@ func (s *ImportService) StartImport(ctx context.Context, opts ImportOptions) (St
 		Reorganize:      iopts.Reorganize,
 		Concurrency:     iopts.Concurrency,
 	}
-	return s.launch(ctx, state)
+	return s.launch(ctx, state, s.precomputedFor(iopts.SourceRoot))
+}
+
+// precomputedFor returns the cached dry-run report for absRoot when a scan+report
+// for that exact root was produced recently enough to trust (analyzeReportTTL,
+// the same 15-minute freshness the analyze snapshot uses). The report is only a
+// hash-reuse hint: every reused hash is still size+mtime gated inside the
+// pipeline, so a slightly stale report can never carry a wrong hash into an
+// import. A cache miss (or a stale entry) returns nil and the import re-hashes.
+func (s *ImportService) precomputedFor(absRoot string) *importer.DryRunReport {
+	entry, ok := s.getScan(absRoot)
+	if !ok || entry.report == nil {
+		return nil
+	}
+	if time.Since(entry.at) > analyzeReportTTL {
+		return nil
+	}
+	return entry.report
 }
 
 // ResumeSession resumes an interrupted or cancelled session by ID, in a
@@ -532,14 +550,17 @@ func (s *ImportService) ResumeSession(ctx context.Context, sessionID string) (St
 	s.mu.Unlock()
 
 	s.sleep.Acquire()
-	go s.run(runCtx, session.ID)
+	// A genuine crash/interrupt resume reloads options from the session Notes and
+	// re-hashes from scratch: nil precomputed is the correct, safe behavior here.
+	go s.run(runCtx, session.ID, nil)
 	return StartImportResult{SessionID: session.ID}, nil
 }
 
 // launch creates a session from state and starts the background run. It performs
 // the one-active guard atomically with session creation so two concurrent
-// StartImport calls cannot both create a session.
-func (s *ImportService) launch(ctx context.Context, state resumeState) (StartImportResult, error) {
+// StartImport calls cannot both create a session. precomputed (may be nil) is the
+// dry-run report whose hashes the run reuses.
+func (s *ImportService) launch(ctx context.Context, state resumeState, precomputed *importer.DryRunReport) (StartImportResult, error) {
 	s.mu.Lock()
 	if s.active {
 		s.mu.Unlock()
@@ -568,12 +589,14 @@ func (s *ImportService) launch(ctx context.Context, state resumeState) (StartImp
 	s.mu.Unlock()
 
 	s.sleep.Acquire()
-	go s.run(runCtx, session)
+	go s.run(runCtx, session, precomputed)
 	return StartImportResult{SessionID: session}, nil
 }
 
 // run executes the import against sessionID and emits import:completed when done.
-func (s *ImportService) run(ctx context.Context, sessionID string) {
+// precomputed (may be nil) threads a prior dry run's hashes into the pipeline so
+// they are reused rather than recomputed.
+func (s *ImportService) run(ctx context.Context, sessionID string, precomputed *importer.DryRunReport) {
 	defer func() {
 		s.mu.Lock()
 		s.active = false
@@ -617,7 +640,7 @@ func (s *ImportService) run(ctx context.Context, sessionID string) {
 		}
 	}
 
-	if _, err := s.pipeline.ResumeSession(ctx, sessionID, progress); err != nil {
+	if _, err := s.pipeline.ResumeSessionPrecomputed(ctx, sessionID, precomputed, progress); err != nil {
 		s.log.Error("import run failed", "sessionId", sessionID, "error", err.Error())
 	}
 

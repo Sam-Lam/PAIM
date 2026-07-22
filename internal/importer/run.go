@@ -102,8 +102,9 @@ func (p *Pipeline) runImport(ctx context.Context, session *domain.ImportSession,
 	// Stage-2 (authoritative) Live Photo pairing using ContentIdentifier.
 	partnerOf := reconcilePairs(scan, metaByPath)
 
-	// Reuse precomputed quick hashes where the file is unchanged.
-	quick := p.reuseQuickHashes(opts.Precomputed, scan.Files)
+	// Reuse precomputed quick (and full) hashes where the file is provably
+	// unchanged since the dry run (same size + mtime).
+	quick, full := p.reuseHashes(opts.Precomputed, scan.Files)
 
 	assetIDByPath := make(map[string]string, len(scan.Files))
 	var bytesDone int64
@@ -126,7 +127,7 @@ func (p *Pipeline) runImport(ctx context.Context, session *domain.ImportSession,
 			Errors:      errorCount,
 		})
 
-		outcome := p.processFile(ctx, session.ID, fi, opts, lay, quick[fi.Path], metaByPath[fi.Path], state, &bytesDone)
+		outcome := p.processFile(ctx, session.ID, fi, opts, lay, quick[fi.Path], full[fi.Path], metaByPath[fi.Path], state, &bytesDone)
 		if outcome.abort {
 			p.finishSession(session.ID, domain.SessionStatusInterrupted, state)
 			p.log.Error("import aborted", "sessionId", session.ID, "error", outcome.abortErr.Error())
@@ -177,13 +178,13 @@ type fileOutcome struct {
 // failure increments the session Failures counter, logs, and returns
 // failed=true; unrecoverable destination conditions (disk full, destination root
 // gone) return abort=true.
-func (p *Pipeline) processFile(ctx context.Context, sessionID string, fi FileInfo, opts Options, lay *archive.Layout, quickHash string, meta *metadata.AssetMetadata, state *sessionState, bytesDone *int64) fileOutcome {
+func (p *Pipeline) processFile(ctx context.Context, sessionID string, fi FileInfo, opts Options, lay *archive.Layout, quickHash, fullHash string, meta *metadata.AssetMetadata, state *sessionState, bytesDone *int64) fileOutcome {
 	// Source may have vanished (e.g. the drive was pulled).
 	if _, err := statSize(fi.Path); err != nil {
 		return p.fail(ctx, sessionID, fi.Path, "stat", err)
 	}
 
-	cls, err := p.classify(ctx, fi.Path, quickHash)
+	cls, err := p.classify(ctx, fi.Path, quickHash, fullHash)
 	if err != nil {
 		return p.fail(ctx, sessionID, fi.Path, "classify", err)
 	}
@@ -283,10 +284,12 @@ func (p *Pipeline) copyFile(ctx context.Context, sessionID string, fi FileInfo, 
 // same-volume rename), computing a full BLAKE3 integrity baseline. duplicate
 // indicates the file is a flagged in-library duplicate (still registered).
 func (p *Pipeline) adoptFile(ctx context.Context, sessionID string, fi FileInfo, opts Options, lay *archive.Layout, cls classification, meta *metadata.AssetMetadata, state *sessionState, duplicate bool, bytesDone *int64) fileOutcome {
-	// Full BLAKE3 is the in-place verification baseline; always computed.
+	// Full BLAKE3 is the in-place verification baseline. cls.FullHash is already
+	// set when the dry run full-hashed this file (collision/intra-batch candidate)
+	// and the reuse gate accepted it — that reuse saves re-reading the whole file.
 	fullHash := cls.FullHash
 	if fullHash == "" {
-		fh, err := hashing.FullHash(ctx, fi.Path)
+		fh, err := p.fullHash(ctx, fi.Path)
 		if err != nil {
 			return p.fail(ctx, sessionID, fi.Path, "baseline-hash", err)
 		}
@@ -640,20 +643,41 @@ func (p *Pipeline) setPartner(ctx context.Context, assetID, partnerID string) er
 	return nil
 }
 
-// reuseQuickHashes returns a path->quick-hash map, reusing a prior DryRun's
-// hashes when the file path and size still match, otherwise leaving the entry
-// empty so classify recomputes it.
-func (p *Pipeline) reuseQuickHashes(report *DryRunReport, files []FileInfo) map[string]string {
-	out := make(map[string]string, len(files))
+// reuseHashes returns path->quick-hash and path->full-hash maps seeded from a
+// prior DryRun. A precomputed hash is reused ONLY when the freshly scanned file
+// still has the exact size AND mtime the dry run recorded (DryRunReport.Scans);
+// a changed file (stale) or a file the dry run never saw (new) is left absent so
+// classify hashes it fresh — a stale hash can therefore never reach verification.
+// A nil report (the plain crash-resume path) reuses nothing and re-hashes
+// everything, which is correct. Full hashes are gated the same way so adopt-mode
+// baseline reuse is equally safe.
+func (p *Pipeline) reuseHashes(report *DryRunReport, files []FileInfo) (quick, full map[string]string) {
+	quick = make(map[string]string, len(files))
+	full = make(map[string]string, len(files))
 	if report == nil {
-		return out
+		return quick, full
 	}
+	reused, stale, missing := 0, 0, 0
 	for _, f := range files {
+		meta, ok := report.Scans[f.Path]
+		if !ok {
+			missing++ // the dry run never saw this path: a new file, hash it fresh
+			continue
+		}
+		if meta.Size != f.Size || meta.ModTime != f.ModTime {
+			stale++ // changed since the dry run: fall through to fresh hashing
+			continue
+		}
 		if h, ok := report.QuickHashes[f.Path]; ok {
-			out[f.Path] = h
+			quick[f.Path] = h
+			reused++
+		}
+		if fh, ok := report.FullHashes[f.Path]; ok {
+			full[f.Path] = fh
 		}
 	}
-	return out
+	p.log.Info("reusing precomputed hashes", "reused", reused, "stale", stale, "new", missing)
+	return quick, full
 }
 
 // effectiveCaptureDate returns the capture date to use for layout and storage:

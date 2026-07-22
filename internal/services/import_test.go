@@ -11,7 +11,7 @@ import (
 // repository or the pipeline.
 func TestLaunchRejectsConcurrentImport(t *testing.T) {
 	svc := &ImportService{active: true}
-	_, err := svc.launch(context.Background(), resumeState{SourceRoot: "/x"})
+	_, err := svc.launch(context.Background(), resumeState{SourceRoot: "/x"}, nil)
 	if !errors.Is(err, ErrImportInProgress) {
 		t.Fatalf("expected ErrImportInProgress, got %v", err)
 	}
