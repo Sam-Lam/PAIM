@@ -196,10 +196,10 @@ func (p *Pipeline) processFile(ctx context.Context, sessionID string, fi FileInf
 		p.log.Debug("skip already-imported file", "path", fi.Path, "assetId", cls.MatchedAssetID)
 		return fileOutcome{}
 	case DispositionDuplicate:
-		return p.recordDuplicate(ctx, sessionID, fi, opts, lay, cls, meta, state)
+		return p.recordDuplicate(ctx, sessionID, fi, opts, lay, cls, meta, state, bytesDone)
 	default:
 		if opts.mode() == ModeAdopt {
-			return p.adoptFile(ctx, sessionID, fi, opts, lay, cls, meta, state, false)
+			return p.adoptFile(ctx, sessionID, fi, opts, lay, cls, meta, state, false, bytesDone)
 		}
 		return p.copyFile(ctx, sessionID, fi, opts, lay, cls, meta, bytesDone)
 	}
@@ -282,7 +282,7 @@ func (p *Pipeline) copyFile(ctx context.Context, sessionID string, fi FileInfo, 
 // adoptFile registers an existing file in place (optionally reorganizing it via
 // same-volume rename), computing a full BLAKE3 integrity baseline. duplicate
 // indicates the file is a flagged in-library duplicate (still registered).
-func (p *Pipeline) adoptFile(ctx context.Context, sessionID string, fi FileInfo, opts Options, lay *archive.Layout, cls classification, meta *metadata.AssetMetadata, state *sessionState, duplicate bool) fileOutcome {
+func (p *Pipeline) adoptFile(ctx context.Context, sessionID string, fi FileInfo, opts Options, lay *archive.Layout, cls classification, meta *metadata.AssetMetadata, state *sessionState, duplicate bool, bytesDone *int64) fileOutcome {
 	// Full BLAKE3 is the in-place verification baseline; always computed.
 	fullHash := cls.FullHash
 	if fullHash == "" {
@@ -330,6 +330,9 @@ func (p *Pipeline) adoptFile(ctx context.Context, sessionID string, fi FileInfo,
 	}
 	if err := p.recordAsset(ctx, asset, counters, true); err != nil {
 		return p.fail(ctx, sessionID, fi.Path, "record", err)
+	}
+	if bytesDone != nil {
+		*bytesDone += fi.Size
 	}
 	p.log.Info("adopted in place (in-place baseline verified)",
 		"path", currentPath, "assetId", asset.ID, "duplicate", duplicate)
@@ -387,9 +390,9 @@ func (p *Pipeline) reorganizeInPlace(ctx context.Context, src, destPath, srcQuic
 // recordDuplicate records a content duplicate. In copy mode the bytes are NOT
 // copied: a placeholder Asset with DuplicateOfAssetID and an empty archive path
 // is inserted. In adopt mode the in-place file is registered and flagged.
-func (p *Pipeline) recordDuplicate(ctx context.Context, sessionID string, fi FileInfo, opts Options, lay *archive.Layout, cls classification, meta *metadata.AssetMetadata, state *sessionState) fileOutcome {
+func (p *Pipeline) recordDuplicate(ctx context.Context, sessionID string, fi FileInfo, opts Options, lay *archive.Layout, cls classification, meta *metadata.AssetMetadata, state *sessionState, bytesDone *int64) fileOutcome {
 	if opts.mode() == ModeAdopt {
-		return p.adoptFile(ctx, sessionID, fi, opts, lay, cls, meta, state, true)
+		return p.adoptFile(ctx, sessionID, fi, opts, lay, cls, meta, state, true, bytesDone)
 	}
 	captureDate, _ := effectiveCaptureDate(meta, fi)
 	dupOf := cls.MatchedAssetID

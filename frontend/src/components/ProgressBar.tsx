@@ -54,7 +54,7 @@ export function ProgressBar({
           <div className="flex flex-none items-center gap-2 tabular-nums text-zinc-400">
             {detail}
             {showPercent && !indeterminate ? (
-              <span className="font-medium text-zinc-200">{Math.round(pct)}%</span>
+              <span className="font-medium text-zinc-200">{pct >= 100 ? 100 : Math.floor(pct)}%</span>
             ) : null}
           </div>
         </div>

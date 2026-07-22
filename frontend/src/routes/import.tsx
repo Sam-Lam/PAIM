@@ -957,7 +957,7 @@ function ImportStep({
           hint={`of ${formatBytes(progress?.bytesTotal ?? 0)}`}
         />
         <CounterCard label="Errors" value={progress?.errors ?? 0} tone={(progress?.errors ?? 0) > 0 ? "danger" : "default"} />
-        <CounterCard label="Progress" valueText={pct != null ? `${Math.round(pct)}%` : "—"} tone="accent" />
+        <CounterCard label="Progress" valueText={pct != null ? `${pct >= 100 ? 100 : Math.floor(pct)}%` : "—"} tone="accent" />
       </div>
 
       {progress?.currentFile ? (
