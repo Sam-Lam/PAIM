@@ -2819,6 +2819,77 @@ export class OpenResultDTO {
 }
 
 /**
+ * OperationInfo is one running long operation reported to the quit guard. Kind is
+ * a stable machine token (import | analyze | reorganize | safe_to_erase | cleanup
+ * | backup_upload); Label is a human phrase. FilesDone/FilesTotal and
+ * BytesDone/BytesTotal are the latest progress snapshot (a zero total means the
+ * count is indeterminate). It is JSON-serializable so it can ride the
+ * app:quit-requested event payload and the AppService.ActiveOperations binding.
+ */
+export class OperationInfo {
+    /**
+     * Creates a new OperationInfo instance.
+     * @param {Partial<OperationInfo>} [$$source = {}] - The source object to create the OperationInfo.
+     */
+    constructor($$source = {}) {
+        if (!("kind" in $$source)) {
+            /**
+             * @member
+             * @type {string}
+             */
+            this["kind"] = "";
+        }
+        if (!("label" in $$source)) {
+            /**
+             * @member
+             * @type {string}
+             */
+            this["label"] = "";
+        }
+        if (!("filesDone" in $$source)) {
+            /**
+             * @member
+             * @type {number}
+             */
+            this["filesDone"] = 0;
+        }
+        if (!("filesTotal" in $$source)) {
+            /**
+             * @member
+             * @type {number}
+             */
+            this["filesTotal"] = 0;
+        }
+        if (!("bytesDone" in $$source)) {
+            /**
+             * @member
+             * @type {number}
+             */
+            this["bytesDone"] = 0;
+        }
+        if (!("bytesTotal" in $$source)) {
+            /**
+             * @member
+             * @type {number}
+             */
+            this["bytesTotal"] = 0;
+        }
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new OperationInfo instance from a string or object.
+     * @param {any} [$$source = {}]
+     * @returns {OperationInfo}
+     */
+    static createFrom($$source = {}) {
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        return new OperationInfo(/** @type {Partial<OperationInfo>} */($$parsedSource));
+    }
+}
+
+/**
  * PageResult wraps a paginated slice with its total match count so tables can
  * render pagination controls.
  * @template T
@@ -3066,6 +3137,44 @@ export class QueueSummaryDTO {
 }
 
 /**
+ * QuitRequested is the payload for app:quit-requested, emitted when the user
+ * tries to quit while long operations are running. The quit is vetoed and this
+ * carries the live operations list so the global quit-guard dialog can name each
+ * one with current numbers. A repeated quit attempt re-emits with fresh numbers.
+ */
+export class QuitRequested {
+    /**
+     * Creates a new QuitRequested instance.
+     * @param {Partial<QuitRequested>} [$$source = {}] - The source object to create the QuitRequested.
+     */
+    constructor($$source = {}) {
+        if (!("operations" in $$source)) {
+            /**
+             * @member
+             * @type {OperationInfo[]}
+             */
+            this["operations"] = [];
+        }
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new QuitRequested instance from a string or object.
+     * @param {any} [$$source = {}]
+     * @returns {QuitRequested}
+     */
+    static createFrom($$source = {}) {
+        const $$createField0_0 = $$createType64;
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        if ("operations" in $$parsedSource) {
+            $$parsedSource["operations"] = $$createField0_0($$parsedSource["operations"]);
+        }
+        return new QuitRequested(/** @type {Partial<QuitRequested>} */($$parsedSource));
+    }
+}
+
+/**
  * RecentLibraryDTO is one entry in the recent-libraries list.
  */
 export class RecentLibraryDTO {
@@ -3295,8 +3404,8 @@ export class ReorganizePlanDTO {
      * @returns {ReorganizePlanDTO}
      */
     static createFrom($$source = {}) {
-        const $$createField6_0 = $$createType64;
-        const $$createField7_0 = $$createType66;
+        const $$createField6_0 = $$createType66;
+        const $$createField7_0 = $$createType68;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("movesSample" in $$parsedSource) {
             $$parsedSource["movesSample"] = $$createField6_0($$parsedSource["movesSample"]);
@@ -3714,7 +3823,7 @@ export class SessionDetail {
      * @returns {SessionDetail}
      */
     static createFrom($$source = {}) {
-        const $$createField0_0 = $$createType67;
+        const $$createField0_0 = $$createType69;
         const $$createField1_0 = $$createType56;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("session" in $$parsedSource) {
@@ -4592,8 +4701,10 @@ const $$createType59 = $Create.Nullable($$createType58);
 const $$createType60 = LockConflictDTO.createFrom;
 const $$createType61 = $Create.Nullable($$createType60);
 const $$createType62 = /** @type {(...args: any[]) => any} */(($$createParamT) => $Create.Array($$createParamT));
-const $$createType63 = ReorganizeMoveDTO.createFrom;
+const $$createType63 = OperationInfo.createFrom;
 const $$createType64 = $Create.Array($$createType63);
-const $$createType65 = ReorganizeSkipDTO.createFrom;
+const $$createType65 = ReorganizeMoveDTO.createFrom;
 const $$createType66 = $Create.Array($$createType65);
-const $$createType67 = SessionDTO.createFrom;
+const $$createType67 = ReorganizeSkipDTO.createFrom;
+const $$createType68 = $Create.Array($$createType67);
+const $$createType69 = SessionDTO.createFrom;

@@ -36,6 +36,7 @@ const (
 	EventLogExportProgress  = "log:export-progress"
 	EventDuplicateProgress  = "duplicate:progress"
 	EventLibraryProgress    = "library:progress"
+	EventQuitRequested      = "app:quit-requested"
 )
 
 // Emitter delivers a typed event payload to the frontend. It is implemented in
@@ -203,6 +204,14 @@ type LibraryProgress struct {
 	Message string `json:"message"`
 	Done    int    `json:"done"`
 	Total   int    `json:"total"`
+}
+
+// QuitRequested is the payload for app:quit-requested, emitted when the user
+// tries to quit while long operations are running. The quit is vetoed and this
+// carries the live operations list so the global quit-guard dialog can name each
+// one with current numbers. A repeated quit attempt re-emits with fresh numbers.
+type QuitRequested struct {
+	Operations []OperationInfo `json:"operations"`
 }
 
 // throttleInterval bounds progress emission to at most one event per 100ms

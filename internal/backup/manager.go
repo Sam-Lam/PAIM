@@ -154,8 +154,29 @@ type Manager struct {
 	// queue-change notifications (see notifyQueueChanged).
 	lastQueueNotify time.Time
 
+	// uploadsMu guards uploads. It is separate from mu because per-job upload
+	// progress fires frequently and must not contend with the queue-change /
+	// backoff bookkeeping mu guards.
+	uploadsMu sync.Mutex
+	// uploads holds the in-flight uploads keyed by job ID: an entry exists from
+	// just before a job's plugin Upload begins until the attempt returns. It is
+	// the source of truth for RunningJobs (which the quit guard consults), so it
+	// reflects only jobs actually transferring bytes now — not the merely pending
+	// queue.
+	uploads map[string]*JobInfo
+
 	cancel context.CancelFunc
 	wg     sync.WaitGroup
+}
+
+// JobInfo is a snapshot of one currently-uploading backup job, exposed by
+// RunningJobs so the quit guard can report in-flight uploads. BytesTotal is the
+// asset's file size; BytesDone advances as the plugin reports upload progress.
+type JobInfo struct {
+	JobID      string
+	AssetID    string
+	BytesDone  int64
+	BytesTotal int64
 }
 
 // NewManager constructs a Manager. registry must be non-nil; a nil logger falls
@@ -173,7 +194,48 @@ func NewManager(jobs JobQueue, assets AssetStore, providers ProviderStore, regis
 		opts:        opts.withDefaults(),
 		pluginCache: make(map[string]Plugin),
 		backoff:     make(map[string]time.Time),
+		uploads:     make(map[string]*JobInfo),
 	}
+}
+
+// RunningJobs returns a snapshot of the jobs currently uploading (transferring
+// bytes). The pending queue is deliberately excluded: pending jobs resume on the
+// next launch, so the quit guard must not treat them as work in progress.
+func (m *Manager) RunningJobs() []JobInfo {
+	m.uploadsMu.Lock()
+	defer m.uploadsMu.Unlock()
+	out := make([]JobInfo, 0, len(m.uploads))
+	for _, u := range m.uploads {
+		out = append(out, *u)
+	}
+	return out
+}
+
+// trackUpload registers a job as in-flight just before its upload begins.
+func (m *Manager) trackUpload(jobID, assetID string, total int64) {
+	m.uploadsMu.Lock()
+	m.uploads[jobID] = &JobInfo{JobID: jobID, AssetID: assetID, BytesTotal: total}
+	m.uploadsMu.Unlock()
+}
+
+// updateUpload records the latest byte progress for an in-flight job.
+func (m *Manager) updateUpload(jobID string, done, total int64) {
+	m.uploadsMu.Lock()
+	if u, ok := m.uploads[jobID]; ok {
+		u.BytesDone = done
+		if total > 0 {
+			u.BytesTotal = total
+		}
+	}
+	m.uploadsMu.Unlock()
+}
+
+// untrackUpload removes a job from the in-flight set when its attempt returns
+// (whether it completed, failed, or was interrupted).
+func (m *Manager) untrackUpload(jobID string) {
+	m.uploadsMu.Lock()
+	delete(m.uploads, jobID)
+	m.uploadsMu.Unlock()
 }
 
 // Start reverts orphaned running jobs to pending and launches the worker pool
@@ -332,7 +394,13 @@ func (m *Manager) process(ctx context.Context, job *domain.BackupJob) (terminal 
 
 	remoteRel := m.remoteRelPath(asset)
 	localPath := library.ResolvePath(m.opts.LibraryRoot, asset.CurrentArchivePath)
+
+	// Register the job as in-flight for the duration of the transfer so
+	// RunningJobs (the quit guard) reports it while — and only while — bytes move.
+	m.trackUpload(job.ID, job.AssetID, asset.FileSize)
+	defer m.untrackUpload(job.ID)
 	progress := func(done, total int64) {
+		m.updateUpload(job.ID, done, total)
 		if m.opts.ProgressFn != nil {
 			m.opts.ProgressFn(job.ID, done, total)
 		}

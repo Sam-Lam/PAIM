@@ -3,6 +3,7 @@
 // generated) import path lives in exactly one place. NEVER call fetch/axios —
 // all backend access is through these bindings.
 export {
+  AppService,
   BackupService,
   BrowserService,
   CleanupService,
@@ -57,10 +58,12 @@ export type {
   MatchDTO,
   MonthCountDTO,
   OpenResultDTO,
+  OperationInfo,
   PageResult,
   PluginDTO,
   ProviderDTO,
   QueueSummaryDTO,
+  QuitRequested,
   RecentLibraryDTO,
   RecommendationDTO,
   ReorganizeMoveDTO,
@@ -98,4 +101,5 @@ export const WailsEvents = {
   LogExportProgress: "log:export-progress",
   DuplicateProgress: "duplicate:progress",
   LibraryProgress: "library:progress",
+  QuitRequested: "app:quit-requested",
 } as const;

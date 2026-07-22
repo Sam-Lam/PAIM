@@ -165,6 +165,33 @@ func (s *BackupService) mutate(ctx context.Context, err error) error {
 	return nil
 }
 
+// activeOps reports the backup jobs currently uploading (transferring bytes) for
+// the quit guard. The pending queue is deliberately not reported: pending jobs
+// resume next launch and must not nag the user at quit. One OperationInfo is
+// emitted per in-flight upload.
+func (s *BackupService) activeOps() []OperationInfo {
+	if s.manager == nil {
+		return nil
+	}
+	jobs := s.manager.RunningJobs()
+	out := make([]OperationInfo, 0, len(jobs))
+	for _, j := range jobs {
+		out = append(out, OperationInfo{
+			Kind:       "backup_upload",
+			Label:      "Uploading a backup",
+			BytesDone:  j.BytesDone,
+			BytesTotal: j.BytesTotal,
+		})
+	}
+	return out
+}
+
+// cancelActive is a no-op for backups: uploads are never aborted mid-flight, and
+// a job still running at shutdown is reverted to pending by the manager's Stop
+// (and startup recovery), then resumes next launch. The quit guard's bounded
+// grace wait simply proceeds after the deadline.
+func (s *BackupService) cancelActive() {}
+
 // NewBackupQueueChangedEmitter returns a backup.Options.OnQueueChanged callback
 // that emits a backup:queue-changed event carrying the current queue summary.
 // main.go wires it into the Manager so background job transitions (completion,

@@ -560,3 +560,51 @@ func TestRegistry(t *testing.T) {
 		t.Fatalf("expected 1 name, got %v", r.Names())
 	}
 }
+
+// TestManager_RunningJobs verifies the RunningJobs accessor the quit guard
+// consults: a job appears only while it is actually uploading (transferring
+// bytes), carries the asset's size as BytesTotal, and drains once the upload
+// finishes. The merely pending/completed states are never reported.
+func TestManager_RunningJobs(t *testing.T) {
+	h := newHarness(t)
+	fake := okPlugin("localfs")
+	fake.uploadDelay = 250 * time.Millisecond // keep the upload in flight long enough to observe
+	h.registry.Register("localfs", func() backup.Plugin { return fake })
+	prov := h.addProvider(t, "localfs")
+	asset := h.addAsset(t)
+
+	ctx := context.Background()
+	job, _, err := h.jobs.Enqueue(ctx, asset.ID, prov.PluginName, prov.ID)
+	if err != nil {
+		t.Fatalf("enqueue: %v", err)
+	}
+
+	m := backup.NewManager(h.jobs, h.assets, h.providers, h.registry, nil, fastOptions())
+	// A pending (not yet claimed) job is not "running".
+	if got := len(m.RunningJobs()); got != 0 {
+		t.Fatalf("RunningJobs before start = %d, want 0", got)
+	}
+
+	if err := m.Start(ctx); err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	defer m.Stop()
+
+	// While uploading, the job is reported with the asset's size as BytesTotal.
+	eventually(t, 2*time.Second, "job appears in RunningJobs while uploading", func() bool {
+		jobs := m.RunningJobs()
+		if len(jobs) != 1 {
+			return false
+		}
+		return jobs[0].JobID == job.ID && jobs[0].AssetID == asset.ID && jobs[0].BytesTotal == asset.FileSize
+	})
+
+	// Once the upload completes, the job is no longer running (and the completed
+	// job is not reported either).
+	eventually(t, 3*time.Second, "job completes", func() bool {
+		return h.jobByID(t, job.ID).Status == domain.JobStatusCompleted
+	})
+	eventually(t, 2*time.Second, "RunningJobs drains after completion", func() bool {
+		return len(m.RunningJobs()) == 0
+	})
+}

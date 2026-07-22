@@ -127,6 +127,7 @@ func (s *ImportService) StartReorganize(ctx context.Context) (StartImportResult,
 	// Reserve the active slot before the (fast) session insert so no second start
 	// slips in; release it if creation fails.
 	s.active = true
+	s.opKind = "reorganize"
 	plan := s.reorgPlan
 	event := s.reorgEvent
 	fresh := plan != nil && time.Since(s.reorgPlanAt) < reorgPlanTTL

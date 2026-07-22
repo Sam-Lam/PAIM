@@ -19,6 +19,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/Sam-Lam/PAIM/internal/backup"
@@ -58,6 +59,7 @@ func init() {
 	application.RegisterEvent[services.LogExportProgress](services.EventLogExportProgress)
 	application.RegisterEvent[services.DuplicateProgress](services.EventDuplicateProgress)
 	application.RegisterEvent[services.LibraryProgress](services.EventLibraryProgress)
+	application.RegisterEvent[services.QuitRequested](services.EventQuitRequested)
 }
 
 // wailsEmitter adapts the Wails event manager to services.Emitter. Its app
@@ -116,9 +118,15 @@ type composition struct {
 	watcher    *volumes.Watcher
 	gate       *services.LibraryGate
 	sleep      *services.SleepGuard
+	tracker    *services.ActivityTracker
 	config     *library.ConfigStore
 	appVersion string
 	rootCtx    context.Context
+
+	// quitConfirmed is set by ConfirmQuit (via the injected quit closure) so the
+	// re-entrant quit it triggers passes the ShouldQuit interception hook straight
+	// through to the normal graceful shutdown.
+	quitConfirmed atomic.Bool
 
 	libSvc      *services.LibraryService
 	dashSvc     *services.DashboardService
@@ -132,6 +140,7 @@ type composition struct {
 	logSvc      *services.LogService
 	settingsSvc *services.SettingsService
 	browserSvc  *services.BrowserService
+	appSvc      *services.AppService
 
 	mu       sync.Mutex
 	core     *services.AppCore
@@ -165,6 +174,7 @@ func run() error {
 	watcher := volumes.NewWatcher(logger)
 	gate := services.NewLibraryGate()
 	sleep := services.NewSleepGuard(logger)
+	tracker := services.NewActivityTracker()
 
 	rootCtx, rootCancel := context.WithCancel(context.Background())
 
@@ -178,6 +188,7 @@ func run() error {
 		watcher:    watcher,
 		gate:       gate,
 		sleep:      sleep,
+		tracker:    tracker,
 		config:     configStore,
 		appVersion: appVersion,
 		rootCtx:    rootCtx,
@@ -197,6 +208,7 @@ func run() error {
 	comp.logSvc = services.NewLogService(nil, nil, dialoger, emitter, logger)
 	comp.settingsSvc = services.NewSettingsService(nil, extractor.Available())
 	comp.browserSvc = services.NewBrowserService(nil, nil, nil, nil, logger)
+	comp.appSvc = services.NewAppService(tracker)
 
 	for _, g := range []interface{ SetGate(*services.LibraryGate) }{
 		comp.dashSvc, comp.importSvc, comp.sourcesSvc, comp.historySvc, comp.dupSvc,
@@ -215,6 +227,15 @@ func run() error {
 		sa.SetSleepGuard(sleep)
 	}
 
+	// Quit guard: the activity tracker aggregates every service's running long
+	// operation so the ShouldQuit hook (below) can veto a quit with work in flight
+	// and ConfirmQuit can cancel it. Backup contributes only its currently-
+	// uploading jobs (not the pending queue). Registration is once, before Run.
+	tracker.Register(comp.importSvc)
+	tracker.Register(comp.sourcesSvc)
+	tracker.Register(comp.cleanupSvc)
+	tracker.Register(comp.backupSvc)
+
 	app := application.New(application.Options{
 		Name:        "Photo Archive Integrity Manager",
 		Description: "Photo/video import, archive, verification, backup, and storage reclamation.",
@@ -231,6 +252,7 @@ func run() error {
 			application.NewService(comp.logSvc),
 			application.NewService(comp.settingsSvc),
 			application.NewService(comp.browserSvc),
+			application.NewService(comp.appSvc),
 		},
 		Assets: application.AssetOptions{
 			Handler:    application.AssetFileServerFS(assets),
@@ -238,6 +260,27 @@ func run() error {
 		},
 		Mac: application.MacOptions{
 			ApplicationShouldTerminateAfterLastWindowClosed: true,
+		},
+		// ShouldQuit is the single quit-interception chokepoint. On macOS AppKit's
+		// applicationShouldTerminate: routes Cmd+Q, the menu Quit, AND (because
+		// ApplicationShouldTerminateAfterLastWindowClosed is true) the last-window
+		// close all through here. Returning false vetoes the quit (NSTerminateCancel);
+		// true lets AppKit run cleanup() -> OnShutdown exactly once. With no active
+		// operations (or once ConfirmQuit has set quitConfirmed) the quit proceeds
+		// immediately; otherwise we veto and emit app:quit-requested with the live
+		// operations so the frontend can offer "Quit anyway". It runs on the main
+		// thread and must not block, so it only snapshots and emits.
+		ShouldQuit: func() bool {
+			if comp.quitConfirmed.Load() {
+				return true
+			}
+			ops := tracker.Snapshot()
+			if len(ops) == 0 {
+				return true
+			}
+			logger.Info("quit requested with active operations; vetoing", "operations", len(ops))
+			emitter.Emit(services.EventQuitRequested, services.QuitRequested{Operations: ops})
+			return false
 		},
 		OnShutdown: func() {
 			logger.Info("PAIM shutting down")
@@ -248,6 +291,14 @@ func run() error {
 
 	emitter.app = app
 	dialoger.app = app
+
+	// Wire ConfirmQuit's quit action now that the app exists: flag the interception
+	// hook so the re-entrant quit passes straight through, then trigger the quit on
+	// a goroutine (app.Quit blocks until the app tears down) so ConfirmQuit returns.
+	comp.appSvc.Quit = func() {
+		comp.quitConfirmed.Store(true)
+		go app.Quit()
+	}
 
 	// Startup open: the PAIM_DB_PATH dev escape hatch bypasses library mode
 	// entirely (plain db.Open, absolute paths, no lock/config). Otherwise try the

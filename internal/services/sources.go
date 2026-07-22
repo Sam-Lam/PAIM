@@ -439,6 +439,27 @@ func (s *SourcesService) CancelIdentify(ctx context.Context) error {
 	return nil
 }
 
+// activeOps reports a running safe-to-erase evaluation for the quit guard. The
+// identify walk is deliberately excluded: it is short and not a re-attachable
+// background run, matching the activity-registry spec (sources contributes its
+// safe-to-erase run only).
+func (s *SourcesService) activeOps() []OperationInfo {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if !s.active || s.run == nil {
+		return nil
+	}
+	info := OperationInfo{Kind: "safe_to_erase", Label: "Checking whether a card is safe to erase"}
+	if s.run.progress != nil {
+		info.FilesDone, info.FilesTotal = s.run.progress.FilesDone, s.run.progress.FilesTotal
+	}
+	return []OperationInfo{info}
+}
+
+// cancelActive cancels a running safe-to-erase evaluation via the existing
+// CancelSafeToErase path. It is a no-op when nothing is running.
+func (s *SourcesService) cancelActive() { _ = s.CancelSafeToErase(context.Background()) }
+
 // StartWatching runs the volume watcher until ctx is cancelled, emitting
 // volume:mounted / volume:unmounted for each change. It is invoked once from
 // main.go in a background goroutine; the watcher establishes its baseline from

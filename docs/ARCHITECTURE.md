@@ -378,6 +378,35 @@ browse grid proving what's archived, (c) provenance at a glance.
   get a duration badge; Live Photo pairs a badge and a single logical tile with both
   components in the drawer.
 
+## Quit guard — main.go, services, frontend
+
+Quitting must never surprise the user about in-flight work. Safety already comes from the
+restart-safe architecture (quit == controlled crash: per-file transactions, partial
+cleanup, interrupted-session resume); the guard adds *awareness* and a clean boundary.
+
+- **Activity registry**: services expose `ActiveOperations() []OperationInfo` — one entry
+  per running long op: kind (import | analyze | reorganize | safe_to_erase | cleanup |
+  backup_upload), human label, FilesDone/FilesTotal (or bytes) snapshot. Sources: the
+  ImportService one-active-operation guard, sources/cleanup background runs, and the
+  backup Manager's currently-uploading jobs (a merely non-empty pending queue does NOT
+  count — pending jobs resume next launch and must not nag).
+- **Interception**: quitting (Cmd+Q, menu, window close — the app terminates on last
+  window closed) is intercepted in main.go via the Wails v3 quit/window-closing hook.
+  No active operations → quit proceeds immediately, running the existing graceful
+  shutdown (backup manager stop, extractor close, lock release, log flush).
+  Active operations → the quit is vetoed and an `app:quit-requested` event is emitted
+  carrying the operations list.
+- **Dialog** (frontend, global — rendered in the root layout so it appears on any page):
+  names each operation with live numbers ("An import is running: 148,203 of 236,946
+  files") and explains the consequence ("It will pause safely and can be resumed").
+  Buttons: **Keep running** (dismiss, nothing happens) and **Quit anyway** → calls
+  `AppService.ConfirmQuit()`, which cancels all active operations, waits a bounded
+  grace period (≤5s) for the current per-file transaction to settle, then quits via the
+  normal graceful-shutdown path. Repeated Cmd+Q while the dialog is up re-emits (no
+  queueing, no bypass).
+- Cancellation semantics reuse the operations' existing cancel paths — the guard adds no
+  new teardown logic, only orchestration and visibility.
+
 ## Logging (internal/logging)
 
 Everything logged (copy, verify, import, hash, duplicate detection, backup, retry, failure,

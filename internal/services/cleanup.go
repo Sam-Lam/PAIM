@@ -319,3 +319,23 @@ func (s *CleanupService) CancelCleanupAnalyze(ctx context.Context) error {
 	}
 	return nil
 }
+
+// activeOps reports a running cleanup analysis for the quit guard. FilesTotal is
+// 0 during the single-pass walk-and-classify (the total is not known until it
+// completes), so the guard renders an indeterminate count.
+func (s *CleanupService) activeOps() []OperationInfo {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if !s.active || s.run == nil {
+		return nil
+	}
+	info := OperationInfo{Kind: "cleanup", Label: "Analyzing a folder for cleanup"}
+	if s.run.progress != nil {
+		info.FilesDone, info.FilesTotal = s.run.progress.FilesDone, s.run.progress.FilesTotal
+	}
+	return []OperationInfo{info}
+}
+
+// cancelActive cancels a running cleanup analysis via the existing
+// CancelCleanupAnalyze path. It is a no-op when nothing is running.
+func (s *CleanupService) cancelActive() { _ = s.CancelCleanupAnalyze(context.Background()) }

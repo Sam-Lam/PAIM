@@ -44,6 +44,7 @@ type ImportService struct {
 
 	mu        sync.Mutex
 	active    bool
+	opKind    string // "import" | "analyze" | "reorganize" while active; for the quit guard
 	cancel    context.CancelFunc
 	sessionID string
 	current   *ImportProgress
@@ -333,6 +334,7 @@ func (s *ImportService) StartAnalyze(ctx context.Context, opts ImportOptions) (S
 		return StartAnalyzeResult{}, ErrImportInProgress
 	}
 	s.active = true
+	s.opKind = "analyze"
 	runCtx, cancel := context.WithCancel(context.Background())
 	s.cancel = cancel
 	s.sessionID = ""
@@ -521,6 +523,7 @@ func (s *ImportService) ResumeSession(ctx context.Context, sessionID string) (St
 		return StartImportResult{}, ErrImportInProgress
 	}
 	s.active = true
+	s.opKind = "import"
 	runCtx, cancel := context.WithCancel(context.Background())
 	s.cancel = cancel
 	s.sessionID = session.ID
@@ -545,6 +548,7 @@ func (s *ImportService) launch(ctx context.Context, state resumeState) (StartImp
 	// Reserve the active slot before the (fast) session insert so no second start
 	// slips in; release it if creation fails.
 	s.active = true
+	s.opKind = "import"
 	s.mu.Unlock()
 
 	session, err := s.newSession(ctx, state)
@@ -661,6 +665,46 @@ func (s *ImportService) ActiveImport(ctx context.Context) (*ImportProgress, erro
 	snapshot := *s.current
 	return &snapshot, nil
 }
+
+// activeOps reports the running import/analyze/reorganize (at most one, since
+// they share the single active-operation slot) for the quit guard. It reads the
+// latest progress snapshot; numbers come from s.analyze for an analyze and
+// s.current for an import/reorganize.
+func (s *ImportService) activeOps() []OperationInfo {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if !s.active {
+		return nil
+	}
+	info := OperationInfo{Kind: s.opKind}
+	switch s.opKind {
+	case "analyze":
+		info.Label = "Analyzing a source"
+		if s.analyze != nil && s.analyze.progress != nil {
+			p := s.analyze.progress
+			info.FilesDone, info.FilesTotal = p.FilesDone, p.FilesTotal
+			info.BytesDone, info.BytesTotal = p.BytesDone, p.BytesTotal
+		}
+	case "reorganize":
+		info.Label = "Reorganizing the library"
+		if s.current != nil {
+			info.FilesDone, info.FilesTotal = s.current.FilesDone, s.current.FilesTotal
+			info.BytesDone, info.BytesTotal = s.current.BytesDone, s.current.BytesTotal
+		}
+	default:
+		info.Kind = "import"
+		info.Label = "Importing files"
+		if s.current != nil {
+			info.FilesDone, info.FilesTotal = s.current.FilesDone, s.current.FilesTotal
+			info.BytesDone, info.BytesTotal = s.current.BytesDone, s.current.BytesTotal
+		}
+	}
+	return []OperationInfo{info}
+}
+
+// cancelActive cancels a running import/analyze/reorganize via the existing
+// CancelImport path. It is a no-op when nothing is running.
+func (s *ImportService) cancelActive() { _ = s.CancelImport(context.Background()) }
 
 // newSession creates the ImportSession row that ResumeSession will drive,
 // stamping the resume-state notes so the run can reload its options.

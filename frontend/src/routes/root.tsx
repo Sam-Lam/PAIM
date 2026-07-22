@@ -1,6 +1,6 @@
 import { useEffect } from "react";
 import { Outlet, createRootRoute, useNavigate, useRouterState } from "@tanstack/react-router";
-import { Sidebar, LoadingBlock } from "../components";
+import { Sidebar, LoadingBlock, QuitGuardDialog } from "../components";
 import { LibraryProvider, useLibrary } from "../lib/library";
 
 function Shell() {
@@ -56,6 +56,9 @@ function RootLayout() {
   return (
     <LibraryProvider>
       <Shell />
+      {/* Global quit guard: appears over any page when a quit is attempted with
+          long operations in flight. */}
+      <QuitGuardDialog />
     </LibraryProvider>
   );
 }

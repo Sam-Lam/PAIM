@@ -8,6 +8,7 @@ export {
   type DataTablePagination,
 } from "./DataTable";
 export { ConfirmDialog, type ConfirmDialogProps } from "./ConfirmDialog";
+export { QuitGuardDialog } from "./QuitGuardDialog";
 export { Card, type CardProps } from "./Card";
 export { Stat, type StatProps } from "./Stat";
 export { EmptyState, type EmptyStateProps } from "./EmptyState";

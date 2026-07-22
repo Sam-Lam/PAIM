@@ -479,10 +479,10 @@ function DetailDrawer({
               {d.sessionId ? <Row label="Session ID" value={d.sessionId} mono /> : null}
             </Section>
 
-            {d.backupJobs.length > 0 ? (
-              <Section title={`Backups (${d.backupJobs.length})`}>
+            {(d.backupJobs ?? []).length > 0 ? (
+              <Section title={`Backups (${(d.backupJobs ?? []).length})`}>
                 <div className="space-y-1.5">
-                  {d.backupJobs.map((j, i) => (
+                  {(d.backupJobs ?? []).map((j, i) => (
                     <div key={i} className="flex items-center justify-between gap-2 text-[11px]">
                       <div className="min-w-0">
                         <span className="text-zinc-300">{j.plugin || "—"}</span>
@@ -502,7 +502,7 @@ function DetailDrawer({
               </Section>
             ) : null}
 
-            {(d.duplicateOf || d.duplicates.length > 0 || d.livePhotoPartner) && (
+            {(d.duplicateOf || (d.duplicates ?? []).length > 0 || d.livePhotoPartner) && (
               <Section title="Relationships">
                 {d.duplicateOf ? (
                   <RefLink label="Duplicate of" refItem={d.duplicateOf} onClick={() => onNavigate(d.duplicateOf!.id)} />
@@ -514,7 +514,7 @@ function DetailDrawer({
                     onClick={() => onNavigate(d.livePhotoPartner!.id)}
                   />
                 ) : null}
-                {d.duplicates.map((r) => (
+                {(d.duplicates ?? []).map((r) => (
                   <RefLink key={r.id} label="Duplicated by" refItem={r} onClick={() => onNavigate(r.id)} />
                 ))}
               </Section>

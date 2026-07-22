@@ -13,39 +13,41 @@ import * as services$0 from "../../../../Sam-Lam/PAIM/internal/services/models.j
 function configure() {
     Object.freeze(Object.assign($Create.Events, {
         "analyze:completed": $$createType0,
-        "backup:progress": $$createType1,
-        "backup:queue-changed": $$createType2,
-        "cleanup:completed": $$createType3,
-        "cleanup:progress": $$createType4,
-        "duplicate:progress": $$createType5,
-        "import:completed": $$createType6,
-        "import:progress": $$createType7,
-        "library:progress": $$createType8,
-        "log:export-progress": $$createType9,
-        "reorganize:plan-progress": $$createType10,
-        "source:evaluated": $$createType11,
-        "source:identified": $$createType12,
-        "source:progress": $$createType13,
-        "volume:mounted": $$createType14,
-        "volume:unmounted": $$createType14,
+        "app:quit-requested": $$createType1,
+        "backup:progress": $$createType2,
+        "backup:queue-changed": $$createType3,
+        "cleanup:completed": $$createType4,
+        "cleanup:progress": $$createType5,
+        "duplicate:progress": $$createType6,
+        "import:completed": $$createType7,
+        "import:progress": $$createType8,
+        "library:progress": $$createType9,
+        "log:export-progress": $$createType10,
+        "reorganize:plan-progress": $$createType11,
+        "source:evaluated": $$createType12,
+        "source:identified": $$createType13,
+        "source:progress": $$createType14,
+        "volume:mounted": $$createType15,
+        "volume:unmounted": $$createType15,
     }));
 }
 
 // Private type creation functions
 const $$createType0 = services$0.AnalyzeCompleted.createFrom;
-const $$createType1 = services$0.BackupProgress.createFrom;
-const $$createType2 = services$0.BackupQueueChanged.createFrom;
-const $$createType3 = services$0.CleanupCompleted.createFrom;
-const $$createType4 = services$0.CleanupProgress.createFrom;
-const $$createType5 = services$0.DuplicateProgress.createFrom;
-const $$createType6 = services$0.ImportCompleted.createFrom;
-const $$createType7 = services$0.ImportProgress.createFrom;
-const $$createType8 = services$0.LibraryProgress.createFrom;
-const $$createType9 = services$0.LogExportProgress.createFrom;
-const $$createType10 = services$0.ReorganizePlanProgress.createFrom;
-const $$createType11 = services$0.SourceEvaluated.createFrom;
-const $$createType12 = services$0.SourceIdentified.createFrom;
-const $$createType13 = services$0.SourceProgress.createFrom;
-const $$createType14 = services$0.VolumeEvent.createFrom;
+const $$createType1 = services$0.QuitRequested.createFrom;
+const $$createType2 = services$0.BackupProgress.createFrom;
+const $$createType3 = services$0.BackupQueueChanged.createFrom;
+const $$createType4 = services$0.CleanupCompleted.createFrom;
+const $$createType5 = services$0.CleanupProgress.createFrom;
+const $$createType6 = services$0.DuplicateProgress.createFrom;
+const $$createType7 = services$0.ImportCompleted.createFrom;
+const $$createType8 = services$0.ImportProgress.createFrom;
+const $$createType9 = services$0.LibraryProgress.createFrom;
+const $$createType10 = services$0.LogExportProgress.createFrom;
+const $$createType11 = services$0.ReorganizePlanProgress.createFrom;
+const $$createType12 = services$0.SourceEvaluated.createFrom;
+const $$createType13 = services$0.SourceIdentified.createFrom;
+const $$createType14 = services$0.SourceProgress.createFrom;
+const $$createType15 = services$0.VolumeEvent.createFrom;
 
 configure();
