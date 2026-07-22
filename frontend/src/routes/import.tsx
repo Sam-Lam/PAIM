@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, useNavigate, useSearch } from "@tanstack/react-router";
 import {
   ArrowLeftIcon,
@@ -21,16 +21,16 @@ import {
   ImportService,
   SettingsService,
   WailsEvents,
+  type AnalyzeCompleted,
   type DryRunReportDTO,
   type ImportCompleted,
   type ImportProgress,
-  type ScanSummary,
   type SessionDTO,
   type Settings,
 } from "../lib/api";
 import { useWailsEvent } from "../lib/hooks";
 import { useToast } from "../lib/toast";
-import { baseName, formatBytes, formatEta, formatNumber } from "../lib/format";
+import { baseName, formatBytes, formatEta, formatNumber, formatRate } from "../lib/format";
 
 type Mode = "copy" | "adopt";
 type Step = 1 | 2 | 3;
@@ -49,9 +49,9 @@ export function ImportPage() {
   const [eventName, setEventName] = useState("");
   const [settings, setSettings] = useState<Settings | null>(null);
 
-  // Step 2 — analysis.
-  const [analyzing, setAnalyzing] = useState(false);
-  const [scan, setScan] = useState<ScanSummary | null>(null);
+  // Step 2 — analysis (runs server-side as a background job; re-attachable).
+  const [analyzeRunning, setAnalyzeRunning] = useState(false);
+  const [analyzeProgress, setAnalyzeProgress] = useState<ImportProgress | null>(null);
   const [dryRun, setDryRun] = useState<DryRunReportDTO | null>(null);
 
   // Step 3 — running import.
@@ -67,12 +67,36 @@ export function ImportPage() {
   const masterRoot = settings?.masterLibraryRoot ?? "";
 
   // Live progress + completion events.
+  //
+  // import:progress is shared by imports, reorganizes, and background analyzes.
+  // Analyze progress is marked by an empty sessionId; a reorganize carries a
+  // sessionId AND phase "reorganizing". We route by sessionId so a background
+  // reorganize can never hijack this page's analyze UI, and additionally ignore
+  // the reorganizing phase defensively.
   useWailsEvent<ImportProgress>(WailsEvents.ImportProgress, (data) => {
-    setProgress(data);
+    if (data.sessionId === "") {
+      if (data.phase === "reorganizing") return;
+      setAnalyzeProgress(data);
+    } else {
+      setProgress(data);
+    }
   });
   useWailsEvent<ImportCompleted>(WailsEvents.ImportCompleted, (data) => {
     setCompleted(data);
     void refreshInterrupted();
+  });
+  useWailsEvent<AnalyzeCompleted>(WailsEvents.AnalyzeCompleted, (data) => {
+    setAnalyzeRunning(false);
+    if (data.report) {
+      restoreOpts(data.opts);
+      setDryRun(data.report);
+      setStep(2);
+      return;
+    }
+    // Cancelled or failed: no report — fall back to source, keeping selection.
+    if (data.error) toast.fromError(data.error, "Analysis failed");
+    setAnalyzeProgress(null);
+    setStep(1);
   });
 
   const refreshInterrupted = useCallback(async () => {
@@ -84,20 +108,44 @@ export function ImportPage() {
     }
   }, []);
 
-  // On mount: load settings, detect an already-running import, seed the picked
-  // root from ?root=, and surface interrupted sessions.
+  // Restore the whole step-2 context from an analyze opts echo so navigating
+  // away and back never loses the selected root/mode/reorganize/event.
+  const restoreOpts = useCallback((o: ImportOptions) => {
+    if (o.root) setRoot(o.root);
+    if (o.mode === "copy" || o.mode === "adopt") setMode(o.mode);
+    setReorganize(!!o.reorganize);
+    if (typeof o.eventName === "string") setEventName(o.eventName);
+  }, []);
+
+  // On mount: load settings, re-attach to a running/completed import OR analyze,
+  // seed the picked root from ?root=, and surface interrupted sessions.
   useEffect(() => {
     let cancelled = false;
     (async () => {
       try {
-        const [s, active] = await Promise.all([SettingsService.GetAll(), ImportService.ActiveImport()]);
+        const [s, activeImport, activeAnalyze] = await Promise.all([
+          SettingsService.GetAll(),
+          ImportService.ActiveImport(),
+          ImportService.ActiveAnalyze(),
+        ]);
         if (cancelled) return;
         setSettings(s);
         if (s.defaultEventName) setEventName(s.defaultEventName);
-        if (active) {
+        if (activeImport) {
           // App restarted / resumed elsewhere mid-import: attach at step 3.
-          setProgress(active);
+          setProgress(activeImport);
           setStep(3);
+        } else if (activeAnalyze.state === "running") {
+          // Re-attach to the in-flight analyze; events keep it updating.
+          restoreOpts(activeAnalyze.opts);
+          setAnalyzeProgress(activeAnalyze.progress ?? null);
+          setAnalyzeRunning(true);
+          setStep(2);
+        } else if (activeAnalyze.state === "completed" && activeAnalyze.report) {
+          // Analyze finished while away: land straight on the report.
+          restoreOpts(activeAnalyze.opts);
+          setDryRun(activeAnalyze.report);
+          setStep(2);
         }
       } catch (e) {
         toast.fromError(e, "Failed to initialize import");
@@ -150,19 +198,31 @@ export function ImportPage() {
       return;
     }
     setStep(2);
-    setAnalyzing(true);
-    setScan(null);
+    setAnalyzeRunning(true);
+    setAnalyzeProgress(null);
     setDryRun(null);
     try {
-      const opts = buildOptions();
-      const scanResult = await ImportService.ScanSource(root);
-      setScan(scanResult);
-      const report = await ImportService.DryRun(root, opts);
-      setDryRun(report);
+      // Analyze runs server-side as a background job; progress and the finished
+      // report arrive via import:progress / analyze:completed.
+      await ImportService.StartAnalyze(buildOptions());
     } catch (e) {
-      toast.fromError(e, "Analysis failed");
-    } finally {
-      setAnalyzing(false);
+      toast.fromError(e, "Could not start analysis");
+      setAnalyzeRunning(false);
+      setStep(1);
+    }
+  };
+
+  // Cancel is read-only during analyze — no confirmation. Return to source,
+  // preserving the folder/mode selection.
+  const cancelAnalyze = async () => {
+    setAnalyzeRunning(false);
+    setAnalyzeProgress(null);
+    setDryRun(null);
+    setStep(1);
+    try {
+      await ImportService.CancelImport();
+    } catch (e) {
+      toast.fromError(e, "Could not cancel analysis");
     }
   };
 
@@ -207,7 +267,8 @@ export function ImportPage() {
 
   const resetToStart = () => {
     setStep(1);
-    setScan(null);
+    setAnalyzeRunning(false);
+    setAnalyzeProgress(null);
     setDryRun(null);
     setProgress(null);
     setCompleted(null);
@@ -286,15 +347,17 @@ export function ImportPage() {
       ) : null}
 
       {step === 2 ? (
-        <DryRunStep
-          analyzing={analyzing}
-          scan={scan}
-          report={dryRun}
-          mode={mode}
-          onBack={() => setStep(1)}
-          onStart={startImport}
-          starting={starting}
-        />
+        analyzeRunning ? (
+          <AnalyzeProgress progress={analyzeProgress} onCancel={cancelAnalyze} />
+        ) : (
+          <DryRunStep
+            report={dryRun}
+            mode={mode}
+            onBack={() => setStep(1)}
+            onStart={startImport}
+            starting={starting}
+          />
+        )
       ) : null}
 
       {step === 3 ? (
@@ -518,17 +581,134 @@ function ModeOption({
 
 /* ------------------------------ Step 2 ---------------------------------- */
 
+const ANALYZE_PHASE_LABEL: Record<string, string> = {
+  scanning: "Scanning",
+  hashing: "Hashing",
+  classifying: "Classifying",
+};
+
+// truncateMiddle shortens a string to max chars, keeping both ends and eliding
+// the middle — so a long filename stays recognizable by its name and extension.
+function truncateMiddle(s: string, max: number): string {
+  if (s.length <= max) return s;
+  const keep = max - 1;
+  const head = Math.ceil(keep / 2);
+  const tail = Math.floor(keep / 2);
+  return `${s.slice(0, head)}…${s.slice(s.length - tail)}`;
+}
+
+// useTransferRate derives a bytes/sec rate from a rolling ~5s window of the
+// observed bytesDone counter. Passing null (e.g. during scanning, where no byte
+// total is known) clears the window and returns null.
+function useTransferRate(bytesDone: number | null): number | null {
+  const samplesRef = useRef<{ t: number; bytes: number }[]>([]);
+  const [rate, setRate] = useState<number | null>(null);
+  useEffect(() => {
+    if (bytesDone == null) {
+      samplesRef.current = [];
+      setRate(null);
+      return;
+    }
+    const now = Date.now();
+    const samples = samplesRef.current;
+    samples.push({ t: now, bytes: bytesDone });
+    const cutoff = now - 5000;
+    while (samples.length > 2 && samples[0].t < cutoff) samples.shift();
+    const first = samples[0];
+    const dt = (now - first.t) / 1000;
+    const db = bytesDone - first.bytes;
+    setRate(dt > 0.3 && db > 0 ? db / dt : null);
+  }, [bytesDone]);
+  return rate;
+}
+
+// AnalyzeProgress renders the running analyze sub-state of step 2: a large
+// progress bar with verbose counters (files, bytes, rate, ETA), the current
+// filename, and the phase label. The scanning phase shows an indeterminate bar
+// with a live discovered-file count.
+function AnalyzeProgress({ progress, onCancel }: { progress: ImportProgress | null; onCancel: () => void }) {
+  const phase = progress?.phase || "scanning";
+  const scanning = phase === "scanning";
+  const bytesDone = progress?.bytesDone ?? 0;
+  const bytesTotal = progress?.bytesTotal ?? 0;
+  const rate = useTransferRate(scanning ? null : bytesDone);
+  const percent = !scanning && bytesTotal > 0 ? (bytesDone / bytesTotal) * 100 : null;
+  const etaSeconds = rate && rate > 0 && bytesTotal > bytesDone ? (bytesTotal - bytesDone) / rate : null;
+  const phaseLabel = ANALYZE_PHASE_LABEL[phase] ?? titleCasePhase(phase);
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-start gap-2 rounded-md border border-blue-500/30 bg-blue-500/5 p-3 text-[12px] text-blue-200/90">
+        <InformationCircleIcon className="mt-0.5 h-4 w-4 flex-none" />
+        <span>
+          Analyzing — hashing every file to predict the import. Nothing is modified. You can leave this page and come
+          back; the analysis keeps running in the background.
+        </span>
+      </div>
+
+      <Card>
+        <div className="mb-4 flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <ArrowPathIcon className="h-4 w-4 animate-spin text-blue-400" />
+            <span className="text-sm font-medium text-zinc-200">Analyzing…</span>
+            <StatusBadge status={phase} tone="info" label={phaseLabel} />
+          </div>
+          <Button icon={StopIcon} variant="danger" onClick={onCancel}>
+            Cancel
+          </Button>
+        </div>
+
+        {scanning ? (
+          <ProgressBar
+            percent={null}
+            size="lg"
+            showPercent={false}
+            label={`Discovered ${formatNumber(progress?.filesDone ?? 0)} files…`}
+          />
+        ) : (
+          <ProgressBar
+            percent={percent}
+            striped
+            size="lg"
+            label={progress?.currentFile ? truncateMiddle(baseName(progress.currentFile), 52) : "Working…"}
+            detail={`${formatBytes(bytesDone)} of ${formatBytes(bytesTotal)} · ${formatRate(rate)}`}
+          />
+        )}
+
+        <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
+          <CounterCard
+            label="Files"
+            value={progress?.filesDone ?? 0}
+            hint={
+              progress && progress.filesTotal > 0
+                ? `of ${formatNumber(progress.filesTotal)}`
+                : scanning
+                  ? "discovering…"
+                  : undefined
+            }
+          />
+          <CounterCard label="Data" valueText={formatBytes(bytesDone)} hint={bytesTotal > 0 ? `of ${formatBytes(bytesTotal)}` : undefined} />
+          <CounterCard label="Rate" valueText={scanning ? "—" : formatRate(rate)} tone="accent" />
+          <CounterCard label="Time left" valueText={scanning ? "—" : formatEta(etaSeconds)} />
+        </div>
+
+        {progress?.currentFile ? (
+          <p className="selectable mt-3 truncate font-mono text-[11px] text-zinc-500" title={progress.currentFile}>
+            {progress.currentFile}
+          </p>
+        ) : null}
+      </Card>
+    </div>
+  );
+}
+
 function DryRunStep({
-  analyzing,
-  scan,
   report,
   mode,
   onBack,
   onStart,
   starting,
 }: {
-  analyzing: boolean;
-  scan: ScanSummary | null;
   report: DryRunReportDTO | null;
   mode: Mode;
   onBack: () => void;
@@ -545,11 +725,7 @@ function DryRunStep({
         </span>
       </div>
 
-      {analyzing ? (
-        <Card>
-          <LoadingBlock label={scan ? "Hashing and classifying files…" : "Scanning source…"} />
-        </Card>
-      ) : report ? (
+      {report ? (
         <>
           <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
             <SummaryCard label="Files" value={formatNumber(report.files)} icon={Squares2X2Icon} />
@@ -733,6 +909,20 @@ function ImportStep({
 
   const pct = progress?.percent ?? null;
   const phase = progress?.phase || "starting";
+  const phaseLabel = IMPORT_PHASE_LABEL[phase] ?? titleCasePhase(phase);
+
+  // Verbose per-phase bar label. The metadata phase (which on huge libraries can
+  // run for a long time before the copy loop begins) gets an explicit
+  // "Reading metadata · N of M files"; the generic "Preparing…" fallback now only
+  // shows for the brief startup/preparing moments with no file context yet.
+  const barLabel =
+    phase === "extracting-metadata"
+      ? `Reading metadata · ${formatNumber(progress?.filesDone ?? 0)} of ${formatNumber(progress?.filesTotal ?? 0)} files`
+      : phase === "preparing"
+        ? "Preparing archive…"
+        : progress?.currentFile
+          ? baseName(progress.currentFile)
+          : "Preparing…";
 
   return (
     <Card>
@@ -740,7 +930,7 @@ function ImportStep({
         <div className="flex items-center gap-2">
           <ArrowPathIcon className="h-4 w-4 animate-spin text-blue-400" />
           <span className="text-sm font-medium text-zinc-200">Importing…</span>
-          <StatusBadge status={phase} tone="info" label={titleCasePhase(phase)} />
+          <StatusBadge status={phase} tone="info" label={phaseLabel} />
         </div>
         <Button icon={StopIcon} variant="danger" onClick={onCancel}>
           Cancel
@@ -748,12 +938,12 @@ function ImportStep({
       </div>
 
       <ProgressBar
-        percent={pct}
+        percent={phase === "preparing" ? null : pct}
         striped
         size="lg"
-        label={progress?.currentFile ? baseName(progress.currentFile) : "Preparing…"}
+        label={barLabel}
         detail={
-          progress
+          progress && progress.filesTotal > 0
             ? `${formatNumber(progress.filesDone)} / ${formatNumber(progress.filesTotal)} files`
             : undefined
         }
@@ -778,6 +968,16 @@ function ImportStep({
     </Card>
   );
 }
+
+// Friendly badge labels for the import phases (falls back to titleCasePhase).
+const IMPORT_PHASE_LABEL: Record<string, string> = {
+  preparing: "Preparing",
+  scanning: "Scanning",
+  "extracting-metadata": "Reading metadata",
+  importing: "Importing",
+  reorganizing: "Reorganizing",
+  done: "Done",
+};
 
 function titleCasePhase(phase: string): string {
   return phase.replace(/[_-]+/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());

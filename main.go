@@ -41,6 +41,7 @@ var assets embed.FS
 func init() {
 	application.RegisterEvent[services.ImportProgress](services.EventImportProgress)
 	application.RegisterEvent[services.ImportCompleted](services.EventImportCompleted)
+	application.RegisterEvent[services.AnalyzeCompleted](services.EventAnalyzeCompleted)
 	application.RegisterEvent[services.BackupProgress](services.EventBackupProgress)
 	application.RegisterEvent[services.BackupQueueChanged](services.EventBackupQueueChanged)
 	application.RegisterEvent[services.VolumeEvent](services.EventVolumeMounted)

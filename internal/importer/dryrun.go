@@ -66,7 +66,7 @@ func (p *Pipeline) DryRun(ctx context.Context, scan *ScanResult, opts Options, p
 		Dispositions: make(map[string]Disposition, len(scan.Files)),
 	}
 
-	quick, hashedBytes, elapsed, err := p.hashAll(ctx, scan.Files, opts.concurrency(), progressFn)
+	quick, hashedBytes, elapsed, err := p.hashAll(ctx, scan.Files, opts.concurrency(), scan.TotalBytes, progressFn)
 	if err != nil {
 		return nil, err
 	}
@@ -130,11 +130,12 @@ func (p *Pipeline) DryRun(ctx context.Context, scan *ScanResult, opts Options, p
 			}
 		}
 		progressFn.emit(Progress{
-			Phase:      PhaseHashing,
-			FilesDone:  i + 1,
-			FilesTotal: len(scan.Files),
-			BytesDone:  report.TotalImportBytes,
-			BytesTotal: scan.TotalBytes,
+			Phase:       PhaseClassifying,
+			FilesDone:   i + 1,
+			FilesTotal:  len(scan.Files),
+			BytesDone:   scan.TotalBytes,
+			BytesTotal:  scan.TotalBytes,
+			CurrentFile: fi.Path,
 		})
 	}
 
@@ -227,7 +228,7 @@ func (p *Pipeline) predictIntraBatchDuplicates(ctx context.Context, scan *ScanRe
 // returns the map of path->quick hash, the total bytes read (for the throughput
 // estimate), and the elapsed wall time. A per-file hash failure is logged and
 // omitted from the map (the caller treats a missing hash as needing recompute).
-func (p *Pipeline) hashAll(ctx context.Context, files []FileInfo, concurrency int, progressFn ProgressFunc) (map[string]string, int64, time.Duration, error) {
+func (p *Pipeline) hashAll(ctx context.Context, files []FileInfo, concurrency int, totalBytes int64, progressFn ProgressFunc) (map[string]string, int64, time.Duration, error) {
 	if concurrency < 1 {
 		concurrency = 1
 	}
@@ -239,6 +240,7 @@ func (p *Pipeline) hashAll(ctx context.Context, files []FileInfo, concurrency in
 		path string
 		hash string
 		read int64
+		size int64
 		err  error
 	}
 
@@ -263,7 +265,7 @@ func (p *Pipeline) hashAll(ctx context.Context, files []FileInfo, concurrency in
 				if read > (8 << 20) {
 					read = 8 << 20
 				}
-				results <- result{path: j.fi.Path, hash: h, read: read, err: err}
+				results <- result{path: j.fi.Path, hash: h, read: read, size: j.fi.Size, err: err}
 			}
 		}()
 	}
@@ -286,6 +288,7 @@ func (p *Pipeline) hashAll(ctx context.Context, files []FileInfo, concurrency in
 
 	out := make(map[string]string, len(files))
 	var totalRead int64
+	var bytesDone int64
 	done := 0
 	var firstErr error
 	for r := range results {
@@ -301,10 +304,27 @@ func (p *Pipeline) hashAll(ctx context.Context, files []FileInfo, concurrency in
 		}
 		out[r.path] = r.hash
 		totalRead += r.read
+		bytesDone += r.size
 		if done%32 == 0 {
-			progressFn.emit(Progress{Phase: PhaseHashing, FilesDone: done, FilesTotal: len(files), CurrentFile: r.path})
+			progressFn.emit(Progress{
+				Phase:       PhaseHashing,
+				FilesDone:   done,
+				FilesTotal:  len(files),
+				BytesDone:   bytesDone,
+				BytesTotal:  totalBytes,
+				CurrentFile: r.path,
+			})
 		}
 	}
+	// Final hashing snapshot so the counters land on 100% of the hashing phase
+	// even when the file count is not a multiple of the sampling stride.
+	progressFn.emit(Progress{
+		Phase:      PhaseHashing,
+		FilesDone:  done,
+		FilesTotal: len(files),
+		BytesDone:  bytesDone,
+		BytesTotal: totalBytes,
+	})
 	if firstErr != nil {
 		return nil, 0, 0, fmt.Errorf("hash all: %w", firstErr)
 	}

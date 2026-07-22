@@ -17,13 +17,27 @@ import { Call as $Call, CancellablePromise as $CancellablePromise, Create as $Cr
 import * as $models from "./models.js";
 
 /**
+ * ActiveAnalyze returns the current analyze state for re-attachment: "running"
+ * with the latest progress snapshot, "completed" with the report (or a
+ * cancelled/failed marker), or "none". A completed snapshot is retained until a
+ * new operation starts (see StartImport/ResumeSession/StartReorganize) or
+ * analyzeReportTTL elapses, after which it lapses to "none".
+ * @returns {$CancellablePromise<$models.ActiveAnalyzeDTO>}
+ */
+export function ActiveAnalyze() {
+    return $Call.ByID(2632687333).then(/** @type {($result: any) => any} */(($result) => {
+        return $$createType0($result);
+    }));
+}
+
+/**
  * ActiveImport returns the latest progress snapshot of the running import, or
  * nil when nothing is running.
  * @returns {$CancellablePromise<$models.ImportProgress | null>}
  */
 export function ActiveImport() {
     return $Call.ByID(4129542162).then(/** @type {($result: any) => any} */(($result) => {
-        return $$createType1($result);
+        return $$createType2($result);
     }));
 }
 
@@ -55,7 +69,7 @@ export function CancelImport() {
  */
 export function DryRun(root, opts) {
     return $Call.ByID(3790038963, root, opts).then(/** @type {($result: any) => any} */(($result) => {
-        return $$createType2($result);
+        return $$createType3($result);
     }));
 }
 
@@ -79,7 +93,7 @@ export function PickFolder() {
  */
 export function PlanReorganize(eventName) {
     return $Call.ByID(2236467974, eventName).then(/** @type {($result: any) => any} */(($result) => {
-        return $$createType4($result);
+        return $$createType5($result);
     }));
 }
 
@@ -92,7 +106,7 @@ export function PlanReorganize(eventName) {
  */
 export function ResumeSession(sessionID) {
     return $Call.ByID(4153050978, sessionID).then(/** @type {($result: any) => any} */(($result) => {
-        return $$createType5($result);
+        return $$createType6($result);
     }));
 }
 
@@ -104,7 +118,7 @@ export function ResumeSession(sessionID) {
  */
 export function ScanSource(root) {
     return $Call.ByID(152237345, root).then(/** @type {($result: any) => any} */(($result) => {
-        return $$createType6($result);
+        return $$createType7($result);
     }));
 }
 
@@ -116,6 +130,29 @@ export function ScanSource(root) {
  */
 export function SetGate(gate) {
     return $Call.ByID(1124552088, gate);
+}
+
+/**
+ * StartAnalyze runs scan + dry-run ("Analyze") in a background goroutine under
+ * the SAME one-active-operation guard as imports and reorganizes: while an
+ * analyze runs, StartImport/ResumeSession/StartReorganize are refused with
+ * ErrImportInProgress, and vice versa. A running analyze is cancelled via
+ * CancelImport (the same cancel plumbing imports use), which resolves it as a
+ * cancelled analyze:completed.
+ * 
+ * It emits throttled import:progress with phase "scanning" (FilesTotal=0,
+ * FilesDone=discovered count), "hashing", and "classifying". Analyze progress
+ * carries an empty SessionID so the frontend can distinguish it from an import
+ * or reorganize. On finish it emits analyze:completed (success/cancelled/failed)
+ * and caches the scan+report exactly as DryRun does, so a later StartImport is
+ * unaffected. No ImportSession is created.
+ * @param {$models.ImportOptions} opts
+ * @returns {$CancellablePromise<$models.StartAnalyzeResult>}
+ */
+export function StartAnalyze(opts) {
+    return $Call.ByID(695965157, opts).then(/** @type {($result: any) => any} */(($result) => {
+        return $$createType8($result);
+    }));
 }
 
 /**
@@ -134,7 +171,7 @@ export function SetGate(gate) {
  */
 export function StartImport(opts) {
     return $Call.ByID(3538574610, opts).then(/** @type {($result: any) => any} */(($result) => {
-        return $$createType5($result);
+        return $$createType6($result);
     }));
 }
 
@@ -148,15 +185,17 @@ export function StartImport(opts) {
  */
 export function StartReorganize() {
     return $Call.ByID(1096397871).then(/** @type {($result: any) => any} */(($result) => {
-        return $$createType5($result);
+        return $$createType6($result);
     }));
 }
 
 // Private type creation functions
-const $$createType0 = $models.ImportProgress.createFrom;
-const $$createType1 = $Create.Nullable($$createType0);
-const $$createType2 = $models.DryRunReportDTO.createFrom;
-const $$createType3 = $models.ReorganizePlanDTO.createFrom;
-const $$createType4 = $Create.Nullable($$createType3);
-const $$createType5 = $models.StartImportResult.createFrom;
-const $$createType6 = $models.ScanSummary.createFrom;
+const $$createType0 = $models.ActiveAnalyzeDTO.createFrom;
+const $$createType1 = $models.ImportProgress.createFrom;
+const $$createType2 = $Create.Nullable($$createType1);
+const $$createType3 = $models.DryRunReportDTO.createFrom;
+const $$createType4 = $models.ReorganizePlanDTO.createFrom;
+const $$createType5 = $Create.Nullable($$createType4);
+const $$createType6 = $models.StartImportResult.createFrom;
+const $$createType7 = $models.ScanSummary.createFrom;
+const $$createType8 = $models.StartAnalyzeResult.createFrom;

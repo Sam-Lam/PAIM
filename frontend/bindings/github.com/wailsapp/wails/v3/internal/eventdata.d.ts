@@ -12,6 +12,7 @@ import type * as services$0 from "../../../../Sam-Lam/PAIM/internal/services/mod
 declare module "@wailsio/runtime" {
     namespace Events {
         interface CustomEvents {
+            "analyze:completed": services$0.AnalyzeCompleted;
             "backup:progress": services$0.BackupProgress;
             "backup:queue-changed": services$0.BackupQueueChanged;
             "import:completed": services$0.ImportCompleted;

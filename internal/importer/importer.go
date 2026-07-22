@@ -134,11 +134,14 @@ func (o Options) mode() Mode {
 type Phase string
 
 const (
-	PhaseScanning     Phase = "scanning"
-	PhaseHashing      Phase = "hashing"
-	PhaseImporting    Phase = "importing"
-	PhaseReorganizing Phase = "reorganizing"
-	PhaseDone         Phase = "done"
+	PhasePreparing          Phase = "preparing"
+	PhaseScanning           Phase = "scanning"
+	PhaseHashing            Phase = "hashing"
+	PhaseClassifying        Phase = "classifying"
+	PhaseExtractingMetadata Phase = "extracting-metadata"
+	PhaseImporting          Phase = "importing"
+	PhaseReorganizing       Phase = "reorganizing"
+	PhaseDone               Phase = "done"
 )
 
 // Progress is a snapshot of a long-running operation. The caller is responsible

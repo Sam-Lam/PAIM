@@ -28,6 +28,8 @@ export {
 };
 
 export {
+    ActiveAnalyzeDTO,
+    AnalyzeCompleted,
     AppCore,
     AssetDTO,
     BackupJobDTO,
@@ -66,6 +68,7 @@ export {
     Settings,
     SourceDTO,
     SourceIdentified,
+    StartAnalyzeResult,
     StartImportResult,
     TotalsDTO,
     VolumeDTO,

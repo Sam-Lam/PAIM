@@ -17,6 +17,8 @@ export {
 } from "../../bindings/github.com/Sam-Lam/PAIM/internal/services";
 
 export type {
+  ActiveAnalyzeDTO,
+  AnalyzeCompleted,
   AssetDTO,
   BackupJobDTO,
   BackupProgress,
@@ -53,6 +55,7 @@ export type {
   Settings,
   SourceDTO,
   SourceIdentified,
+  StartAnalyzeResult,
   StartImportResult,
   TotalsDTO,
   VolumeDTO,
@@ -63,6 +66,7 @@ export type {
 export const WailsEvents = {
   ImportProgress: "import:progress",
   ImportCompleted: "import:completed",
+  AnalyzeCompleted: "analyze:completed",
   BackupProgress: "backup:progress",
   BackupQueueChanged: "backup:queue-changed",
   VolumeMounted: "volume:mounted",

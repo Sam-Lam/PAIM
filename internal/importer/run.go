@@ -95,9 +95,9 @@ func (p *Pipeline) Run(ctx context.Context, opts Options, progressFn ProgressFun
 func (p *Pipeline) runImport(ctx context.Context, session *domain.ImportSession, scan *ScanResult, opts Options, state *sessionState, progressFn ProgressFunc) (*domain.ImportSession, error) {
 	lay := p.effectiveLayout(opts.DestinationRoot)
 
-	// Metadata for every file, batched. ContentIdentifier feeds pairing; capture
-	// dates feed the layout. Degrades gracefully to an empty map.
-	metaByPath := p.extractMetadata(ctx, scan.Files)
+	// Metadata for every file, batched with progress. ContentIdentifier feeds
+	// pairing; capture dates feed the layout. Degrades gracefully per chunk.
+	metaByPath := p.extractMetadata(ctx, scan.Files, progressFn)
 
 	// Stage-2 (authoritative) Live Photo pairing using ContentIdentifier.
 	partnerOf := reconcilePairs(scan, metaByPath)
@@ -512,23 +512,59 @@ func (p *Pipeline) reload(sessionID string) *domain.ImportSession {
 	return s
 }
 
-// extractMetadata batch-extracts metadata for all files, keyed by path. A batch
-// failure degrades to an empty map (import proceeds with mtime capture dates).
-func (p *Pipeline) extractMetadata(ctx context.Context, files []FileInfo) map[string]*metadata.AssetMetadata {
+// metadataChunk bounds how many files are handed to ExtractBatch per call so the
+// importer can emit progress (and honor cancellation) between chunks. ExtractBatch
+// itself sub-chunks at 50; this coarser importer-level chunk exists purely to make
+// the extraction phase observable on very large libraries.
+const metadataChunk = 200
+
+// extractMetadata reads metadata for every file in importer-level chunks,
+// emitting PhaseExtractingMetadata progress between chunks and honoring ctx
+// cancellation. Unlike the previous all-or-nothing extraction, a single failed
+// chunk logs and continues: only that chunk's files degrade to mtime fallback,
+// instead of discarding metadata for the entire import when one exiftool request
+// errors.
+func (p *Pipeline) extractMetadata(ctx context.Context, files []FileInfo, progressFn ProgressFunc) map[string]*metadata.AssetMetadata {
+	byPath := make(map[string]*metadata.AssetMetadata, len(files))
 	if len(files) == 0 || p.extractor == nil {
-		return map[string]*metadata.AssetMetadata{}
+		return byPath
 	}
-	paths := make([]string, len(files))
-	for i, f := range files {
-		paths[i] = f.Path
+	total := len(files)
+	for start := 0; start < total; start += metadataChunk {
+		if err := ctx.Err(); err != nil {
+			// Cancellation is finalized by the per-file loop; return what we have.
+			return byPath
+		}
+		end := start + metadataChunk
+		if end > total {
+			end = total
+		}
+		chunk := files[start:end]
+		paths := make([]string, len(chunk))
+		for i, f := range chunk {
+			paths[i] = f.Path
+		}
+		progressFn.emit(Progress{
+			Phase:       PhaseExtractingMetadata,
+			FilesDone:   start,
+			FilesTotal:  total,
+			CurrentFile: paths[0],
+		})
+		out, err := p.extractor.ExtractBatch(ctx, paths)
+		if err != nil {
+			// Per-chunk degrade (improvement over the old all-or-nothing path).
+			p.log.Warn("metadata chunk extraction failed; proceeding degraded for this chunk",
+				"start", start, "end", end, "error", err.Error())
+		}
+		for path, m := range out {
+			byPath[path] = m
+		}
 	}
-	byPath, err := p.extractor.ExtractBatch(ctx, paths)
-	if err != nil {
-		p.log.Warn("metadata batch extraction failed; proceeding degraded", "error", err.Error())
-	}
-	if byPath == nil {
-		byPath = map[string]*metadata.AssetMetadata{}
-	}
+	progressFn.emit(Progress{
+		Phase:      PhaseExtractingMetadata,
+		FilesDone:  total,
+		FilesTotal: total,
+	})
 	return byPath
 }
 

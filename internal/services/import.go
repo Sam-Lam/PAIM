@@ -48,6 +48,14 @@ type ImportService struct {
 	current   *ImportProgress
 	cache     map[string]scanEntry
 
+	// analyze holds the state of the most recent background analyze (scan +
+	// dry run). It is running while the goroutine is live, then retained as a
+	// completed/cancelled/failed snapshot until a new operation starts or
+	// analyzeReportTTL elapses (see ActiveAnalyze). An analyze shares the single
+	// active-operation slot with imports and reorganizes: while one runs the
+	// other cannot start, and CancelImport cancels whichever is active.
+	analyze *analyzeRun
+
 	// Reorganize plan cache, filled by PlanReorganize and consumed by
 	// StartReorganize so the run reuses the just-previewed plan. It is recomputed
 	// when stale (see reorgPlanTTL) so a Start long after a Plan never acts on an
@@ -60,6 +68,23 @@ type ImportService struct {
 // reorgPlanTTL bounds how long a cached reorganize plan is reused between
 // PlanReorganize and StartReorganize before it is recomputed.
 const reorgPlanTTL = 5 * time.Minute
+
+// analyzeReportTTL bounds how long a completed background-analyze report is
+// retained for re-attachment (ActiveAnalyze) after the analyze finishes.
+const analyzeReportTTL = 15 * time.Minute
+
+// analyzeRun is the in-memory state of a single background analyze. running is
+// true while the goroutine is live; once it finishes, report/err/cancelled hold
+// the terminal outcome and at records the completion time for the TTL.
+type analyzeRun struct {
+	opts      ImportOptions    // normalized echo of the request
+	progress  *ImportProgress  // latest throttled snapshot (sessionless)
+	report    *DryRunReportDTO // populated on success
+	err       string           // populated on failure
+	cancelled bool             // populated when cancelled via CancelImport
+	running   bool
+	at        time.Time // completion time (for TTL) once running is false
+}
 
 // reorgDisplayCap bounds how many move/skip entries a plan DTO carries for
 // display; the aggregate counts always reflect the full plan.
@@ -134,6 +159,28 @@ type ImportOptions struct {
 // created and the background run has been launched.
 type StartImportResult struct {
 	SessionID string `json:"sessionId"`
+}
+
+// StartAnalyzeResult is returned immediately from StartAnalyze once the
+// background analyze has been launched. Root echoes the resolved source root; an
+// analyze is sessionless (no ImportSession is created), so it is re-attached via
+// ActiveAnalyze rather than by a session ID.
+type StartAnalyzeResult struct {
+	Root string `json:"root"`
+}
+
+// ActiveAnalyzeDTO is the re-attachment snapshot returned by ActiveAnalyze.
+// State is "running" (Progress holds the latest snapshot), "completed" (Report,
+// or Cancelled/Error for a cancelled/failed run, is populated), or "none".
+// Opts echoes the normalized request so the frontend can restore the whole
+// step-2 context (root, mode, reorganize, event) after navigation.
+type ActiveAnalyzeDTO struct {
+	State     string           `json:"state"`
+	Opts      ImportOptions    `json:"opts"`
+	Progress  *ImportProgress  `json:"progress"`
+	Report    *DryRunReportDTO `json:"report"`
+	Cancelled bool             `json:"cancelled"`
+	Error     string           `json:"error"`
 }
 
 // PickFolder opens a native directory chooser and returns the selected path, or
@@ -214,6 +261,14 @@ func (s *ImportService) DryRun(ctx context.Context, root string, opts ImportOpti
 	entry.at = time.Now()
 	s.putScan(absRoot, entry)
 
+	return newDryRunReportDTO(iopts, report), nil
+}
+
+// newDryRunReportDTO projects an importer.DryRunReport into the JSON-friendly
+// DTO, echoing the mode/reorganize flags the planning ran under. Shared by the
+// synchronous DryRun and the background StartAnalyze so the report shape is
+// identical regardless of which produced it.
+func newDryRunReportDTO(iopts importer.Options, report *importer.DryRunReport) DryRunReportDTO {
 	return DryRunReportDTO{
 		Mode:             string(iopts.Mode),
 		Reorganize:       iopts.Reorganize,
@@ -227,6 +282,185 @@ func (s *ImportService) DryRun(ctx context.Context, root string, opts ImportOpti
 		EstimatedSeconds: report.EstimatedSeconds,
 		PlannedAdoptions: report.PlannedAdoptions,
 		PlannedMoves:     report.PlannedMoves,
+	}
+}
+
+// StartAnalyze runs scan + dry-run ("Analyze") in a background goroutine under
+// the SAME one-active-operation guard as imports and reorganizes: while an
+// analyze runs, StartImport/ResumeSession/StartReorganize are refused with
+// ErrImportInProgress, and vice versa. A running analyze is cancelled via
+// CancelImport (the same cancel plumbing imports use), which resolves it as a
+// cancelled analyze:completed.
+//
+// It emits throttled import:progress with phase "scanning" (FilesTotal=0,
+// FilesDone=discovered count), "hashing", and "classifying". Analyze progress
+// carries an empty SessionID so the frontend can distinguish it from an import
+// or reorganize. On finish it emits analyze:completed (success/cancelled/failed)
+// and caches the scan+report exactly as DryRun does, so a later StartImport is
+// unaffected. No ImportSession is created.
+func (s *ImportService) StartAnalyze(ctx context.Context, opts ImportOptions) (StartAnalyzeResult, error) {
+	if err := s.guard(); err != nil {
+		return StartAnalyzeResult{}, err
+	}
+	if opts.Root == "" {
+		return StartAnalyzeResult{}, fmt.Errorf("services: start analyze: empty root")
+	}
+	absRoot, err := filepath.Abs(opts.Root)
+	if err != nil {
+		return StartAnalyzeResult{}, fmt.Errorf("services: start analyze: resolve %q: %w", opts.Root, err)
+	}
+	iopts, err := s.buildOptions(ctx, opts, absRoot)
+	if err != nil {
+		return StartAnalyzeResult{}, err
+	}
+	if iopts.Mode == importer.ModeCopy && iopts.DestinationRoot == "" {
+		return StartAnalyzeResult{}, fmt.Errorf("services: start analyze: no destination and no Master Library configured")
+	}
+
+	echo := ImportOptions{
+		Root:            absRoot,
+		DestinationRoot: iopts.DestinationRoot,
+		EventName:       iopts.EventName,
+		Mode:            string(iopts.Mode),
+		Reorganize:      iopts.Reorganize,
+		SourceID:        iopts.SourceID,
+	}
+
+	s.mu.Lock()
+	if s.active {
+		s.mu.Unlock()
+		return StartAnalyzeResult{}, ErrImportInProgress
+	}
+	s.active = true
+	runCtx, cancel := context.WithCancel(context.Background())
+	s.cancel = cancel
+	s.sessionID = ""
+	s.current = nil
+	s.analyze = &analyzeRun{opts: echo, running: true, at: time.Now()}
+	s.mu.Unlock()
+
+	go s.runAnalyze(runCtx, absRoot, echo, iopts)
+	return StartAnalyzeResult{Root: absRoot}, nil
+}
+
+// runAnalyze performs the scan + dry-run and records/emits the outcome. It
+// mirrors run()/runReorganize() but is sessionless and terminates on
+// analyze:completed rather than import:completed.
+func (s *ImportService) runAnalyze(ctx context.Context, absRoot string, echo ImportOptions, iopts importer.Options) {
+	defer func() {
+		s.mu.Lock()
+		s.active = false
+		s.cancel = nil
+		s.mu.Unlock()
+	}()
+
+	tr := newThrottle()
+	progress := func(p importer.Progress) {
+		dto := ImportProgress{
+			SessionID:   "", // analyze is sessionless; empty ID marks it as analyze
+			Phase:       string(p.Phase),
+			FilesDone:   p.FilesDone,
+			FilesTotal:  p.FilesTotal,
+			BytesDone:   p.BytesDone,
+			BytesTotal:  p.BytesTotal,
+			CurrentFile: p.CurrentFile,
+			Errors:      p.Errors,
+			Percent:     percent(int64(p.FilesDone), int64(p.FilesTotal)),
+			Done:        false,
+		}
+		s.mu.Lock()
+		if s.analyze != nil {
+			s.analyze.progress = &dto
+		}
+		s.mu.Unlock()
+		if tr.allow() {
+			emitSafe(s.emitter, EventImportProgress, dto)
+		}
+	}
+
+	scan, err := s.pipeline.Scan(ctx, absRoot, progress)
+	if err != nil {
+		s.finishAnalyze(echo, nil, err)
+		return
+	}
+	report, err := s.pipeline.DryRun(ctx, scan, iopts, progress)
+	if err != nil {
+		s.finishAnalyze(echo, nil, err)
+		return
+	}
+	// Cache handoff: write the same scan+report cache DryRun writes (keyed by
+	// absolute root) so a subsequent StartImport is identical to one after a
+	// synchronous DryRun. StartImport still recomputes quick hashes at import
+	// time (cheap relative to the copy) — the cache validates the request and
+	// powers instant UI stats; the analyze does not change that path.
+	s.putScan(absRoot, scanEntry{scan: scan, report: report, at: time.Now()})
+	dto := newDryRunReportDTO(iopts, report)
+	s.finishAnalyze(echo, &dto, nil)
+}
+
+// finishAnalyze records the terminal analyze state and emits analyze:completed.
+// A context-cancelled run is reported as Cancelled (not an error); any other
+// error carries its message.
+func (s *ImportService) finishAnalyze(echo ImportOptions, report *DryRunReportDTO, runErr error) {
+	cancelled := false
+	errMsg := ""
+	if runErr != nil {
+		if errors.Is(runErr, context.Canceled) {
+			cancelled = true
+		} else {
+			errMsg = runErr.Error()
+			s.log.Warn("analyze failed", "root", echo.Root, "error", errMsg)
+		}
+	}
+	s.mu.Lock()
+	if s.analyze != nil {
+		s.analyze.running = false
+		s.analyze.report = report
+		s.analyze.cancelled = cancelled
+		s.analyze.err = errMsg
+		s.analyze.at = time.Now()
+	}
+	s.mu.Unlock()
+
+	emitSafe(s.emitter, EventAnalyzeCompleted, AnalyzeCompleted{
+		Root:      echo.Root,
+		Opts:      echo,
+		Report:    report,
+		Cancelled: cancelled,
+		Error:     errMsg,
+	})
+}
+
+// ActiveAnalyze returns the current analyze state for re-attachment: "running"
+// with the latest progress snapshot, "completed" with the report (or a
+// cancelled/failed marker), or "none". A completed snapshot is retained until a
+// new operation starts (see StartImport/ResumeSession/StartReorganize) or
+// analyzeReportTTL elapses, after which it lapses to "none".
+func (s *ImportService) ActiveAnalyze(ctx context.Context) (ActiveAnalyzeDTO, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	a := s.analyze
+	if a == nil {
+		return ActiveAnalyzeDTO{State: "none"}, nil
+	}
+	if a.running {
+		dto := ActiveAnalyzeDTO{State: "running", Opts: a.opts}
+		if a.progress != nil {
+			p := *a.progress
+			dto.Progress = &p
+		}
+		return dto, nil
+	}
+	if time.Since(a.at) > analyzeReportTTL {
+		s.analyze = nil
+		return ActiveAnalyzeDTO{State: "none"}, nil
+	}
+	return ActiveAnalyzeDTO{
+		State:     "completed",
+		Opts:      a.opts,
+		Report:    a.report,
+		Cancelled: a.cancelled,
+		Error:     a.err,
 	}, nil
 }
 
@@ -288,6 +522,7 @@ func (s *ImportService) ResumeSession(ctx context.Context, sessionID string) (St
 	s.cancel = cancel
 	s.sessionID = session.ID
 	s.current = nil
+	s.analyze = nil // a resumed import supersedes any retained analyze snapshot
 	s.mu.Unlock()
 
 	go s.run(runCtx, session.ID)
@@ -321,6 +556,7 @@ func (s *ImportService) launch(ctx context.Context, state resumeState) (StartImp
 	s.cancel = cancel
 	s.sessionID = session
 	s.current = nil
+	s.analyze = nil // a new import supersedes any retained analyze snapshot
 	s.mu.Unlock()
 
 	go s.run(runCtx, session)

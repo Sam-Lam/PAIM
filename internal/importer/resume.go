@@ -42,8 +42,14 @@ func (p *Pipeline) ResumeSession(ctx context.Context, sessionID string, progress
 
 	p.log.Info("resuming import session", "sessionId", sessionID, "mode", opts.mode(), "source", opts.SourceRoot)
 
-	// Remove stray partials from a prior crash before doing anything else.
+	// Remove stray partials from a prior crash before doing anything else. This
+	// walks the whole destination archive, which on a large library is a
+	// multi-second step with no per-item progress — surface it as an
+	// indeterminate "preparing" state so the UI never looks hung before scanning
+	// begins. (StartImport also runs through ResumeSession, so a fresh import
+	// hits this too.)
 	if root := opts.DestinationRoot; root != "" {
+		progressFn.emit(Progress{Phase: PhasePreparing})
 		removed, err := p.cleanStrayPartials(ctx, root)
 		if err != nil {
 			p.log.Warn("resume: cleaning stray partials", "error", err.Error())

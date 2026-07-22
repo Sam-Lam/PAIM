@@ -22,6 +22,7 @@ import (
 const (
 	EventImportProgress     = "import:progress"
 	EventImportCompleted    = "import:completed"
+	EventAnalyzeCompleted   = "analyze:completed"
 	EventBackupProgress     = "backup:progress"
 	EventBackupQueueChanged = "backup:queue-changed"
 	EventVolumeMounted      = "volume:mounted"
@@ -70,6 +71,23 @@ type ImportCompleted struct {
 	Duplicates    int    `json:"duplicates"`
 	Failures      int    `json:"failures"`
 	Skipped       int    `json:"skipped"`
+}
+
+// AnalyzeCompleted is the payload for analyze:completed, emitted once when a
+// background analyze (scan + dry run) goroutine finishes. Exactly one of the
+// terminal states holds:
+//   - success: Report is non-nil, Cancelled=false, Error=="".
+//   - cancelled (via CancelImport): Report=nil, Cancelled=true.
+//   - failed: Report=nil, Error carries the message.
+//
+// Root and Opts echo the (normalized) request so the frontend can restore the
+// whole step-2 context on re-attach without re-deriving it.
+type AnalyzeCompleted struct {
+	Root      string           `json:"root"`
+	Opts      ImportOptions    `json:"opts"`
+	Report    *DryRunReportDTO `json:"report"`
+	Cancelled bool             `json:"cancelled"`
+	Error     string           `json:"error"`
 }
 
 // BackupProgress is the payload for backup:progress, carrying one worker's

@@ -146,6 +146,7 @@ func (s *ImportService) StartReorganize(ctx context.Context) (StartImportResult,
 	s.cancel = cancel
 	s.sessionID = sessionID
 	s.current = nil
+	s.analyze = nil   // a new reorganize supersedes any retained analyze snapshot
 	s.reorgPlan = nil // consumed
 	s.mu.Unlock()
 
