@@ -22,18 +22,48 @@ func NewBackupRepo(db *gorm.DB) *BackupRepo { return &BackupRepo{db: db} }
 // WithTx binds the repo to a transaction handle.
 func (r *BackupRepo) WithTx(tx *gorm.DB) *BackupRepo { return &BackupRepo{db: tx} }
 
-// Enqueue idempotently adds a backup job for an asset/plugin/destination. If a
-// pending, running, or completed job already exists for the same triple, that
-// existing job is returned and created is false; otherwise a new pending job is
-// created with the given sortKey (the per-provider upload-order key). This makes
-// re-enqueuing after a crash safe.
+// enqueueIdempotencyStatuses is the set of job statuses that make a
+// (asset, plugin, destination) triple "already enqueued", so a re-enqueue is a
+// no-op. It includes opted_out: a deliberate per-import opt-out is a durable
+// record, so a later Enqueue (import resume, backfill) must NOT silently create
+// a competing pending job for a destination the user excluded — un-skipping is
+// the explicit RequeueOptedOut path only.
+var enqueueIdempotencyStatuses = []domain.JobStatus{
+	domain.JobStatusPending,
+	domain.JobStatusRunning,
+	domain.JobStatusCompleted,
+	domain.JobStatusOptedOut,
+}
+
+// Enqueue idempotently adds a PENDING backup job for an asset/plugin/destination.
+// If a pending, running, completed, or opted-out job already exists for the same
+// triple, that existing job is returned and created is false; otherwise a new
+// pending job is created with the given sortKey (the per-provider upload-order
+// key). This makes re-enqueuing after a crash safe.
 func (r *BackupRepo) Enqueue(ctx context.Context, assetID, plugin, destination string, sortKey int64) (job *domain.BackupJob, created bool, err error) {
+	return r.enqueue(ctx, assetID, plugin, destination, sortKey, domain.JobStatusPending)
+}
+
+// EnqueueOptedOut idempotently records an OPTED-OUT backup job for an
+// asset/plugin/destination — the durable "the user deliberately excluded this
+// destination for this asset at import time" marker. It shares Enqueue's
+// idempotency set, so it never displaces an existing pending/running/completed
+// job (an already-real backup is never downgraded to opted-out) and is itself a
+// no-op when an opted-out job already exists (safe on import resume).
+func (r *BackupRepo) EnqueueOptedOut(ctx context.Context, assetID, plugin, destination string, sortKey int64) (job *domain.BackupJob, created bool, err error) {
+	return r.enqueue(ctx, assetID, plugin, destination, sortKey, domain.JobStatusOptedOut)
+}
+
+// enqueue is the shared idempotent insert for Enqueue/EnqueueOptedOut: it creates
+// a job in the given status only when no job in enqueueIdempotencyStatuses
+// already exists for the triple.
+func (r *BackupRepo) enqueue(ctx context.Context, assetID, plugin, destination string, sortKey int64, status domain.JobStatus) (job *domain.BackupJob, created bool, err error) {
 	err = r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var existing domain.BackupJob
 		findErr := tx.Where(
 			"asset_id = ? AND plugin = ? AND destination = ? AND status IN ?",
 			assetID, plugin, destination,
-			[]domain.JobStatus{domain.JobStatusPending, domain.JobStatusRunning, domain.JobStatusCompleted},
+			enqueueIdempotencyStatuses,
 		).First(&existing).Error
 		if findErr == nil {
 			job = &existing
@@ -48,7 +78,7 @@ func (r *BackupRepo) Enqueue(ctx context.Context, assetID, plugin, destination s
 			AssetID:     assetID,
 			Plugin:      plugin,
 			Destination: destination,
-			Status:      domain.JobStatusPending,
+			Status:      status,
 			SortKey:     sortKey,
 		}
 		if createErr := tx.Create(newJob).Error; createErr != nil {
@@ -225,6 +255,31 @@ func (r *BackupRepo) RequeueAllFailed(ctx context.Context) (int64, error) {
 	return res.RowsAffected, nil
 }
 
+// RequeueOptedOut flips opted-out jobs for one destination (provider ID) back to
+// pending so they upload — the reversal of a per-import opt-out ("Queue anyway").
+// When sessionID is non-empty the flip is scoped to the assets imported under
+// that session; an empty sessionID requeues every opted-out job for the
+// destination. It returns the number of jobs requeued. The status guard keeps it
+// a valid opted_out→pending transition for every row.
+func (r *BackupRepo) RequeueOptedOut(ctx context.Context, destination, sessionID string) (int64, error) {
+	q := r.db.WithContext(ctx).
+		Model(&domain.BackupJob{}).
+		Where("destination = ? AND status = ?", destination, domain.JobStatusOptedOut)
+	if sessionID != "" {
+		q = q.Where("asset_id IN (?)",
+			r.db.WithContext(ctx).Model(&domain.Asset{}).Select("id").Where("session_id = ?", sessionID))
+	}
+	res := q.Updates(map[string]any{
+		"status":       domain.JobStatusPending,
+		"started_at":   nil,
+		"completed_at": nil,
+	})
+	if res.Error != nil {
+		return 0, fmt.Errorf("repo: requeue opted-out backup jobs (dest %q): %w", destination, res.Error)
+	}
+	return res.RowsAffected, nil
+}
+
 // Pause transitions a pending job to paused.
 func (r *BackupRepo) Pause(ctx context.Context, id string) error {
 	return r.transition(ctx, id, []domain.JobStatus{domain.JobStatusPending}, domain.JobStatusPaused, nil)
@@ -292,6 +347,22 @@ func (r *BackupRepo) QueueSummary(ctx context.Context) ([]StatusCount, error) {
 		return nil, fmt.Errorf("repo: backup queue summary: %w", err)
 	}
 	return out, nil
+}
+
+// CountOptedOutForProvider counts the non-deleted opted-out backup jobs for one
+// destination (provider ID) — how many assets the user deliberately excluded from
+// this destination. It powers the Providers card's "N skipped by choice" line and
+// the "Queue anyway" reversal affordance.
+func (r *BackupRepo) CountOptedOutForProvider(ctx context.Context, destination string) (int64, error) {
+	var n int64
+	err := r.db.WithContext(ctx).
+		Model(&domain.BackupJob{}).
+		Where("destination = ? AND status = ?", destination, domain.JobStatusOptedOut).
+		Count(&n).Error
+	if err != nil {
+		return 0, fmt.Errorf("repo: count opted-out backup jobs (dest %q): %w", destination, err)
+	}
+	return n, nil
 }
 
 // ListJobs returns jobs optionally filtered by status, plus the total count of

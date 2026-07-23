@@ -84,9 +84,12 @@ const (
 // transaction that inserts the asset, so the enqueue is atomic with the import.
 // EnqueueForAsset returns the number of backup jobs it created, so the caller
 // can record BackupStatus=pending only when there is actually backup work
-// (zero enabled providers => zero jobs => BackupStatus=none).
+// (zero enabled providers => zero jobs => BackupStatus=none). skipProviderIDs
+// names enabled providers the user deliberately excluded for this import: the
+// implementation records a durable opted-out marker for them instead of a
+// pending job, and those markers are NOT counted in the returned total.
 type BackupEnqueuer interface {
-	EnqueueForAsset(ctx context.Context, tx *gorm.DB, assetID string) (int, error)
+	EnqueueForAsset(ctx context.Context, tx *gorm.DB, assetID string, skipProviderIDs []string) (int, error)
 }
 
 // NoopBackupEnqueuer is a BackupEnqueuer that does nothing. It is used in tests
@@ -94,7 +97,7 @@ type BackupEnqueuer interface {
 type NoopBackupEnqueuer struct{}
 
 // EnqueueForAsset does nothing, creates no jobs, and never fails.
-func (NoopBackupEnqueuer) EnqueueForAsset(context.Context, *gorm.DB, string) (int, error) {
+func (NoopBackupEnqueuer) EnqueueForAsset(context.Context, *gorm.DB, string, []string) (int, error) {
 	return 0, nil
 }
 
@@ -111,6 +114,13 @@ type Options struct {
 	Reorganize bool
 	// Concurrency bounds the hashing worker pool. Zero means runtime.NumCPU.
 	Concurrency int
+	// SkipProviderIDs names enabled backup providers the user deliberately
+	// excluded for this import (per-import provider opt-out). For each, the
+	// BackupEnqueuer records a durable opted-out marker instead of a pending job,
+	// so the exclusion survives restarts, is honored by safety gates, and is
+	// reversible later. Persisted in the resume state so a resumed import applies
+	// the same skips.
+	SkipProviderIDs []string
 	// Precomputed, when non-nil, supplies quick/full hashes from a prior DryRun so
 	// they are not recomputed. A per-path hash is reused ONLY when the freshly
 	// scanned file's size AND mtime still match what the dry run recorded for that

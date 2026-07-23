@@ -172,8 +172,26 @@ function ProviderCard({
 }) {
   const toast = useToast();
   const [saving, setSaving] = useState(false);
+  const [requeueing, setRequeueing] = useState(false);
   const summary = configSummary(provider.configJson);
   const missing = provider.missingBackupCount ?? 0;
+  const optedOut = provider.optedOutCount ?? 0;
+
+  // Reverse a per-import opt-out ("Queue anyway"): flip this destination's
+  // opted-out jobs back to pending so they upload. Per-session scoping is
+  // deferred to the coming Coverage view; here it requeues all of them.
+  const queueOptedOut = async () => {
+    setRequeueing(true);
+    try {
+      const n = await BackupService.RequeueOptedOut(provider.id, "");
+      toast.success(`Queued ${formatNumber(n)} skipped backup${n === 1 ? "" : "s"}`);
+      onChanged();
+    } catch (e) {
+      toast.fromError(e, "Could not queue skipped backups");
+    } finally {
+      setRequeueing(false);
+    }
+  };
 
   // Health: the destination is "failing" when its most recent outcome is a failure
   // (a currently-failed job newer than any success). It stays functionally enabled;
@@ -301,7 +319,8 @@ function ProviderCard({
               <div className="min-w-0 flex-1 text-[12px] text-blue-200/90">
                 <span className="font-medium text-blue-100">Back up your existing library?</span>{" "}
                 <span>
-                  {formatNumber(missing)} asset{missing === 1 ? "" : "s"} aren’t queued for this destination yet.
+                  {formatNumber(missing)} asset{missing === 1 ? "" : "s"} aren’t queued for this destination yet
+                  {optedOut > 0 ? " (skipped-by-choice assets excluded)" : ""}.
                 </span>
               </div>
               <Button
@@ -314,6 +333,20 @@ function ProviderCard({
                 Queue {formatNumber(missing)} backup{missing === 1 ? "" : "s"}
               </Button>
             </div>
+          ) : null}
+
+          {/* Per-import opt-outs: durably recorded, reversible here. */}
+          {provider.enabled && optedOut > 0 ? (
+            <p className="mt-2 text-[11px] text-zinc-500">
+              {formatNumber(optedOut)} skipped by choice ·{" "}
+              <button
+                className="text-blue-400 hover:underline disabled:opacity-50"
+                disabled={requeueing}
+                onClick={() => void queueOptedOut()}
+              >
+                {requeueing ? "Queueing…" : "Queue anyway"}
+              </button>
+            </p>
           ) : null}
         </div>
         <div className="flex-none">

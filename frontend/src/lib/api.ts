@@ -54,6 +54,7 @@ export type {
   BackupSummaryDTO,
   BrowseAssetDTO,
   BrowseFilters,
+  CameraCountDTO,
   ClassStatDTO,
   CleanupReportDTO,
   CurrentLibraryDTO,
@@ -106,6 +107,7 @@ export type {
   VolumeDTO,
   VolumeEvent,
   WarmupStatusDTO,
+  YearCountDTO,
 } from "../../bindings/github.com/Sam-Lam/PAIM/internal/services";
 
 // Canonical event names emitted by the Go services (internal/services/events.go).

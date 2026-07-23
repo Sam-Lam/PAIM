@@ -879,21 +879,28 @@ func (m *Manager) recomputeAsset(ctx context.Context, assetID string) {
 }
 
 // AggregateBackupStatus reduces an asset's jobs to a single aggregate
-// BackupStatus. Cancelled jobs are excluded (a cancelled destination is no
-// longer a required backup), and — via isMirror — so are jobs belonging to
-// mirror providers (a mirror is convenience, not custody, so it must never block
-// a safety verdict). isMirror may be nil (nothing is a mirror). A job maps to its
-// provider by Destination (the provider ID). The rules over the REQUIRED jobs:
+// BackupStatus. Cancelled AND opted-out jobs are excluded (a cancelled or
+// deliberately-excluded destination is no longer a required backup), and — via
+// isMirror — so are jobs belonging to mirror providers (a mirror is convenience,
+// not custody, so it must never block a safety verdict). isMirror may be nil
+// (nothing is a mirror). A job maps to its provider by Destination (the provider
+// ID). The rules over the REQUIRED jobs:
 //
 //   - no required jobs           -> none
 //   - every required job complete -> complete
 //   - some complete, some not    -> partial
 //   - none complete, any failed  -> failed
 //   - otherwise (pending/paused/running) -> pending
+//
+// Opting the ONLY required provider out therefore leaves the required set empty
+// (-> none, i.e. not complete), so the asset is never read as safe-to-erase — the
+// user's exclusion is honored as "this asset is NOT fully backed up". A mirror
+// opt-out is excluded twice over (mirror + opted_out) and never affects the
+// verdict, by construction.
 func AggregateBackupStatus(jobs []domain.BackupJob, isMirror func(providerID string) bool) domain.BackupStatus {
 	var total, completed, failed int
 	for _, j := range jobs {
-		if j.Status == domain.JobStatusCancelled {
+		if j.Status == domain.JobStatusCancelled || j.Status == domain.JobStatusOptedOut {
 			continue
 		}
 		if isMirror != nil && isMirror(j.Destination) {
@@ -924,14 +931,25 @@ func AggregateBackupStatus(jobs []domain.BackupJob, isMirror func(providerID str
 // EnqueueForAsset enqueues one backup job per enabled provider for the given
 // asset, inside the caller's transaction. It is idempotent (repo.Enqueue skips
 // duplicates), so it is safe to call during import even after a crash-and-resume.
-// It returns the number of jobs newly created so the importer can set the
-// asset's BackupStatus to pending only when there is real backup work (with no
-// enabled providers it creates zero jobs and the caller records none). This
-// signature is injected into the importer and must remain stable.
-func (m *Manager) EnqueueForAsset(ctx context.Context, tx *gorm.DB, assetID string) (int, error) {
+//
+// skipProviderIDs names enabled providers the user deliberately excluded for this
+// import (per-import provider opt-out): for each such provider an OPTED-OUT job is
+// recorded instead of a pending one — a durable "excluded by choice" marker that
+// is never claimed and never counts as a missing backup, yet keeps a REQUIRED
+// provider's opt-out from reading as complete/safe-to-erase. Opted-out jobs are
+// NOT counted in the returned total: it is the number of real PENDING jobs
+// created, so the importer sets BackupStatus=pending only when there is genuine
+// backup work (all providers skipped, or none enabled, => zero => the caller
+// records none). This signature is injected into the importer and must remain
+// stable.
+func (m *Manager) EnqueueForAsset(ctx context.Context, tx *gorm.DB, assetID string, skipProviderIDs []string) (int, error) {
 	providers, err := m.providers.WithTx(tx).ListEnabled(ctx)
 	if err != nil {
 		return 0, fmt.Errorf("backup: list providers for asset %q: %w", assetID, err)
+	}
+	skip := make(map[string]bool, len(skipProviderIDs))
+	for _, id := range skipProviderIDs {
+		skip[id] = true
 	}
 	// Read the asset within the caller's transaction (it was just created there) to
 	// derive the per-provider upload-order key: newer media should be able to jump
@@ -945,6 +963,15 @@ func (m *Manager) EnqueueForAsset(ctx context.Context, tx *gorm.DB, assetID stri
 	q := m.jobs.WithTx(tx)
 	created := 0
 	for _, p := range providers {
+		if skip[p.ID] {
+			// Record the opt-out durably (opted_out), stamped with the same SortKey a
+			// real job would carry so a later "Queue anyway" claims it in provider
+			// order. It does not count toward pending work created.
+			if _, _, err := q.EnqueueOptedOut(ctx, assetID, p.PluginName, p.ID, sortKey); err != nil {
+				return created, fmt.Errorf("backup: enqueue opted-out job for asset %q provider %q: %w", assetID, p.ID, err)
+			}
+			continue
+		}
 		_, wasCreated, err := q.Enqueue(ctx, assetID, p.PluginName, p.ID, sortKey)
 		if err != nil {
 			return created, fmt.Errorf("backup: enqueue job for asset %q provider %q: %w", assetID, p.ID, err)

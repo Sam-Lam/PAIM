@@ -21,6 +21,7 @@ import {
   HistoryService,
   ImportOptions,
   ImportService,
+  ProviderService,
   SourcesService,
   SettingsService,
   WailsEvents,
@@ -28,6 +29,7 @@ import {
   type DryRunReportDTO,
   type ImportCompleted,
   type ImportProgress,
+  type ProviderDTO,
   type SafeToEraseDTO,
   type SessionBackupStatusDTO,
   type SessionDTO,
@@ -55,6 +57,10 @@ export function ImportPage() {
   const [reorganize, setReorganize] = useState(false);
   const [eventName, setEventName] = useState("");
   const [settings, setSettings] = useState<Settings | null>(null);
+  // Enabled backup destinations and the per-import opt-out set (provider IDs the
+  // user unchecked in the "Back up to" section). Default: back up to all.
+  const [enabledProviders, setEnabledProviders] = useState<ProviderDTO[]>([]);
+  const [skipProviderIds, setSkipProviderIds] = useState<string[]>([]);
 
   // Step 2 — analysis (runs server-side as a background job; re-attachable).
   const [analyzeRunning, setAnalyzeRunning] = useState(false);
@@ -122,6 +128,7 @@ export function ImportPage() {
     if (o.mode === "copy" || o.mode === "adopt") setMode(o.mode);
     setReorganize(!!o.reorganize);
     if (typeof o.eventName === "string") setEventName(o.eventName);
+    if (Array.isArray(o.skipProviderIds)) setSkipProviderIds(o.skipProviderIds);
   }, []);
 
   // On mount: load settings, re-attach to a running/completed import OR analyze,
@@ -130,13 +137,15 @@ export function ImportPage() {
     let cancelled = false;
     (async () => {
       try {
-        const [s, activeImport, activeAnalyze] = await Promise.all([
+        const [s, activeImport, activeAnalyze, providers] = await Promise.all([
           SettingsService.GetAll(),
           ImportService.ActiveImport(),
           ImportService.ActiveAnalyze(),
+          ProviderService.List().catch(() => [] as ProviderDTO[]),
         ]);
         if (cancelled) return;
         setSettings(s);
+        setEnabledProviders((providers ?? []).filter((p) => p.enabled));
         if (s.defaultEventName) setEventName(s.defaultEventName);
         if (activeImport) {
           // App restarted / resumed elsewhere mid-import: attach at step 3.
@@ -182,8 +191,11 @@ export function ImportPage() {
         mode,
         reorganize: mode === "adopt" && reorganize,
         sourceId: "",
+        // Only send IDs that are still enabled destinations (a provider disabled
+        // since selection is no longer relevant).
+        skipProviderIds: skipProviderIds.filter((id) => enabledProviders.some((p) => p.id === id)),
       }) satisfies ImportOptions,
-    [root, mode, masterRoot, eventName, reorganize],
+    [root, mode, masterRoot, eventName, reorganize, skipProviderIds, enabledProviders],
   );
 
   const pickFolder = async () => {
@@ -344,6 +356,11 @@ export function ImportPage() {
           eventName={eventName}
           masterRoot={masterRoot}
           metadataAvailable={settings?.metadataAvailable ?? true}
+          providers={enabledProviders}
+          skipProviderIds={skipProviderIds}
+          onToggleProvider={(id, backUp) =>
+            setSkipProviderIds((cur) => (backUp ? cur.filter((x) => x !== id) : cur.includes(id) ? cur : [...cur, id]))
+          }
           onPick={pickFolder}
           onRootChange={setRoot}
           onModeChange={setMode}
@@ -373,6 +390,9 @@ export function ImportPage() {
           completed={completed}
           mode={mode}
           root={root}
+          skippedProviderNames={enabledProviders
+            .filter((p) => skipProviderIds.includes(p.id))
+            .map((p) => providerLabel(p))}
           onCancel={() => setShowCancel(true)}
           onNewImport={resetToStart}
           onViewHistory={() => navigate({ to: "/history" })}
@@ -442,12 +462,29 @@ interface SourceStepProps {
   eventName: string;
   masterRoot: string;
   metadataAvailable: boolean;
+  providers: ProviderDTO[];
+  skipProviderIds: string[];
+  onToggleProvider: (id: string, backUp: boolean) => void;
   onPick: () => void;
   onRootChange: (v: string) => void;
   onModeChange: (m: Mode) => void;
   onReorganizeChange: (v: boolean) => void;
   onEventNameChange: (v: string) => void;
   onAnalyze: () => void;
+}
+
+// providerLabel derives a short human name for a backup destination from its
+// config (localfs root / rclone remote), falling back to the plugin name.
+function providerLabel(p: ProviderDTO): string {
+  try {
+    const cfg = JSON.parse(p.configJson || "{}") as Record<string, unknown>;
+    if (typeof cfg.root === "string" && cfg.root) return baseName(cfg.root) || cfg.root;
+    if (Array.isArray(cfg.remotes) && cfg.remotes.length > 0) return cfg.remotes.map(String).join(", ");
+    if (typeof cfg.remote === "string" && cfg.remote) return cfg.remote;
+  } catch {
+    // fall through to plugin name
+  }
+  return p.pluginName;
 }
 
 function SourceStep(p: SourceStepProps) {
@@ -545,6 +582,42 @@ function SourceStep(p: SourceStepProps) {
           )}
         </div>
       </Card>
+
+      {p.providers.length > 0 ? (
+        <Card title="Back up to" subtitle="Uncheck a destination to skip it for this import — useful when a card was already uploaded there.">
+          <div className="space-y-2">
+            {p.providers.map((prov) => {
+              const backUp = !p.skipProviderIds.includes(prov.id);
+              return (
+                <label
+                  key={prov.id}
+                  className="flex cursor-pointer items-center gap-2.5 rounded-md border border-zinc-800 bg-zinc-950/40 px-3 py-2"
+                >
+                  <input
+                    type="checkbox"
+                    checked={backUp}
+                    onChange={(e) => p.onToggleProvider(prov.id, e.target.checked)}
+                    className="h-4 w-4 flex-none accent-blue-600"
+                  />
+                  <span className="min-w-0 flex-1 truncate text-[13px] text-zinc-200" title={providerLabel(prov)}>
+                    {providerLabel(prov)}
+                  </span>
+                  {prov.mirror ? (
+                    <span className="rounded-full bg-amber-500/15 px-2 py-0.5 text-[10px] font-semibold tracking-wide text-amber-300 uppercase ring-1 ring-amber-500/30 ring-inset">
+                      Mirror
+                    </span>
+                  ) : null}
+                  {!backUp ? <span className="text-[11px] text-zinc-500">Skipped</span> : null}
+                </label>
+              );
+            })}
+          </div>
+          <p className="mt-2 text-[11px] text-zinc-500">
+            Skipped destinations are recorded per asset (not just left un-queued), so safety checks still treat those
+            assets as not backed up there. You can queue them later from Providers.
+          </p>
+        </Card>
+      ) : null}
 
       <div className="flex justify-end">
         <Button icon={PlayIcon} variant="primary" size="lg" disabled={!canAnalyze} onClick={p.onAnalyze}>
@@ -829,6 +902,7 @@ function ImportStep({
   completed,
   mode,
   root,
+  skippedProviderNames,
   onCancel,
   onNewImport,
   onViewHistory,
@@ -838,6 +912,7 @@ function ImportStep({
   completed: ImportCompleted | null;
   mode: Mode;
   root: string;
+  skippedProviderNames: string[];
   onCancel: () => void;
   onNewImport: () => void;
   onViewHistory: () => void;
@@ -916,6 +991,12 @@ function ImportStep({
           </Link>
           .
         </p>
+        {skippedProviderNames.length > 0 ? (
+          <p className="mt-1 text-center text-[11px] text-amber-300/80">
+            Skipped by choice: {skippedProviderNames.join(", ")}. These assets are recorded as opted out there — queue
+            them anytime from Providers.
+          </p>
+        ) : null}
 
         {/* Clear-after-import: copy mode only, with a real source root, and only
             once the import itself succeeded. Adopt mode has no source to clear —

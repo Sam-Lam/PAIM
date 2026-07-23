@@ -42,6 +42,19 @@ export function Bind(core) {
 }
 
 /**
+ * Cameras returns the distinct cameras (make + model) present in the library
+ * with per-camera asset counts, most-used first, for the Camera filter dropdown.
+ * Label is the display "Make Model" (collapsed whitespace); the frontend filters
+ * on the exact Make/Model pair.
+ * @returns {$CancellablePromise<$models.CameraCountDTO[]>}
+ */
+export function Cameras() {
+    return $Call.ByID(711760930).then(/** @type {($result: any) => any} */(($result) => {
+        return $$createType2($result);
+    }));
+}
+
+/**
  * ListAssets returns a page of slim asset tiles matching filters, sorted
  * capture-date DESC (assets without a capture date sort last). Total is the true
  * match count so the grid can page correctly.
@@ -52,7 +65,7 @@ export function Bind(core) {
  */
 export function ListAssets(filters, page, pageSize) {
     return $Call.ByID(2494688543, filters, page, pageSize).then(/** @type {($result: any) => any} */(($result) => {
-        return $$createType2($result);
+        return $$createType4($result);
     }));
 }
 
@@ -75,7 +88,7 @@ export function ListAssets(filters, page, pageSize) {
  */
 export function ListFolder(relDir, page, pageSize, sortBy, sortDir) {
     return $Call.ByID(3269834490, relDir, page, pageSize, sortBy, sortDir).then(/** @type {($result: any) => any} */(($result) => {
-        return $$createType3($result);
+        return $$createType5($result);
     }));
 }
 
@@ -86,7 +99,7 @@ export function ListFolder(relDir, page, pageSize, sortBy, sortDir) {
  */
 export function Months() {
     return $Call.ByID(1742568889).then(/** @type {($result: any) => any} */(($result) => {
-        return $$createType5($result);
+        return $$createType7($result);
     }));
 }
 
@@ -107,7 +120,7 @@ export function Months() {
  */
 export function RenameEventFolder(relDir, newLabel) {
     return $Call.ByID(1543151500, relDir, newLabel).then(/** @type {($result: any) => any} */(($result) => {
-        return $$createType3($result);
+        return $$createType5($result);
     }));
 }
 
@@ -158,10 +171,26 @@ export function SetGate(gate) {
     return $Call.ByID(911157745, gate);
 }
 
+/**
+ * Years returns distinct capture years with counts (newest first) for the Date
+ * filter's year level. It is the CaptureMonths data rolled up to years, so years
+ * and months share one capture-date basis (undated assets excluded).
+ * @returns {$CancellablePromise<$models.YearCountDTO[]>}
+ */
+export function Years() {
+    return $Call.ByID(2940347496).then(/** @type {($result: any) => any} */(($result) => {
+        return $$createType9($result);
+    }));
+}
+
 // Private type creation functions
 const $$createType0 = $models.AssetDetailDTO.createFrom;
-const $$createType1 = $models.BrowseAssetDTO.createFrom;
-const $$createType2 = $models.PageResult.createFrom($$createType1);
-const $$createType3 = $models.FolderListingDTO.createFrom;
-const $$createType4 = $models.MonthCountDTO.createFrom;
-const $$createType5 = $Create.Array($$createType4);
+const $$createType1 = $models.CameraCountDTO.createFrom;
+const $$createType2 = $Create.Array($$createType1);
+const $$createType3 = $models.BrowseAssetDTO.createFrom;
+const $$createType4 = $models.PageResult.createFrom($$createType3);
+const $$createType5 = $models.FolderListingDTO.createFrom;
+const $$createType6 = $models.MonthCountDTO.createFrom;
+const $$createType7 = $Create.Array($$createType6);
+const $$createType8 = $models.YearCountDTO.createFrom;
+const $$createType9 = $Create.Array($$createType8);

@@ -16,6 +16,7 @@ import (
 	"github.com/Sam-Lam/PAIM/internal/repo"
 	"github.com/Sam-Lam/PAIM/internal/source"
 	"github.com/Sam-Lam/PAIM/internal/volumes"
+	"gorm.io/gorm"
 )
 
 // ErrImportInProgress is returned by StartImport/ResumeSession when an import is
@@ -56,6 +57,11 @@ type ImportService struct {
 	sources    *repo.SourceRepo
 	identifier sourceIdentifier
 	collector  volumeLister
+
+	// db backs skip-provider-ID validation (unknown IDs are rejected before an
+	// import/analyze starts). Bound from the AppCore; nil in unit tests that do not
+	// exercise provider opt-out, in which case validation is skipped.
+	db *gorm.DB
 
 	// OnCompleted, when set, is invoked (synchronously, after import:completed is
 	// emitted) with the finished session ID. main.go wires it to trigger the
@@ -151,6 +157,7 @@ func (s *ImportService) Bind(core *AppCore) {
 	s.sources = core.Sources
 	s.identifier = core.Identifier
 	s.collector = core.Collector
+	s.db = core.DB
 }
 
 // ScanSummary is the provisional result of scanning a source tree, before any
@@ -193,6 +200,12 @@ type ImportOptions struct {
 	Mode            string `json:"mode"`
 	Reorganize      bool   `json:"reorganize"`
 	SourceID        string `json:"sourceId"`
+	// SkipProviderIds names enabled backup providers to exclude for this import
+	// (per-import provider opt-out). Each is validated against the configured
+	// providers; the pipeline records a durable opted-out marker per excluded
+	// provider instead of a pending backup job. Persisted in the resume state so a
+	// resumed import applies the same skips.
+	SkipProviderIds []string `json:"skipProviderIds"`
 }
 
 // StartImportResult is returned immediately from StartImport once the session is
@@ -364,6 +377,7 @@ func (s *ImportService) StartAnalyze(ctx context.Context, opts ImportOptions) (S
 		Mode:            string(iopts.Mode),
 		Reorganize:      iopts.Reorganize,
 		SourceID:        iopts.SourceID,
+		SkipProviderIds: iopts.SkipProviderIDs,
 	}
 
 	s.mu.Lock()
@@ -551,6 +565,7 @@ func (s *ImportService) StartImport(ctx context.Context, opts ImportOptions) (St
 		SourceID:        iopts.SourceID,
 		Reorganize:      iopts.Reorganize,
 		Concurrency:     iopts.Concurrency,
+		SkipProviderIDs: iopts.SkipProviderIDs,
 	}
 	return s.launch(ctx, state, s.precomputedFor(iopts.SourceRoot))
 }
@@ -895,6 +910,11 @@ func (s *ImportService) buildOptions(ctx context.Context, opts ImportOptions, ro
 		eventName = cfg.DefaultEventName
 	}
 
+	skip, err := s.validateSkipProviders(ctx, opts.SkipProviderIds)
+	if err != nil {
+		return importer.Options{}, err
+	}
+
 	return importer.Options{
 		Mode:            mode,
 		SourceRoot:      absRoot,
@@ -903,7 +923,36 @@ func (s *ImportService) buildOptions(ctx context.Context, opts ImportOptions, ro
 		SourceID:        opts.SourceID,
 		Reorganize:      opts.Reorganize,
 		Concurrency:     cfg.ImportConcurrency,
+		SkipProviderIDs: skip,
 	}, nil
+}
+
+// validateSkipProviders rejects any skip-provider ID that does not name a
+// configured backup provider (a stale UI or a bad request must not silently
+// suppress backups against a destination that was never opted out). It returns a
+// de-duplicated copy. An empty input, or an unbound catalog (unit tests without a
+// DB), skips validation and returns the input unchanged.
+func (s *ImportService) validateSkipProviders(ctx context.Context, ids []string) ([]string, error) {
+	if len(ids) == 0 || s.db == nil {
+		return ids, nil
+	}
+	seen := make(map[string]bool, len(ids))
+	out := make([]string, 0, len(ids))
+	for _, id := range ids {
+		if id == "" || seen[id] {
+			continue
+		}
+		var n int64
+		if err := s.db.WithContext(ctx).Model(&domain.BackupProvider{}).Where("id = ?", id).Count(&n).Error; err != nil {
+			return nil, fmt.Errorf("services: validate skip provider %q: %w", id, err)
+		}
+		if n == 0 {
+			return nil, fmt.Errorf("services: unknown backup provider %q in skipProviderIds", id)
+		}
+		seen[id] = true
+		out = append(out, id)
+	}
+	return out, nil
 }
 
 func (s *ImportService) getScan(root string) (scanEntry, bool) {

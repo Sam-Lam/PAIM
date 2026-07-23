@@ -15,6 +15,7 @@ import {
   FilmIcon,
   FolderIcon,
   FolderOpenIcon,
+  FunnelIcon,
   MagnifyingGlassIcon,
   MagnifyingGlassMinusIcon,
   MagnifyingGlassPlusIcon,
@@ -39,11 +40,13 @@ import {
   type AssetRefDTO,
   type BrowseAssetDTO,
   type BrowseFilters,
+  type CameraCountDTO,
   type FolderEntryDTO,
   type FolderListingDTO,
   type MonthCountDTO,
   type ThumbsProgress,
   type WarmupStatusDTO,
+  type YearCountDTO,
 } from "../lib/api";
 import { useAsyncData, useWailsEvent } from "../lib/hooks";
 import { useToast } from "../lib/toast";
@@ -83,6 +86,112 @@ const BACKUP = [
 
 const SELECT_CLASS =
   "rounded-md border border-zinc-700 bg-zinc-950 px-2.5 py-1.5 text-[13px] text-zinc-200 outline-none focus:border-blue-500";
+const DATE_INPUT_CLASS =
+  "rounded-md border border-zinc-700 bg-zinc-950 px-2 py-1.5 text-[13px] text-zinc-200 outline-none focus:border-blue-500 [color-scheme:dark]";
+const FIELD_LABEL_CLASS = "mb-1 block text-[11px] font-medium text-zinc-500";
+
+/* -------------------------------------------------------------------------- */
+/* Date filter model                                                          */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * DateSel is the Library's compact date-range selection, persisted per machine.
+ * It generalizes the old single-month dropdown: a whole year, a single month
+ * (the legacy behavior, reachable as a year's sub-level and via the chart's
+ * ?yearMonth deep-link), the two relative presets, or a custom day range. It maps
+ * to the backend's effective-date bounds (COALESCE(capture_date, import_date)).
+ */
+type DateSel =
+  | { kind: "any" }
+  | { kind: "thisYear" }
+  | { kind: "last12" }
+  | { kind: "year"; year: string }
+  | { kind: "month"; yearMonth: string }
+  | { kind: "custom"; from: string; to: string }; // from/to are YYYY-MM-DD (either may be "")
+
+const DATE_SEL_KEY = "paim.library.date";
+
+function loadDateSel(): DateSel {
+  try {
+    const raw = localStorage.getItem(DATE_SEL_KEY);
+    if (raw) {
+      const p = JSON.parse(raw) as DateSel;
+      if (p && typeof (p as { kind?: unknown }).kind === "string") return p;
+    }
+  } catch {
+    /* ignore malformed persisted value */
+  }
+  return { kind: "any" };
+}
+function saveDateSel(s: DateSel): void {
+  localStorage.setItem(DATE_SEL_KEY, JSON.stringify(s));
+}
+
+interface DateFilterValue {
+  captureFrom: string;
+  captureTo: string;
+  yearMonth: string;
+}
+
+function endOfToday(): string {
+  const n = new Date();
+  const m = String(n.getMonth() + 1).padStart(2, "0");
+  const d = String(n.getDate()).padStart(2, "0");
+  return `${n.getFullYear()}-${m}-${d}T23:59:59`;
+}
+
+/**
+ * dateSelToFilter maps a DateSel to the three backend filter fields. A single
+ * month uses the legacy yearMonth predicate (capture-month strftime); every other
+ * dated mode uses inclusive from/to bounds on the effective date. Whole-year and
+ * custom-day boundaries are expanded to the first/last instant so the inclusive
+ * server bounds cover the entire period.
+ */
+function dateSelToFilter(sel: DateSel): DateFilterValue {
+  const empty: DateFilterValue = { captureFrom: "", captureTo: "", yearMonth: "" };
+  switch (sel.kind) {
+    case "any":
+      return empty;
+    case "thisYear": {
+      const y = new Date().getFullYear();
+      return { captureFrom: `${y}-01-01T00:00:00`, captureTo: endOfToday(), yearMonth: "" };
+    }
+    case "last12": {
+      const now = new Date();
+      const from = new Date(now.getFullYear(), now.getMonth() - 11, 1);
+      const fm = String(from.getMonth() + 1).padStart(2, "0");
+      return { captureFrom: `${from.getFullYear()}-${fm}-01T00:00:00`, captureTo: endOfToday(), yearMonth: "" };
+    }
+    case "year":
+      return { captureFrom: `${sel.year}-01-01T00:00:00`, captureTo: `${sel.year}-12-31T23:59:59`, yearMonth: "" };
+    case "month":
+      return { captureFrom: "", captureTo: "", yearMonth: sel.yearMonth };
+    case "custom":
+      return {
+        captureFrom: sel.from ? `${sel.from}T00:00:00` : "",
+        captureTo: sel.to ? `${sel.to}T23:59:59` : "",
+        yearMonth: "",
+      };
+  }
+}
+
+/** A short human label for the active date selection (for the empty-state summary). */
+function dateSelLabel(sel: DateSel): string {
+  switch (sel.kind) {
+    case "any":
+      return "";
+    case "thisYear":
+      return "this year";
+    case "last12":
+      return "last 12 months";
+    case "year":
+      return sel.year;
+    case "month":
+      return formatMonthLong(sel.yearMonth);
+    case "custom":
+      return `${sel.from || "…"} – ${sel.to || "…"}`;
+  }
+}
 
 /**
  * Library — a strictly read-only browse grid that proves what is archived and
@@ -102,7 +211,17 @@ export function LibraryPage() {
   const [mediaType, setMediaType] = useState("");
   const [verification, setVerification] = useState("");
   const [backup, setBackup] = useState("");
-  const [month, setMonth] = useState(() => search.yearMonth ?? "");
+  // Camera exact-match filter: the selected make/model pair ("" = any camera).
+  const [camera, setCamera] = useState<{ make: string; model: string }>({ make: "", model: "" });
+  // Date-range selection (persisted). A ?yearMonth deep-link pins the month level.
+  const [dateSel, setDateSel] = useState<DateSel>(() =>
+    search.yearMonth ? { kind: "month", yearMonth: search.yearMonth } : loadDateSel(),
+  );
+  const setDatePersisted = useCallback((s: DateSel) => {
+    saveDateSel(s);
+    setDateSel(s);
+  }, []);
+  const dateFilter = useMemo(() => dateSelToFilter(dateSel), [dateSel]);
   // Tile rendering: crop to square (cover) or fit within it (contain). Persisted per machine.
   const [fitTiles, setFitTiles] = useState(() => localStorage.getItem("paim.library.fit") === "1");
   const toggleFit = () => {
@@ -125,7 +244,7 @@ export function LibraryPage() {
   useEffect(() => {
     const ym = search.yearMonth;
     if (ym) {
-      setMonth(ym);
+      setDateSel({ kind: "month", yearMonth: ym });
       setView("grid");
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -183,6 +302,8 @@ export function LibraryPage() {
   const warmRunning = !!warm?.running;
 
   const months = useAsyncData(() => BrowserService.Months());
+  const years = useAsyncData(() => BrowserService.Years());
+  const cameras = useAsyncData(() => BrowserService.Cameras());
 
   const filters = useMemo<BrowseFilters>(
     () => ({
@@ -191,9 +312,13 @@ export function LibraryPage() {
       verificationStatus: verification,
       backupStatus: backup,
       sessionId: "",
-      yearMonth: month,
+      yearMonth: dateFilter.yearMonth,
+      captureFrom: dateFilter.captureFrom,
+      captureTo: dateFilter.captureTo,
+      cameraMake: camera.make,
+      cameraModel: camera.model,
     }),
-    [query, mediaType, verification, backup, month],
+    [query, mediaType, verification, backup, dateFilter, camera],
   );
 
   // Debounce the text query.
@@ -226,14 +351,29 @@ export function LibraryPage() {
   useEffect(() => {
     void load(1, true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [query, mediaType, verification, backup, month]);
+  }, [query, mediaType, verification, backup, dateSel, camera]);
 
   useEffect(() => {
     void months.run().catch(() => undefined);
+    void years.run().catch(() => undefined);
+    void cameras.run().catch(() => undefined);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const filtersActive = !!query || !!mediaType || !!verification || !!backup || !!month;
+  const dateActive = dateSel.kind !== "any";
+  const cameraActive = !!camera.make || !!camera.model;
+  const activeFilters = useMemo(() => {
+    const parts: string[] = [];
+    if (query) parts.push(`search “${query}”`);
+    if (mediaType) parts.push(`type ${mediaTypeLabel(mediaType)}`);
+    if (verification) parts.push(`verification ${verification}`);
+    if (backup) parts.push(`backup ${backup}`);
+    if (cameraActive) parts.push(`camera ${[camera.make, camera.model].filter(Boolean).join(" ")}`);
+    if (dateActive) parts.push(`date ${dateSelLabel(dateSel)}`);
+    return parts;
+  }, [query, mediaType, verification, backup, cameraActive, camera, dateActive, dateSel]);
+  const filtersActive = activeFilters.length > 0;
+  const activeCount = activeFilters.length;
   const hasMore = items.length < total;
   const groups = useMemo(() => groupByMonth(items), [items]);
 
@@ -243,7 +383,8 @@ export function LibraryPage() {
     setMediaType("");
     setVerification("");
     setBackup("");
-    setMonth("");
+    setCamera({ make: "", model: "" });
+    setDatePersisted({ kind: "any" });
   };
 
   return (
@@ -273,6 +414,8 @@ export function LibraryPage() {
               onClick={() => {
                 void load(1, true);
                 void months.run({ silent: true });
+                void years.run({ silent: true });
+                void cameras.run({ silent: true });
               }}
               loading={loading && items.length > 0}
             >
@@ -282,86 +425,81 @@ export function LibraryPage() {
         }
       />
 
-      {view === "folders" ? <FolderView fit={fitTiles} /> : null}
+      {view === "folders" ? <FolderView fit={fitTiles} filtersActive={filtersActive} /> : null}
 
       {view === "grid" ? (
       <>
       <Card className="mb-5">
-        <div className="flex flex-wrap items-end gap-3">
-          <label className="min-w-[15rem] flex-1">
-            <span className="mb-1 block text-[11px] font-medium text-zinc-500">Search</span>
+        <div className="space-y-3">
+          {/* Search spans the width; the structured filters wrap in a tidy row below. */}
+          <label className="block">
+            <span className={FIELD_LABEL_CLASS}>Search</span>
             <div className="relative">
               <MagnifyingGlassIcon className="pointer-events-none absolute top-1/2 left-2.5 h-4 w-4 -translate-y-1/2 text-zinc-600" />
               <input
                 value={queryInput}
                 onChange={(e) => setQueryInput(e.target.value)}
-                placeholder="Filename or path…"
+                placeholder="Filename, path, camera, or lens…"
                 className="w-full rounded-md border border-zinc-700 bg-zinc-950 py-1.5 pr-3 pl-8 text-[13px] text-zinc-200 outline-none focus:border-blue-500"
               />
             </div>
           </label>
 
-          <label>
-            <span className="mb-1 block text-[11px] font-medium text-zinc-500">Type</span>
-            <select value={mediaType} onChange={(e) => setMediaType(e.target.value)} className={SELECT_CLASS}>
-              {MEDIA_TYPES.map((o) => (
-                <option key={o.value} value={o.value}>
-                  {o.label}
-                </option>
-              ))}
-            </select>
-          </label>
+          <div className="flex flex-wrap items-end gap-3">
+            <label>
+              <span className={FIELD_LABEL_CLASS}>Type</span>
+              <select value={mediaType} onChange={(e) => setMediaType(e.target.value)} className={SELECT_CLASS}>
+                {MEDIA_TYPES.map((o) => (
+                  <option key={o.value} value={o.value}>
+                    {o.label}
+                  </option>
+                ))}
+              </select>
+            </label>
 
-          <label>
-            <span className="mb-1 block text-[11px] font-medium text-zinc-500">Verification</span>
-            <select value={verification} onChange={(e) => setVerification(e.target.value)} className={SELECT_CLASS}>
-              {VERIFICATION.map((o) => (
-                <option key={o.value} value={o.value}>
-                  {o.label}
-                </option>
-              ))}
-            </select>
-          </label>
+            <CameraFilter cameras={cameras.data ?? []} value={camera} onChange={setCamera} />
 
-          <label>
-            <span className="mb-1 block text-[11px] font-medium text-zinc-500">Backup</span>
-            <select value={backup} onChange={(e) => setBackup(e.target.value)} className={SELECT_CLASS}>
-              {BACKUP.map((o) => (
-                <option key={o.value} value={o.value}>
-                  {o.label}
-                </option>
-              ))}
-            </select>
-          </label>
+            <DateFilter sel={dateSel} onChange={setDatePersisted} years={years.data ?? []} months={months.data ?? []} />
 
-          <label>
-            <span className="mb-1 block text-[11px] font-medium text-zinc-500">Month</span>
-            <select value={month} onChange={(e) => setMonth(e.target.value)} className={SELECT_CLASS}>
-              <option value="">All months</option>
-              {(months.data ?? []).map((m: MonthCountDTO) => (
-                <option key={m.month} value={m.month}>
-                  {formatMonthLong(m.month)} ({formatNumber(m.count)})
-                </option>
-              ))}
-            </select>
-          </label>
+            <label>
+              <span className={FIELD_LABEL_CLASS}>Verification</span>
+              <select value={verification} onChange={(e) => setVerification(e.target.value)} className={SELECT_CLASS}>
+                {VERIFICATION.map((o) => (
+                  <option key={o.value} value={o.value}>
+                    {o.label}
+                  </option>
+                ))}
+              </select>
+            </label>
 
-          {filtersActive ? (
-            <Button size="sm" variant="ghost" icon={XMarkIcon} onClick={clearFilters}>
-              Clear
-            </Button>
-          ) : null}
+            <label>
+              <span className={FIELD_LABEL_CLASS}>Backup</span>
+              <select value={backup} onChange={(e) => setBackup(e.target.value)} className={SELECT_CLASS}>
+                {BACKUP.map((o) => (
+                  <option key={o.value} value={o.value}>
+                    {o.label}
+                  </option>
+                ))}
+              </select>
+            </label>
 
-          <div className="ml-auto">
-            <Button
-              size="sm"
-              variant="ghost"
-              icon={fitTiles ? ArrowsPointingInIcon : ArrowsPointingOutIcon}
-              onClick={toggleFit}
-              title={fitTiles ? "Crop tiles to square" : "Fit full image in tile"}
-            >
-              {fitTiles ? "Crop" : "Fit"}
-            </Button>
+            {filtersActive ? (
+              <Button size="sm" variant="ghost" icon={XMarkIcon} onClick={clearFilters}>
+                Clear ({activeCount})
+              </Button>
+            ) : null}
+
+            <div className="ml-auto">
+              <Button
+                size="sm"
+                variant="ghost"
+                icon={fitTiles ? ArrowsPointingInIcon : ArrowsPointingOutIcon}
+                onClick={toggleFit}
+                title={fitTiles ? "Crop tiles to square" : "Fit full image in tile"}
+              >
+                {fitTiles ? "Crop" : "Fit"}
+              </Button>
+            </div>
           </div>
         </div>
       </Card>
@@ -375,7 +513,7 @@ export function LibraryPage() {
             title={filtersActive ? "No matches" : "Nothing archived yet"}
             description={
               filtersActive
-                ? "No assets match these filters. Try clearing them."
+                ? `No assets match ${activeFilters.join(", ")}. Try clearing ${activeCount > 1 ? "them" : "it"}.`
                 : "Import or adopt media and it will appear here, grouped by capture month."
             }
             action={
@@ -472,6 +610,165 @@ function SegBtn({
       <Icon className="h-4 w-4" />
       {label}
     </button>
+  );
+}
+
+/**
+ * CameraFilter — a dropdown of the distinct cameras in the library (make + model)
+ * with per-camera counts, feeding an exact-match filter. The option value encodes
+ * the make/model pair as JSON so arbitrary characters in a camera name round-trip
+ * safely. Lens is intentionally NOT here (it lives in the text search) to keep the
+ * dropdown from bloating.
+ */
+function CameraFilter({
+  cameras,
+  value,
+  onChange,
+}: {
+  cameras: CameraCountDTO[];
+  value: { make: string; model: string };
+  onChange: (v: { make: string; model: string }) => void;
+}) {
+  const selected = value.make || value.model ? JSON.stringify([value.make, value.model]) : "";
+  return (
+    <label>
+      <span className={FIELD_LABEL_CLASS}>Camera</span>
+      <select
+        value={selected}
+        onChange={(e) => {
+          if (!e.target.value) {
+            onChange({ make: "", model: "" });
+            return;
+          }
+          try {
+            const [make, model] = JSON.parse(e.target.value) as [string, string];
+            onChange({ make, model });
+          } catch {
+            onChange({ make: "", model: "" });
+          }
+        }}
+        className={SELECT_CLASS}
+      >
+        <option value="">All cameras</option>
+        {cameras.map((c) => {
+          const v = JSON.stringify([c.make, c.model]);
+          return (
+            <option key={v} value={v}>
+              {(c.label || "Unknown camera") + ` (${formatNumber(c.count)})`}
+            </option>
+          );
+        })}
+      </select>
+    </label>
+  );
+}
+
+/**
+ * DateFilter — the compact date-range control that replaces the single-month
+ * dropdown. The primary select offers Any time / This year / Last 12 months, a
+ * group of specific years (with counts), and Custom range. Choosing a year reveals
+ * a secondary month picker (All of <year> + that year's months) so the legacy
+ * single-month behavior is still one click away; Custom range reveals two day
+ * inputs. All modes map to the backend's effective-date bounds via dateSelToFilter.
+ */
+function DateFilter({
+  sel,
+  onChange,
+  years,
+  months,
+}: {
+  sel: DateSel;
+  onChange: (s: DateSel) => void;
+  years: YearCountDTO[];
+  months: MonthCountDTO[];
+}) {
+  const activeYear =
+    sel.kind === "year" ? sel.year : sel.kind === "month" ? sel.yearMonth.slice(0, 4) : "";
+  const primaryValue =
+    sel.kind === "year" || sel.kind === "month"
+      ? `y:${activeYear}`
+      : sel.kind === "custom"
+        ? "custom"
+        : sel.kind; // any | thisYear | last12
+
+  const onPrimary = (v: string) => {
+    if (v === "any" || v === "thisYear" || v === "last12") onChange({ kind: v } as DateSel);
+    else if (v === "custom") onChange({ kind: "custom", from: "", to: "" });
+    else if (v.startsWith("y:")) onChange({ kind: "year", year: v.slice(2) });
+  };
+
+  const monthsInYear = activeYear ? months.filter((m) => m.month.startsWith(`${activeYear}-`)) : [];
+
+  return (
+    <div className="flex flex-wrap items-end gap-3">
+      <label>
+        <span className={FIELD_LABEL_CLASS}>Date</span>
+        <select value={primaryValue} onChange={(e) => onPrimary(e.target.value)} className={SELECT_CLASS}>
+          <option value="any">Any time</option>
+          <option value="thisYear">This year</option>
+          <option value="last12">Last 12 months</option>
+          {years.length > 0 ? (
+            <optgroup label="Year">
+              {years.map((y) => (
+                <option key={y.year} value={`y:${y.year}`}>
+                  {y.year} ({formatNumber(y.count)})
+                </option>
+              ))}
+            </optgroup>
+          ) : null}
+          <option value="custom">Custom range…</option>
+        </select>
+      </label>
+
+      {activeYear && monthsInYear.length > 0 ? (
+        <label>
+          <span className={FIELD_LABEL_CLASS}>Month</span>
+          <select
+            value={sel.kind === "month" ? sel.yearMonth : ""}
+            onChange={(e) =>
+              onChange(
+                e.target.value
+                  ? { kind: "month", yearMonth: e.target.value }
+                  : { kind: "year", year: activeYear },
+              )
+            }
+            className={SELECT_CLASS}
+          >
+            <option value="">All of {activeYear}</option>
+            {monthsInYear.map((m) => (
+              <option key={m.month} value={m.month}>
+                {formatMonthLong(m.month)} ({formatNumber(m.count)})
+              </option>
+            ))}
+          </select>
+        </label>
+      ) : null}
+
+      {sel.kind === "custom" ? (
+        <div className="flex items-end gap-2">
+          <label>
+            <span className={FIELD_LABEL_CLASS}>From</span>
+            <input
+              type="date"
+              value={sel.from}
+              max={sel.to || undefined}
+              onChange={(e) => onChange({ kind: "custom", from: e.target.value, to: sel.to })}
+              className={DATE_INPUT_CLASS}
+            />
+          </label>
+          <label>
+            <span className={FIELD_LABEL_CLASS}>To</span>
+            <input
+              type="date"
+              value={sel.to}
+              min={sel.from || undefined}
+              onChange={(e) => onChange({ kind: "custom", from: sel.from, to: e.target.value })}
+              className={DATE_INPUT_CLASS}
+            />
+          </label>
+        </div>
+      ) : null}
+    </div>
   );
 }
 
@@ -1400,7 +1697,7 @@ function FolderSortHeader({ sort, onSort }: { sort: FolderSort; onSort: (key: Fo
  * and Date are threaded to ListFolder and reset pagination; Items reorders folders
  * only and leaves the asset order (and its server sort) untouched.
  */
-function FolderView({ fit }: { fit: boolean }) {
+function FolderView({ fit, filtersActive }: { fit: boolean; filtersActive: boolean }) {
   const toast = useToast();
   const [relDir, setRelDir] = useState("");
   const [listing, setListing] = useState<FolderListingDTO | null>(null);
@@ -1568,6 +1865,16 @@ function FolderView({ fit }: { fit: boolean }) {
           </Button>
         ) : null}
       </div>
+
+      {/* Folder browsing is structural, so the grid's search/type/status/camera/
+          date filters do not apply here. They are kept in state and re-applied on
+          the switch back to Grid; this note explains the difference. */}
+      {filtersActive ? (
+        <div className="mb-4 flex items-center gap-2 rounded-md border border-zinc-800 bg-zinc-900/50 px-3 py-2 text-[12px] text-zinc-400">
+          <FunnelIcon className="h-4 w-4 flex-none text-zinc-500" />
+          Filters apply to grid view — folder browsing shows the full archive tree.
+        </div>
+      ) : null}
 
       {loading && !listing ? (
         <LoadingBlock label="Loading folder…" />

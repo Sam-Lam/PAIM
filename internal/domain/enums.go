@@ -69,6 +69,15 @@ const (
 	JobStatusCompleted JobStatus = "completed"
 	JobStatusFailed    JobStatus = "failed"
 	JobStatusCancelled JobStatus = "cancelled"
+	// JobStatusOptedOut marks a backup job the user deliberately excluded for this
+	// asset+destination at import time (per-import provider opt-out, e.g. an SD
+	// card already uploaded to Google Photos before PAIM). It is never claimed
+	// (the claim SQL selects only pending), counts as neither missing nor active,
+	// and is excluded from the aggregate BackupStatus exactly like cancelled — so
+	// opting a REQUIRED provider out leaves the asset not-complete and therefore
+	// not safe-to-erase. It is a durable record (not a merely-absent job) so the
+	// exclusion survives restarts and is reversible via RequeueOptedOut.
+	JobStatusOptedOut JobStatus = "opted_out"
 )
 
 // UploadOrder controls the order in which a backup provider's pending jobs are

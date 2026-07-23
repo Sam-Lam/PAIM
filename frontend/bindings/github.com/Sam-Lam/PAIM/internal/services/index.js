@@ -58,6 +58,7 @@ export {
     BackupSummaryDTO,
     BrowseAssetDTO,
     BrowseFilters,
+    CameraCountDTO,
     ClassStatDTO,
     CleanupCompleted,
     CleanupProgress,
@@ -124,5 +125,6 @@ export {
     VersionInfo,
     VolumeDTO,
     VolumeEvent,
-    WarmupStatusDTO
+    WarmupStatusDTO,
+    YearCountDTO
 } from "./models.js";

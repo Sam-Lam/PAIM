@@ -1879,7 +1879,11 @@ export class BrowseAssetDTO {
 
 /**
  * BrowseFilters are the browser grid's optional filters. Empty strings mean "no
- * filter". YearMonth is "2006-01" (capture month).
+ * filter". YearMonth is "2006-01" (capture month). CaptureFrom/CaptureTo are
+ * inclusive ISO date/datetime bounds on the effective date
+ * (COALESCE(capture_date, import_date)); the frontend supplies whole-day/whole-
+ * year boundaries. CameraMake/CameraModel are exact-match camera identity. The
+ * month, the from/to range, and the camera are independent AND-ed predicates.
  */
 export class BrowseFilters {
     /**
@@ -1929,6 +1933,34 @@ export class BrowseFilters {
              */
             this["yearMonth"] = "";
         }
+        if (!("captureFrom" in $$source)) {
+            /**
+             * @member
+             * @type {string}
+             */
+            this["captureFrom"] = "";
+        }
+        if (!("captureTo" in $$source)) {
+            /**
+             * @member
+             * @type {string}
+             */
+            this["captureTo"] = "";
+        }
+        if (!("cameraMake" in $$source)) {
+            /**
+             * @member
+             * @type {string}
+             */
+            this["cameraMake"] = "";
+        }
+        if (!("cameraModel" in $$source)) {
+            /**
+             * @member
+             * @type {string}
+             */
+            this["cameraModel"] = "";
+        }
 
         Object.assign(this, $$source);
     }
@@ -1941,6 +1973,61 @@ export class BrowseFilters {
     static createFrom($$source = {}) {
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         return new BrowseFilters(/** @type {Partial<BrowseFilters>} */($$parsedSource));
+    }
+}
+
+/**
+ * CameraCountDTO is one distinct camera in the library with its asset count. It
+ * backs the Library browser's Camera filter (BrowserService.Cameras). Make and
+ * Model are the exact stored values the grid filters on; Label is the display
+ * "Make Model".
+ */
+export class CameraCountDTO {
+    /**
+     * Creates a new CameraCountDTO instance.
+     * @param {Partial<CameraCountDTO>} [$$source = {}] - The source object to create the CameraCountDTO.
+     */
+    constructor($$source = {}) {
+        if (!("make" in $$source)) {
+            /**
+             * @member
+             * @type {string}
+             */
+            this["make"] = "";
+        }
+        if (!("model" in $$source)) {
+            /**
+             * @member
+             * @type {string}
+             */
+            this["model"] = "";
+        }
+        if (!("label" in $$source)) {
+            /**
+             * @member
+             * @type {string}
+             */
+            this["label"] = "";
+        }
+        if (!("count" in $$source)) {
+            /**
+             * @member
+             * @type {number}
+             */
+            this["count"] = 0;
+        }
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new CameraCountDTO instance from a string or object.
+     * @param {any} [$$source = {}]
+     * @returns {CameraCountDTO}
+     */
+    static createFrom($$source = {}) {
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        return new CameraCountDTO(/** @type {Partial<CameraCountDTO>} */($$parsedSource));
     }
 }
 
@@ -3005,6 +3092,18 @@ export class ImportOptions {
              */
             this["sourceId"] = "";
         }
+        if (!("skipProviderIds" in $$source)) {
+            /**
+             * SkipProviderIds names enabled backup providers to exclude for this import
+             * (per-import provider opt-out). Each is validated against the configured
+             * providers; the pipeline records a durable opted-out marker per excluded
+             * provider instead of a pending backup job. Persisted in the resume state so a
+             * resumed import applies the same skips.
+             * @member
+             * @type {string[]}
+             */
+            this["skipProviderIds"] = [];
+        }
 
         Object.assign(this, $$source);
     }
@@ -3015,7 +3114,11 @@ export class ImportOptions {
      * @returns {ImportOptions}
      */
     static createFrom($$source = {}) {
+        const $$createField6_0 = $$createType51;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        if ("skipProviderIds" in $$parsedSource) {
+            $$parsedSource["skipProviderIds"] = $$createField6_0($$parsedSource["skipProviderIds"]);
+        }
         return new ImportOptions(/** @type {Partial<ImportOptions>} */($$parsedSource));
     }
 }
@@ -3864,10 +3967,22 @@ export class ProviderDTO {
              * this destination yet — the count that powers the "Queue N backups" auto-offer
              * and the per-card badge. It is populated only for ENABLED providers (backfill
              * is refused for disabled ones); 0 otherwise or when the catalog is unbound.
+             * Assets deliberately opted out of this destination are NOT counted here (they
+             * are surfaced separately as OptedOutCount).
              * @member
              * @type {number}
              */
             this["missingBackupCount"] = 0;
+        }
+        if (!("optedOutCount" in $$source)) {
+            /**
+             * OptedOutCount is how many assets the user deliberately excluded from this
+             * destination at import time (opted_out jobs). It drives the card's "N skipped
+             * by choice · Queue anyway" reversal line. Populated for enabled providers.
+             * @member
+             * @type {number}
+             */
+            this["optedOutCount"] = 0;
         }
         if (!("lastError" in $$source)) {
             /**
@@ -3898,10 +4013,10 @@ export class ProviderDTO {
      * @returns {ProviderDTO}
      */
     static createFrom($$source = {}) {
-        const $$createField7_0 = $$createType72;
+        const $$createField8_0 = $$createType72;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("lastError" in $$parsedSource) {
-            $$parsedSource["lastError"] = $$createField7_0($$parsedSource["lastError"]);
+            $$parsedSource["lastError"] = $$createField8_0($$parsedSource["lastError"]);
         }
         return new ProviderDTO(/** @type {Partial<ProviderDTO>} */($$parsedSource));
     }
@@ -3999,6 +4114,16 @@ export class QueueSummaryDTO {
              */
             this["cancelled"] = 0;
         }
+        if (!("optedOut" in $$source)) {
+            /**
+             * OptedOut counts jobs the user deliberately excluded per-import (opted_out).
+             * They are never claimed and never gate a safety verdict; shown subtly in the
+             * queue summary so the count is visible without implying pending work.
+             * @member
+             * @type {number}
+             */
+            this["optedOut"] = 0;
+        }
         if (!("total" in $$source)) {
             /**
              * @member
@@ -4035,10 +4160,10 @@ export class QueueSummaryDTO {
      * @returns {QueueSummaryDTO}
      */
     static createFrom($$source = {}) {
-        const $$createField7_0 = $$createType74;
+        const $$createField8_0 = $$createType74;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("cooldowns" in $$parsedSource) {
-            $$parsedSource["cooldowns"] = $$createField7_0($$parsedSource["cooldowns"]);
+            $$parsedSource["cooldowns"] = $$createField8_0($$parsedSource["cooldowns"]);
         }
         return new QueueSummaryDTO(/** @type {Partial<QueueSummaryDTO>} */($$parsedSource));
     }
@@ -6261,6 +6386,46 @@ export class WarmupStatusDTO {
     static createFrom($$source = {}) {
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         return new WarmupStatusDTO(/** @type {Partial<WarmupStatusDTO>} */($$parsedSource));
+    }
+}
+
+/**
+ * YearCountDTO pairs a capture year ("YYYY") with an asset count. It backs the
+ * Library browser's Date filter year level (BrowserService.Years).
+ */
+export class YearCountDTO {
+    /**
+     * Creates a new YearCountDTO instance.
+     * @param {Partial<YearCountDTO>} [$$source = {}] - The source object to create the YearCountDTO.
+     */
+    constructor($$source = {}) {
+        if (!("year" in $$source)) {
+            /**
+             * YYYY
+             * @member
+             * @type {string}
+             */
+            this["year"] = "";
+        }
+        if (!("count" in $$source)) {
+            /**
+             * @member
+             * @type {number}
+             */
+            this["count"] = 0;
+        }
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new YearCountDTO instance from a string or object.
+     * @param {any} [$$source = {}]
+     * @returns {YearCountDTO}
+     */
+    static createFrom($$source = {}) {
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        return new YearCountDTO(/** @type {Partial<YearCountDTO>} */($$parsedSource));
     }
 }
 

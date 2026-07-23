@@ -400,7 +400,11 @@ func underRoot(root, abs string) bool {
 }
 
 // BrowseFilters are the browser grid's optional filters. Empty strings mean "no
-// filter". YearMonth is "2006-01" (capture month).
+// filter". YearMonth is "2006-01" (capture month). CaptureFrom/CaptureTo are
+// inclusive ISO date/datetime bounds on the effective date
+// (COALESCE(capture_date, import_date)); the frontend supplies whole-day/whole-
+// year boundaries. CameraMake/CameraModel are exact-match camera identity. The
+// month, the from/to range, and the camera are independent AND-ed predicates.
 type BrowseFilters struct {
 	Query              string `json:"query"`
 	MediaType          string `json:"mediaType"`
@@ -408,6 +412,36 @@ type BrowseFilters struct {
 	BackupStatus       string `json:"backupStatus"`
 	SessionID          string `json:"sessionId"`
 	YearMonth          string `json:"yearMonth"`
+	CaptureFrom        string `json:"captureFrom"`
+	CaptureTo          string `json:"captureTo"`
+	CameraMake         string `json:"cameraMake"`
+	CameraModel        string `json:"cameraModel"`
+}
+
+// filterTimeLayouts are the ISO forms the frontend may send for a date-range
+// bound, tried in order. A bare date is treated as midnight UTC; a zoneless
+// datetime as UTC — matching how capture dates are stored in tests and by the
+// SQLite driver.
+var filterTimeLayouts = []string{
+	time.RFC3339Nano,
+	time.RFC3339,
+	"2006-01-02T15:04:05",
+	"2006-01-02",
+}
+
+// parseFilterTime parses a caller-supplied date-range bound. An empty string
+// yields (nil, nil) — "no bound".
+func parseFilterTime(s string) (*time.Time, error) {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return nil, nil
+	}
+	for _, layout := range filterTimeLayouts {
+		if t, err := time.Parse(layout, s); err == nil {
+			return &t, nil
+		}
+	}
+	return nil, fmt.Errorf("services: invalid date filter %q", s)
 }
 
 // BrowseAssetDTO is the slim per-tile projection for the grid. It carries only
@@ -492,6 +526,14 @@ func (s *BrowserService) ListAssets(ctx context.Context, filters BrowseFilters, 
 	if err := s.guard(); err != nil {
 		return PageResult[BrowseAssetDTO]{}, err
 	}
+	from, err := parseFilterTime(filters.CaptureFrom)
+	if err != nil {
+		return PageResult[BrowseAssetDTO]{}, err
+	}
+	to, err := parseFilterTime(filters.CaptureTo)
+	if err != nil {
+		return PageResult[BrowseAssetDTO]{}, err
+	}
 	limit, offset := normalizePage(page, pageSize)
 	q := repo.AssetQuery{
 		MediaType:          mediaTypeFilter(filters.MediaType),
@@ -500,6 +542,10 @@ func (s *BrowserService) ListAssets(ctx context.Context, filters BrowseFilters, 
 		SessionID:          filters.SessionID,
 		Text:               filters.Query,
 		YearMonth:          filters.YearMonth,
+		CaptureFrom:        from,
+		CaptureTo:          to,
+		CameraMake:         filters.CameraMake,
+		CameraModel:        filters.CameraModel,
 		Page:               repo.Page{Limit: limit, Offset: offset},
 	}
 	rows, total, err := s.assets.List(ctx, q)
@@ -526,6 +572,49 @@ func (s *BrowserService) Months(ctx context.Context) ([]MonthCountDTO, error) {
 	out := make([]MonthCountDTO, 0, len(months))
 	for _, m := range months {
 		out = append(out, MonthCountDTO{Month: m.Month, Count: m.Count})
+	}
+	return out, nil
+}
+
+// Years returns distinct capture years with counts (newest first) for the Date
+// filter's year level. It is the CaptureMonths data rolled up to years, so years
+// and months share one capture-date basis (undated assets excluded).
+func (s *BrowserService) Years(ctx context.Context) ([]YearCountDTO, error) {
+	if err := s.guard(); err != nil {
+		return nil, err
+	}
+	months, err := s.assets.CaptureMonths(ctx)
+	if err != nil {
+		return nil, err
+	}
+	years := repo.RollupYears(months)
+	out := make([]YearCountDTO, 0, len(years))
+	for _, y := range years {
+		out = append(out, YearCountDTO{Year: y.Year, Count: y.Count})
+	}
+	return out, nil
+}
+
+// Cameras returns the distinct cameras (make + model) present in the library
+// with per-camera asset counts, most-used first, for the Camera filter dropdown.
+// Label is the display "Make Model" (collapsed whitespace); the frontend filters
+// on the exact Make/Model pair.
+func (s *BrowserService) Cameras(ctx context.Context) ([]CameraCountDTO, error) {
+	if err := s.guard(); err != nil {
+		return nil, err
+	}
+	cams, err := s.assets.Cameras(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]CameraCountDTO, 0, len(cams))
+	for _, c := range cams {
+		out = append(out, CameraCountDTO{
+			Make:  c.Make,
+			Model: c.Model,
+			Label: strings.TrimSpace(c.Make + " " + c.Model),
+			Count: c.Count,
+		})
 	}
 	return out, nil
 }

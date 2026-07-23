@@ -252,6 +252,34 @@ func (s *BackupService) RetryAllFailed(ctx context.Context) (int, error) {
 	return n, nil
 }
 
+// RequeueOptedOut reverses a per-import provider opt-out: it flips opted-out
+// backup jobs for the given provider back to pending so they upload ("Queue
+// anyway"). When sessionID is non-empty the reversal is scoped to the assets
+// imported under that session; an empty sessionID requeues every opted-out job
+// for the provider. It returns the number of jobs requeued and emits
+// backup:queue-changed so the queue and provider cards refresh. Per-session
+// scoping from the UI is deferred to the coming Coverage view; the plumbing is in
+// place here.
+func (s *BackupService) RequeueOptedOut(ctx context.Context, providerID, sessionID string) (int, error) {
+	if err := s.guard(); err != nil {
+		return 0, err
+	}
+	if providerID == "" {
+		return 0, fmt.Errorf("services: requeue opted-out: empty provider id")
+	}
+	n, err := s.jobs.RequeueOptedOut(ctx, providerID, sessionID)
+	if err != nil {
+		return 0, err
+	}
+	if n > 0 {
+		if summary, sErr := s.queueSummary(ctx); sErr == nil {
+			emitSafe(s.emitter, EventBackupQueueChanged, BackupQueueChanged{Summary: summary})
+		}
+	}
+	s.log.Info("requeued opted-out backups", "provider", providerID, "session", sessionID, "count", n)
+	return int(n), nil
+}
+
 // Pause pauses a pending job.
 func (s *BackupService) Pause(ctx context.Context, jobID string) error {
 	if err := s.guard(); err != nil {

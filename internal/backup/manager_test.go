@@ -415,7 +415,7 @@ func TestManager_TwoProvidersOneFailingIsPartial(t *testing.T) {
 	err := h.db.Transaction(func(tx *gorm.DB) error {
 		m := backup.NewManager(h.jobs, h.assets, h.providers, h.registry, nil, fastOptions())
 		var e error
-		created, e = m.EnqueueForAsset(ctx, tx, asset.ID)
+		created, e = m.EnqueueForAsset(ctx, tx, asset.ID, nil)
 		return e
 	})
 	if err != nil {
@@ -509,7 +509,7 @@ func TestManager_EnqueueForAssetIdempotentInTx(t *testing.T) {
 		var created int
 		err := h.db.Transaction(func(tx *gorm.DB) error {
 			var e error
-			created, e = m.EnqueueForAsset(ctx, tx, asset.ID)
+			created, e = m.EnqueueForAsset(ctx, tx, asset.ID, nil)
 			return e
 		})
 		if err != nil {

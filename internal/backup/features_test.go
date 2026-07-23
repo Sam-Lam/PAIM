@@ -271,7 +271,7 @@ func TestEnqueueForAssetSortKey(t *testing.T) {
 
 	capture := time.Date(2020, 1, 2, 3, 4, 5, 0, time.UTC)
 	withCapture := h.addAssetWith(t, "2020/a.jpg", &capture)
-	if _, err := m.EnqueueForAsset(ctx, h.db, withCapture.ID); err != nil {
+	if _, err := m.EnqueueForAsset(ctx, h.db, withCapture.ID, nil); err != nil {
 		t.Fatalf("enqueue with capture: %v", err)
 	}
 	jobs, _ := h.jobs.JobsForAsset(ctx, withCapture.ID)
@@ -280,7 +280,7 @@ func TestEnqueueForAssetSortKey(t *testing.T) {
 	}
 
 	noCapture := h.addAssetWith(t, "2021/b.jpg", nil)
-	if _, err := m.EnqueueForAsset(ctx, h.db, noCapture.ID); err != nil {
+	if _, err := m.EnqueueForAsset(ctx, h.db, noCapture.ID, nil); err != nil {
 		t.Fatalf("enqueue without capture: %v", err)
 	}
 	jobs2, _ := h.jobs.JobsForAsset(ctx, noCapture.ID)

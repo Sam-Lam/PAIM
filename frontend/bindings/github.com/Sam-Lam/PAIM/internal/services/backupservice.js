@@ -110,6 +110,23 @@ export function QueueSummary() {
 }
 
 /**
+ * RequeueOptedOut reverses a per-import provider opt-out: it flips opted-out
+ * backup jobs for the given provider back to pending so they upload ("Queue
+ * anyway"). When sessionID is non-empty the reversal is scoped to the assets
+ * imported under that session; an empty sessionID requeues every opted-out job
+ * for the provider. It returns the number of jobs requeued and emits
+ * backup:queue-changed so the queue and provider cards refresh. Per-session
+ * scoping from the UI is deferred to the coming Coverage view; the plumbing is in
+ * place here.
+ * @param {string} providerID
+ * @param {string} sessionID
+ * @returns {$CancellablePromise<number>}
+ */
+export function RequeueOptedOut(providerID, sessionID) {
+    return $Call.ByID(814362798, providerID, sessionID);
+}
+
+/**
  * Resume resumes a paused job.
  * @param {string} jobID
  * @returns {$CancellablePromise<void>}

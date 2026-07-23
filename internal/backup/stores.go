@@ -47,6 +47,9 @@ type JobQueue interface {
 	ResetRunningOnStartup(ctx context.Context) (int64, error)
 	ListJobs(ctx context.Context, status *domain.JobStatus, page repo.Page) ([]domain.BackupJob, int64, error)
 	Enqueue(ctx context.Context, assetID, plugin, destination string, sortKey int64) (*domain.BackupJob, bool, error)
+	// EnqueueOptedOut idempotently records an opted-out job (durable per-import
+	// provider opt-out) for the triple, sharing Enqueue's idempotency set.
+	EnqueueOptedOut(ctx context.Context, assetID, plugin, destination string, sortKey int64) (*domain.BackupJob, bool, error)
 
 	// JobsForAsset returns every non-deleted job belonging to assetID.
 	JobsForAsset(ctx context.Context, assetID string) ([]domain.BackupJob, error)

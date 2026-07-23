@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -61,10 +62,14 @@ func (f *fakeExtractor) Close() error    { return nil }
 type countingEnqueuer struct {
 	ids      []string
 	perAsset int
+	// lastSkip records the skipProviderIDs of the most recent call so tests can
+	// assert the per-import opt-out set threads through recordAsset.
+	lastSkip []string
 }
 
-func (c *countingEnqueuer) EnqueueForAsset(_ context.Context, _ *gorm.DB, id string) (int, error) {
+func (c *countingEnqueuer) EnqueueForAsset(_ context.Context, _ *gorm.DB, id string, skipProviderIDs []string) (int, error) {
 	c.ids = append(c.ids, id)
+	c.lastSkip = skipProviderIDs
 	return c.perAsset, nil
 }
 
@@ -593,6 +598,54 @@ func TestCancellationCleanliness(t *testing.T) {
 		t.Fatalf("expected some imports preserved, got %d", session.FilesImported)
 	}
 	assertNoPartials(t, h.destRoot)
+}
+
+// TestSkipProvidersThreadedAndPersistedForResume verifies per-import provider
+// opt-out threads to the enqueuer during a run AND survives into the resume path:
+// the skip set is persisted in the session state, so resuming re-applies it.
+func TestSkipProvidersThreadedAndPersistedForResume(t *testing.T) {
+	h := newHarness(t)
+	for _, n := range []string{"f1.jpg", "f2.jpg", "f3.jpg", "f4.jpg", "f5.jpg"} {
+		h.writeFile(n, "content-"+n, testDate)
+	}
+	skip := []string{"prov-x"}
+	opts := h.copyOpts()
+	opts.SkipProviderIDs = skip
+
+	ctx, cancel := context.WithCancel(context.Background())
+	prog := func(pr Progress) {
+		if pr.Phase == PhaseImporting && pr.FilesDone >= 2 {
+			cancel()
+		}
+	}
+	session, err := h.pipe.Run(ctx, opts, prog)
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if session.Status != domain.SessionStatusCancelled {
+		t.Fatalf("status = %s, want cancelled", session.Status)
+	}
+	// The skip threaded to the enqueuer during the initial run.
+	if got := h.enqueuer.lastSkip; len(got) != 1 || got[0] != "prov-x" {
+		t.Fatalf("initial run skip = %v, want [prov-x]", got)
+	}
+	// And it is persisted in the session state for resume.
+	if !strings.Contains(session.Notes, "skipProviderIds") || !strings.Contains(session.Notes, "prov-x") {
+		t.Fatalf("session notes missing persisted skip: %q", session.Notes)
+	}
+
+	// Resume: the persisted skip must re-thread as the remaining files import.
+	h.enqueuer.lastSkip = nil
+	resumed, err := h.pipe.ResumeSession(context.Background(), session.ID, nil)
+	if err != nil {
+		t.Fatalf("resume: %v", err)
+	}
+	if resumed.Status != domain.SessionStatusCompleted {
+		t.Fatalf("resumed status = %s, want completed", resumed.Status)
+	}
+	if got := h.enqueuer.lastSkip; len(got) != 1 || got[0] != "prov-x" {
+		t.Fatalf("resumed skip = %v, want [prov-x] (persisted opt-out must be honored)", got)
+	}
 }
 
 func TestBackupStatusReflectsEnqueueCount(t *testing.T) {

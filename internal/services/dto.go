@@ -255,7 +255,11 @@ type QueueSummaryDTO struct {
 	Completed int64 `json:"completed"`
 	Failed    int64 `json:"failed"`
 	Cancelled int64 `json:"cancelled"`
-	Total     int64 `json:"total"`
+	// OptedOut counts jobs the user deliberately excluded per-import (opted_out).
+	// They are never claimed and never gate a safety verdict; shown subtly in the
+	// queue summary so the count is visible without implying pending work.
+	OptedOut int64 `json:"optedOut"`
+	Total    int64 `json:"total"`
 
 	Cooldowns []ProviderCooldownDTO `json:"cooldowns"`
 
@@ -302,6 +306,8 @@ func summaryFromCounts(counts []domain.JobStatus, values []int64) QueueSummaryDT
 			out.Failed = n
 		case domain.JobStatusCancelled:
 			out.Cancelled = n
+		case domain.JobStatusOptedOut:
+			out.OptedOut = n
 		}
 	}
 	return out

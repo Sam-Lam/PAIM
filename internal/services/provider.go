@@ -54,7 +54,13 @@ type ProviderDTO struct {
 	// this destination yet — the count that powers the "Queue N backups" auto-offer
 	// and the per-card badge. It is populated only for ENABLED providers (backfill
 	// is refused for disabled ones); 0 otherwise or when the catalog is unbound.
+	// Assets deliberately opted out of this destination are NOT counted here (they
+	// are surfaced separately as OptedOutCount).
 	MissingBackupCount int64 `json:"missingBackupCount"`
+	// OptedOutCount is how many assets the user deliberately excluded from this
+	// destination at import time (opted_out jobs). It drives the card's "N skipped
+	// by choice · Queue anyway" reversal line. Populated for enabled providers.
+	OptedOutCount int64 `json:"optedOutCount"`
 
 	// LastError is this destination's most recent still-failing job (its error
 	// message and when it was recorded), or nil when it has no currently-failed
@@ -99,6 +105,17 @@ func (s *ProviderService) withMissingCount(ctx context.Context, dto ProviderDTO)
 		dto.MissingBackupCount = n
 	} else {
 		s.log.Warn("provider missing-backup count failed", "provider", dto.ID, "error", err.Error())
+	}
+	if s.db != nil {
+		var n int64
+		if err := s.db.WithContext(ctx).
+			Model(&domain.BackupJob{}).
+			Where("destination = ? AND status = ?", dto.ID, domain.JobStatusOptedOut).
+			Count(&n).Error; err == nil {
+			dto.OptedOutCount = n
+		} else {
+			s.log.Warn("provider opted-out count failed", "provider", dto.ID, "error", err.Error())
+		}
 	}
 	return dto
 }

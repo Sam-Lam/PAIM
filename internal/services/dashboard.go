@@ -57,6 +57,24 @@ type MonthCountDTO struct {
 	Count int64  `json:"count"`
 }
 
+// YearCountDTO pairs a capture year ("YYYY") with an asset count. It backs the
+// Library browser's Date filter year level (BrowserService.Years).
+type YearCountDTO struct {
+	Year  string `json:"year"` // YYYY
+	Count int64  `json:"count"`
+}
+
+// CameraCountDTO is one distinct camera in the library with its asset count. It
+// backs the Library browser's Camera filter (BrowserService.Cameras). Make and
+// Model are the exact stored values the grid filters on; Label is the display
+// "Make Model".
+type CameraCountDTO struct {
+	Make  string `json:"make"`
+	Model string `json:"model"`
+	Label string `json:"label"`
+	Count int64  `json:"count"`
+}
+
 // BackupSummaryDTO is the dashboard's compact backup-queue view. Pending/Failed
 // are the HEADLINE numbers and count required (non-mirror) backups only, so a
 // convenience mirror lagging behind never inflates the failure count. MirrorPending

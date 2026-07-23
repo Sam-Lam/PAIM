@@ -30,6 +30,7 @@ type sessionState struct {
 	SourceID        string   `json:"sourceId"`
 	Reorganize      bool     `json:"reorganize"`
 	Concurrency     int      `json:"concurrency"`
+	SkipProviderIDs []string `json:"skipProviderIds,omitempty"`
 	Notes           []string `json:"notes,omitempty"`
 }
 
@@ -42,6 +43,7 @@ func (s sessionState) options() Options {
 		SourceID:        s.SourceID,
 		Reorganize:      s.Reorganize,
 		Concurrency:     s.Concurrency,
+		SkipProviderIDs: s.SkipProviderIDs,
 	}
 }
 
@@ -54,6 +56,7 @@ func stateFromOptions(opts Options) sessionState {
 		SourceID:        opts.SourceID,
 		Reorganize:      opts.Reorganize,
 		Concurrency:     opts.Concurrency,
+		SkipProviderIDs: opts.SkipProviderIDs,
 	}
 }
 
@@ -273,7 +276,7 @@ func (p *Pipeline) copyFile(ctx context.Context, sessionID string, fi FileInfo, 
 	}
 
 	asset := p.buildAsset(sessionID, fi, cls, meta, finalPath, captureDate, nil)
-	if err := p.recordAsset(ctx, asset, repo.SessionCounters{Imported: 1}, true); err != nil {
+	if err := p.recordAsset(ctx, asset, repo.SessionCounters{Imported: 1}, true, opts.SkipProviderIDs); err != nil {
 		// The bytes are safely on disk but the DB write failed; remove the file so
 		// a later resume re-imports cleanly (nothing was recorded).
 		_ = os.Remove(finalPath)
@@ -334,7 +337,7 @@ func (p *Pipeline) adoptFile(ctx context.Context, sessionID string, fi FileInfo,
 	if duplicate {
 		counters = repo.SessionCounters{Duplicates: 1}
 	}
-	if err := p.recordAsset(ctx, asset, counters, true); err != nil {
+	if err := p.recordAsset(ctx, asset, counters, true, opts.SkipProviderIDs); err != nil {
 		return p.fail(ctx, sessionID, fi.Path, "record", err)
 	}
 	if bytesDone != nil {
@@ -404,7 +407,7 @@ func (p *Pipeline) recordDuplicate(ctx context.Context, sessionID string, fi Fil
 	dupOf := cls.MatchedAssetID
 	asset := p.buildAsset(sessionID, fi, cls, meta, "", captureDate, &dupOf)
 	asset.BackupStatus = domain.BackupStatusNone
-	if err := p.recordAsset(ctx, asset, repo.SessionCounters{Duplicates: 1}, false); err != nil {
+	if err := p.recordAsset(ctx, asset, repo.SessionCounters{Duplicates: 1}, false, nil); err != nil {
 		return p.fail(ctx, sessionID, fi.Path, "record-duplicate", err)
 	}
 	p.log.Info("recorded duplicate (not copied)", "sessionId", sessionID, "path", fi.Path, "duplicateOf", dupOf, "assetId", asset.ID)
@@ -458,7 +461,10 @@ func applyMetadata(asset *domain.Asset, meta *metadata.AssetMetadata) {
 
 // recordAsset inserts an asset, applies session counters, and (optionally)
 // enqueues backup work, all in one transaction so the import is atomic.
-func (p *Pipeline) recordAsset(ctx context.Context, asset *domain.Asset, counters repo.SessionCounters, enqueue bool) error {
+// skipProviderIDs names enabled backup providers this import excludes by choice;
+// they are threaded to the enqueuer, which records durable opted-out markers for
+// them (see BackupEnqueuer). It is ignored when enqueue is false.
+func (p *Pipeline) recordAsset(ctx context.Context, asset *domain.Asset, counters repo.SessionCounters, enqueue bool, skipProviderIDs []string) error {
 	return p.db.Transaction(func(tx *gorm.DB) error {
 		if err := p.assets.WithTx(tx).Create(ctx, asset); err != nil {
 			return err
@@ -467,7 +473,7 @@ func (p *Pipeline) recordAsset(ctx context.Context, asset *domain.Asset, counter
 			return err
 		}
 		if enqueue {
-			n, err := p.backup.EnqueueForAsset(ctx, tx, asset.ID)
+			n, err := p.backup.EnqueueForAsset(ctx, tx, asset.ID, skipProviderIDs)
 			if err != nil {
 				return err
 			}

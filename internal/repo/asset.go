@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -428,11 +429,14 @@ func (r *AssetRepo) CountEligibleForBackup(ctx context.Context) (int64, error) {
 }
 
 // CountEligibleMissingBackup counts non-deleted, verified assets that have an
-// archive copy but NO pending, running, or completed backup job for the given
-// provider (destination). The status set matches BackupRepo.Enqueue's idempotency
-// exactly, so the result is precisely how many jobs a backfill for this provider
-// would create — the "N assets aren't queued for this destination yet" count the
-// Providers UI shows. It is a single indexed NOT EXISTS scan.
+// archive copy but NO pending, running, completed, or opted-out backup job for
+// the given provider (destination). The status set matches BackupRepo.Enqueue's
+// idempotency exactly, so the result is precisely how many jobs a backfill for
+// this provider would create — the "N assets aren't queued for this destination
+// yet" count the Providers UI shows. Opted-out jobs count as present (NOT
+// missing): a deliberately-excluded asset is not a gap to be backfilled; it is
+// surfaced separately as "skipped by choice". It is a single indexed NOT EXISTS
+// scan.
 func (r *AssetRepo) CountEligibleMissingBackup(ctx context.Context, providerID string) (int64, error) {
 	var n int64
 	err := r.db.WithContext(ctx).
@@ -441,7 +445,7 @@ func (r *AssetRepo) CountEligibleMissingBackup(ctx context.Context, providerID s
 		Where("current_archive_path <> ''").
 		Where("NOT EXISTS (SELECT 1 FROM backup_jobs j WHERE j.asset_id = assets.id AND j.destination = ? AND j.deleted_at IS NULL AND j.status IN ?)",
 			providerID,
-			[]domain.JobStatus{domain.JobStatusPending, domain.JobStatusRunning, domain.JobStatusCompleted}).
+			[]domain.JobStatus{domain.JobStatusPending, domain.JobStatusRunning, domain.JobStatusCompleted, domain.JobStatusOptedOut}).
 		Count(&n).Error
 	if err != nil {
 		return 0, fmt.Errorf("repo: count eligible missing backup (provider %q): %w", providerID, err)
@@ -635,8 +639,13 @@ func (r *AssetRepo) ListDuplicates(ctx context.Context, page Page) ([]DuplicateP
 }
 
 // AssetQuery filters an asset listing. Nil pointer fields and empty strings are
-// ignored. Text matches OriginalFilename or OriginalFullPath (case-insensitive
-// substring). YearMonth ("2006-01") restricts to a single capture month.
+// ignored. Text matches OriginalFilename, OriginalFullPath, CameraMake,
+// CameraModel, or Lens (case-insensitive substring, LIKE metacharacters escaped).
+// YearMonth ("2006-01") restricts to a single capture month. CaptureFrom/CaptureTo
+// are inclusive bounds on the EFFECTIVE date (COALESCE(capture_date, import_date)),
+// so an undated asset is placed by its import date — consistent with the
+// dashboard's assets-over-time axis. CameraMake/CameraModel are EXACT-match
+// (equality, not LIKE) so a metacharacter in a camera name matches literally.
 type AssetQuery struct {
 	MediaType          *domain.MediaType
 	VerificationStatus *domain.VerificationStatus
@@ -645,6 +654,10 @@ type AssetQuery struct {
 	SourceID           string
 	Text               string
 	YearMonth          string
+	CaptureFrom        *time.Time
+	CaptureTo          *time.Time
+	CameraMake         string
+	CameraModel        string
 	Page               Page
 }
 
@@ -667,12 +680,31 @@ func (q AssetQuery) applyFilters(base *gorm.DB) *gorm.DB {
 	if q.SourceID != "" {
 		base = base.Where("source_id = ?", q.SourceID)
 	}
+	if q.CameraMake != "" {
+		base = base.Where("camera_make = ?", q.CameraMake)
+	}
+	if q.CameraModel != "" {
+		base = base.Where("camera_model = ?", q.CameraModel)
+	}
 	if q.Text != "" {
-		like := "%" + q.Text + "%"
-		base = base.Where("original_filename LIKE ? OR original_full_path LIKE ?", like, like)
+		// One grouped OR across identity + camera metadata columns, with LIKE
+		// metacharacters escaped so a literal % or _ in the query (or in a stored
+		// value) matches literally. GORM wraps this whole Where in parentheses, so
+		// it composes correctly with the AND-ed predicates above.
+		like := "%" + escapeLike(q.Text) + "%"
+		base = base.Where(
+			"original_filename LIKE ? ESCAPE '\\' OR original_full_path LIKE ? ESCAPE '\\' "+
+				"OR camera_make LIKE ? ESCAPE '\\' OR camera_model LIKE ? ESCAPE '\\' OR lens LIKE ? ESCAPE '\\'",
+			like, like, like, like, like)
 	}
 	if q.YearMonth != "" {
 		base = base.Where("strftime('%Y-%m', capture_date) = ?", q.YearMonth)
+	}
+	if q.CaptureFrom != nil {
+		base = base.Where(effectiveDateExpr+" >= ?", *q.CaptureFrom)
+	}
+	if q.CaptureTo != nil {
+		base = base.Where(effectiveDateExpr+" <= ?", *q.CaptureTo)
 	}
 	return base
 }
@@ -825,6 +857,66 @@ func (r *AssetRepo) CaptureMonths(ctx context.Context) ([]CaptureMonth, error) {
 		Scan(&rows).Error
 	if err != nil {
 		return nil, fmt.Errorf("repo: capture months: %w", err)
+	}
+	return rows, nil
+}
+
+// YearCount pairs a capture year ("2006") with the number of non-deleted assets
+// captured in it.
+type YearCount struct {
+	Year  string `json:"year"`
+	Count int64  `json:"count"`
+}
+
+// RollupYears aggregates per-month capture counts ("YYYY-MM") into per-year
+// counts ("YYYY"), newest year first. It is a pure function over CaptureMonths
+// data (which already excludes undated assets) so the browser's year-level Date
+// filter and its month-level picker share one capture-date basis. Malformed or
+// short month keys are skipped.
+func RollupYears(months []CaptureMonth) []YearCount {
+	counts := make(map[string]int64, len(months))
+	order := make([]string, 0, len(months))
+	for _, m := range months {
+		if len(m.Month) < 4 {
+			continue
+		}
+		y := m.Month[:4]
+		if _, seen := counts[y]; !seen {
+			order = append(order, y)
+		}
+		counts[y] += m.Count
+	}
+	sort.Slice(order, func(i, j int) bool { return order[i] > order[j] }) // newest year first
+	out := make([]YearCount, 0, len(order))
+	for _, y := range order {
+		out = append(out, YearCount{Year: y, Count: counts[y]})
+	}
+	return out
+}
+
+// CameraCount pairs a distinct camera (make + model) with the number of
+// non-deleted assets that carry it.
+type CameraCount struct {
+	Make  string `json:"make"`
+	Model string `json:"model"`
+	Count int64  `json:"count"`
+}
+
+// Cameras returns distinct (make, model) camera pairs with per-pair asset counts
+// across non-deleted assets, most-used first (ties broken by make then model).
+// Rows with neither a make nor a model are excluded — they carry no camera
+// identity to filter on. Backs the browser's Camera filter dropdown.
+func (r *AssetRepo) Cameras(ctx context.Context) ([]CameraCount, error) {
+	var rows []CameraCount
+	err := r.db.WithContext(ctx).
+		Model(&domain.Asset{}).
+		Select("camera_make as make, camera_model as model, count(*) as count").
+		Where("camera_make <> '' OR camera_model <> ''").
+		Group("camera_make, camera_model").
+		Order("count DESC, camera_make, camera_model").
+		Scan(&rows).Error
+	if err != nil {
+		return nil, fmt.Errorf("repo: cameras: %w", err)
 	}
 	return rows, nil
 }

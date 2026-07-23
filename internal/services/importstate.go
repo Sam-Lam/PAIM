@@ -17,6 +17,7 @@ type resumeState struct {
 	SourceID        string   `json:"sourceId"`
 	Reorganize      bool     `json:"reorganize"`
 	Concurrency     int      `json:"concurrency"`
+	SkipProviderIDs []string `json:"skipProviderIds,omitempty"`
 	Notes           []string `json:"notes,omitempty"`
 }
 
