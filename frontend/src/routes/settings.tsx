@@ -106,6 +106,21 @@ export function SettingsPage() {
     }
   };
 
+  // Pick a folder that already holds a PAIM library and open it. Open validates
+  // <root>/.paim/paim.db server-side; a bad folder surfaces its error as a toast.
+  const openAnotherLibrary = async () => {
+    setSwitching(true);
+    try {
+      const path = await LibraryService.PickLibraryFolder();
+      if (!path) return; // dialog cancelled
+      await switchLibrary(path);
+    } catch (e) {
+      toast.fromError(e, "Could not open that library");
+    } finally {
+      setSwitching(false);
+    }
+  };
+
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -248,6 +263,27 @@ export function SettingsPage() {
             </div>
           ) : null}
 
+          <div className="mt-4 border-t border-zinc-800 pt-3">
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <div className="text-[12px] font-medium text-zinc-400">Open another library</div>
+                <p className="mt-1 max-w-lg text-[11px] text-zinc-500">
+                  A library is a folder containing your photos and their catalog — open copies of a catalog only as
+                  read-only insurance; changes made in a copy never merge back.
+                </p>
+              </div>
+              <Button
+                size="sm"
+                variant="secondary"
+                icon={FolderOpenIcon}
+                onClick={() => void openAnotherLibrary()}
+                loading={switching}
+              >
+                Open another library…
+              </Button>
+            </div>
+          </div>
+
           <ReorganizeSection />
         </Card>
 
@@ -363,6 +399,10 @@ function ReorganizeSection() {
   const [progress, setProgress] = useState<ImportProgress | null>(null);
   const [completed, setCompleted] = useState<ImportCompleted | null>(null);
   const [cancelling, setCancelling] = useState(false);
+  // "Use original folder names as labels" — default ON (the UI default; the
+  // engine option itself defaults off). When on, an empty event derives each
+  // file's label from its current parent folder during the reorganize.
+  const [useSourceFolderLabels, setUseSourceFolderLabels] = useState(true);
   // Another import (not this reorganize) is active → the one-active guard would
   // reject a start, so disable the entry point and explain why.
   const [busyElsewhere, setBusyElsewhere] = useState(false);
@@ -425,7 +465,7 @@ function ReorganizeSection() {
     setPlan(null);
     setCompleted(null);
     try {
-      const p = await ImportService.PlanReorganize("");
+      const p = await ImportService.PlanReorganize("", useSourceFolderLabels);
       setPlan(p);
     } catch (e) {
       toast.fromError(e, "Could not compute the reorganize plan");
@@ -498,6 +538,28 @@ function ReorganizeSection() {
           <ExclamationTriangleIcon className="mt-0.5 h-3.5 w-3.5 flex-none" />
           An import is currently running. Wait for it to finish before reorganizing.
         </p>
+      ) : null}
+
+      {!running ? (
+        <label className="mt-2.5 flex cursor-pointer items-start gap-2 text-[12px] text-zinc-300">
+          <input
+            type="checkbox"
+            checked={useSourceFolderLabels}
+            onChange={(e) => {
+              setUseSourceFolderLabels(e.target.checked);
+              setPlan(null); // a changed option invalidates any previewed plan
+            }}
+            className="mt-0.5 h-3.5 w-3.5 flex-none rounded border-zinc-600 bg-zinc-950 text-blue-500 focus:ring-blue-500"
+          />
+          <span>
+            Use original folder names as labels
+            <span className="mt-0.5 block text-[11px] text-zinc-500">
+              Each file&rsquo;s existing parent folder becomes the event label in{" "}
+              <span className="font-mono">YYYY-MM-DD label/</span>. Generic camera folders (DCIM, 100CANON…) and
+              plain dates are ignored.
+            </span>
+          </span>
+        </label>
       ) : null}
 
       {/* Determinate progress while the plan is being computed from the catalog. */}

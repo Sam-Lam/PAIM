@@ -245,6 +245,11 @@ func run() error {
 	tracker.Register(comp.backupSvc)
 	tracker.Register(comp.thumbnailSvc)
 
+	// The browser's event-folder rename refuses while any long operation is in
+	// flight (renaming under a running move is unsafe), so it reads the same
+	// activity tracker the quit guard uses.
+	comp.browserSvc.SetActivity(tracker)
+
 	// After an import/adopt session completes, warm that session's thumbnails when
 	// the setting is on (default). This runs after completion — never inline during
 	// the import — and quietly no-ops for reorganize sessions or when disabled.

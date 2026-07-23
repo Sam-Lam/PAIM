@@ -462,6 +462,39 @@ never before, and never on the import result alone.
   media…" only on a green evaluation. The Dashboard's Safe-to-Erase card remains the
   ambient surface for sources that turn green later.
 
+## Event labels & folder navigation — archive, importer, services, frontend
+
+The layout convention is `YYYY/YYYY-MM-DD <label>/` — date prefix is machine-readable,
+everything after it is the human label. Four capabilities make labels first-class:
+
+1. **Labels survive reorganize**: reorganize option "Use original folder names as labels"
+   (default ON in the UI). Each file's label = its current parent folder's name,
+   sanitized by the existing event sanitizer, with exclusions: generic camera dirs
+   (DCIM, `\d{3}[A-Z_]{1,8}` patterns, MISC, PRIVATE, AVCHD, THMBNL), names that are
+   pure dates, and the library root/year/date folders themselves. A parent already in
+   `YYYY-MM-DD Label` form contributes only its label part. Excluded → bare date folder.
+2. **In-app event rename**: `BrowserService.RenameEventFolder(ctx, relDir, newLabel)` —
+   relDir must be a date folder (`YYYY/YYYY-MM-DD*`) under the library root; new name =
+   date prefix + sanitized label (empty label → bare date); refuses if the target dir
+   exists. Performs the directory rename, then updates every contained asset's
+   CurrentArchivePath prefix in ONE transaction (RAW/ subpaths ride along); on DB
+   failure, best-effort rename-back + logged error. Never rename archive folders in
+   Finder — this method is the sanctioned path, and the UI says so.
+3. **Sticky date folders on import**: when resolving a destination for date D with an
+   empty event name, if EXACTLY ONE existing folder matches `YYYY-MM-DD*` in that year,
+   new files join it (the user's labeled folder) instead of creating a bare `YYYY-MM-DD/`
+   sibling. Zero or multiple matches → bare date folder (deterministic; resolution cached
+   per date within a run). A non-empty event name still targets `YYYY-MM-DD Event`
+   exactly. Applies to copy import, adopt+reorganize, and reorganize-later.
+4. **Library folder view**: the Library page gains a view switch — **Grid** (current) |
+   **Folders** (persisted per machine). Folders view: breadcrumb navigation over the
+   actual archive tree driven by the catalog (`BrowserService.ListFolder(relDir)` →
+   subfolders with asset counts + a representative thumbnail, plus the folder's own
+   assets paged); list-style rows; clicking drills in; assets open the existing detail
+   drawer. **Right-click context menu** (custom component — no native menus in the
+   webview): on date-event folders → Rename… (dialog → RenameEventFolder) and Reveal in
+   Finder; on assets → Reveal in Finder. Renames refresh the view and any open drawer.
+
 ## Quit guard — main.go, services, frontend
 
 Quitting must never surprise the user about in-flight work. Safety already comes from the

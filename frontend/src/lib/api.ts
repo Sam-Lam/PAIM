@@ -54,6 +54,8 @@ export type {
   DashboardStats,
   DryRunReportDTO,
   DuplicatePairDTO,
+  FolderEntryDTO,
+  FolderListingDTO,
   ImportCompleted,
   ImportOptions,
   ImportProgress,

@@ -71,6 +71,7 @@ type ImportService struct {
 	reorgPlan   *importer.ReorganizePlan
 	reorgPlanAt time.Time
 	reorgEvent  string
+	reorgLabels bool
 }
 
 // reorgPlanTTL bounds how long a cached reorganize plan is reused between

@@ -86,13 +86,17 @@ export function PickFolder() {
  * PlanReorganize computes a non-mutating reorganize preview from the catalog and
  * caches it so a subsequent StartReorganize reuses the exact plan. eventName is
  * the (optional) event folder segment applied to the standard layout; empty
- * yields date-only YYYY-MM-DD folders. The returned DTO caps its move/skip
- * sample at reorgDisplayCap while the counts reflect the full plan.
+ * yields date-only YYYY-MM-DD folders (subject to the labels/sticky rules).
+ * useSourceFolderLabels turns on "labels survive reorganize": when eventName is
+ * empty, each file's label is derived from its current parent folder name. The
+ * returned DTO caps its move/skip sample at reorgDisplayCap while the counts
+ * reflect the full plan.
  * @param {string} eventName
+ * @param {boolean} useSourceFolderLabels
  * @returns {$CancellablePromise<$models.ReorganizePlanDTO | null>}
  */
-export function PlanReorganize(eventName) {
-    return $Call.ByID(2236467974, eventName).then(/** @type {($result: any) => any} */(($result) => {
+export function PlanReorganize(eventName, useSourceFolderLabels) {
+    return $Call.ByID(2236467974, eventName, useSourceFolderLabels).then(/** @type {($result: any) => any} */(($result) => {
         return $$createType5($result);
     }));
 }

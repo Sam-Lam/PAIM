@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/Sam-Lam/PAIM/internal/domain"
 	"gorm.io/gorm"
@@ -125,6 +126,142 @@ func (r *AssetRepo) UpdateFullHash(ctx context.Context, id, fullHash string) err
 // atomically.
 func (r *AssetRepo) UpdateArchivePath(ctx context.Context, id, archivePath string) error {
 	return r.updateColumns(ctx, id, map[string]any{"current_archive_path": archivePath})
+}
+
+// escapeLike escapes the SQL LIKE metacharacters (%, _) and the escape
+// character itself so a stored path segment containing them is matched
+// literally. Callers pair the result with `ESCAPE '\'`.
+func escapeLike(s string) string {
+	s = strings.ReplaceAll(s, `\`, `\\`)
+	s = strings.ReplaceAll(s, `%`, `\%`)
+	s = strings.ReplaceAll(s, `_`, `\_`)
+	return s
+}
+
+// UpdateArchivePathPrefix rewrites the leading directory prefix of every
+// non-deleted asset whose CurrentArchivePath lies under oldPrefix, replacing it
+// with newPrefix. Matching is on WHOLE path segments only: an asset matches iff
+// its path begins with `oldPrefix + "/"`, so renaming "2019/2019-06-12 Trip"
+// never touches a sibling "2019/2019-06-12 Trip2". RAW/ subpaths ride along
+// (they share the prefix). It returns the number of rows updated and is
+// transaction-aware via WithTx so the directory rename and the path rewrite
+// commit atomically. Both prefixes are root-relative forward-slash paths with no
+// trailing slash.
+func (r *AssetRepo) UpdateArchivePathPrefix(ctx context.Context, oldPrefix, newPrefix string) (int64, error) {
+	oldPrefix = strings.TrimRight(oldPrefix, "/")
+	newPrefix = strings.TrimRight(newPrefix, "/")
+	if oldPrefix == "" {
+		return 0, fmt.Errorf("repo: update archive path prefix: empty old prefix")
+	}
+	like := escapeLike(oldPrefix) + "/%"
+	// substr is 1-based: keep everything from the first char AFTER oldPrefix (the
+	// leading "/rest"), and prepend newPrefix.
+	res := r.db.WithContext(ctx).
+		Model(&domain.Asset{}).
+		Where("current_archive_path LIKE ? ESCAPE '\\'", like).
+		Update("current_archive_path",
+			gorm.Expr("? || substr(current_archive_path, ?)", newPrefix, len(oldPrefix)+1))
+	if res.Error != nil {
+		return 0, fmt.Errorf("repo: update archive path prefix %q->%q: %w", oldPrefix, newPrefix, res.Error)
+	}
+	return res.RowsAffected, nil
+}
+
+// FolderChild is one immediate subdirectory of a browsed folder: its segment
+// name, the number of assets anywhere beneath it (recursive), and a
+// representative cover asset (the newest by capture date).
+type FolderChild struct {
+	Name         string `json:"name"`
+	AssetCount   int64  `json:"assetCount"`
+	CoverAssetID string `json:"coverAssetId"`
+}
+
+// FolderChildren returns the immediate subdirectories of relDir derived from
+// CurrentArchivePath, each with a recursive asset count and a cover asset. relDir
+// is a root-relative forward-slash directory ("" = the library root, listing
+// year folders). The child name is the path segment immediately after relDir;
+// assets sitting DIRECTLY in relDir (no further segment) are files, not
+// subfolders, and are excluded here (see FolderAssets).
+//
+// Scale: this is a single GROUP BY over the assets whose path is under relDir,
+// filtered by an indexed `current_archive_path` prefix (idx on that column). At
+// 250k assets a top-level listing groups the whole table once (~tens of ms in
+// SQLite); deeper levels touch only the far smaller subtree. Folder navigation
+// is a cold, user-driven action (not a hot loop), so a per-level prefix scan is
+// the right trade-off versus materializing a separate folder table.
+func (r *AssetRepo) FolderChildren(ctx context.Context, relDir string) ([]FolderChild, error) {
+	relDir = strings.Trim(relDir, "/")
+
+	var restExpr, where string
+	var args []any
+	if relDir == "" {
+		restExpr = "current_archive_path"
+		where = "deleted_at IS NULL AND current_archive_path <> ''"
+	} else {
+		prefix := relDir + "/"
+		restExpr = "substr(current_archive_path, ?)"
+		args = append(args, len(prefix)+1)
+		where = "deleted_at IS NULL AND current_archive_path LIKE ? ESCAPE '\\'"
+		args = append(args, escapeLike(prefix)+"%")
+	}
+
+	// Inner: project each row to its (rest-of-path) relative to relDir. Middle:
+	// keep only rows that go DEEPER than relDir (a subfolder) and cut the first
+	// segment. Outer: group by that segment. The bare `id` column takes its value
+	// from the row holding max(capture_date) — SQLite's documented min/max
+	// bare-column rule — giving a newest-first cover per subfolder.
+	sql := `
+SELECT name, count(*) AS asset_count, id AS cover_asset_id
+FROM (
+  SELECT id, capture_date, substr(rest, 1, instr(rest, '/') - 1) AS name
+  FROM (SELECT id, capture_date, ` + restExpr + ` AS rest FROM assets WHERE ` + where + `)
+  WHERE instr(rest, '/') > 0
+)
+GROUP BY name
+ORDER BY name`
+
+	var rows []FolderChild
+	if err := r.db.WithContext(ctx).Raw(sql, args...).Scan(&rows).Error; err != nil {
+		return nil, fmt.Errorf("repo: folder children of %q: %w", relDir, err)
+	}
+	return rows, nil
+}
+
+// FolderAssets returns the assets sitting DIRECTLY in relDir (their parent
+// directory equals relDir) plus the total count, ordered newest-capture-first
+// like List. relDir is a root-relative forward-slash directory ("" = root). A
+// file is "directly in" relDir when the remainder of its path after relDir
+// contains no further "/".
+func (r *AssetRepo) FolderAssets(ctx context.Context, relDir string, page Page) ([]domain.Asset, int64, error) {
+	relDir = strings.Trim(relDir, "/")
+
+	base := r.db.WithContext(ctx).Model(&domain.Asset{})
+	if relDir == "" {
+		base = base.Where("current_archive_path <> '' AND instr(current_archive_path, '/') = 0")
+	} else {
+		prefix := relDir + "/"
+		base = base.
+			Where("current_archive_path LIKE ? ESCAPE '\\'", escapeLike(prefix)+"%").
+			Where("instr(substr(current_archive_path, ?), '/') = 0", len(prefix)+1)
+	}
+
+	var total int64
+	if err := base.Count(&total).Error; err != nil {
+		return nil, 0, fmt.Errorf("repo: folder assets of %q (count): %w", relDir, err)
+	}
+	limit, offset := page.apply()
+	q := base.Order("capture_date DESC, import_date DESC, created_at DESC")
+	if limit > 0 {
+		q = q.Limit(limit)
+	}
+	if offset > 0 {
+		q = q.Offset(offset)
+	}
+	var assets []domain.Asset
+	if err := q.Find(&assets).Error; err != nil {
+		return nil, 0, fmt.Errorf("repo: folder assets of %q: %w", relDir, err)
+	}
+	return assets, total, nil
 }
 
 // ListActiveArchived returns every non-deleted, verified asset that has a

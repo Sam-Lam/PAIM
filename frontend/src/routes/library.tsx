@@ -9,11 +9,14 @@ import {
   ChevronRightIcon,
   ClipboardDocumentIcon,
   FilmIcon,
+  FolderIcon,
   FolderOpenIcon,
   MagnifyingGlassIcon,
   MagnifyingGlassMinusIcon,
   MagnifyingGlassPlusIcon,
+  PencilSquareIcon,
   PhotoIcon,
+  Squares2X2Icon,
   XMarkIcon,
 } from "@heroicons/react/24/outline";
 import {
@@ -32,6 +35,8 @@ import {
   type AssetRefDTO,
   type BrowseAssetDTO,
   type BrowseFilters,
+  type FolderEntryDTO,
+  type FolderListingDTO,
   type MonthCountDTO,
   type ThumbsProgress,
   type WarmupStatusDTO,
@@ -99,6 +104,14 @@ export function LibraryPage() {
       return !v;
     });
   };
+  // View: the flat capture-month grid, or the archive folder tree. Persisted per machine.
+  const [view, setView] = useState<"grid" | "folders">(
+    () => (localStorage.getItem("paim.library.view") === "folders" ? "folders" : "grid"),
+  );
+  const setViewPersisted = (v: "grid" | "folders") => {
+    localStorage.setItem("paim.library.view", v);
+    setView(v);
+  };
 
   // Accumulated grid state ("Load more" pagination).
   const [items, setItems] = useState<BrowseAssetDTO[]>([]);
@@ -108,6 +121,18 @@ export function LibraryPage() {
   const [loadingMore, setLoadingMore] = useState(false);
 
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [menu, setMenu] = useState<ContextMenuState>(null);
+
+  const revealAsset = useCallback(
+    async (id: string) => {
+      try {
+        await BrowserService.RevealAsset(id, "archive");
+      } catch (e) {
+        toast.fromError(e, "Could not reveal in Finder");
+      }
+    },
+    [toast],
+  );
 
   // Thumbnail warm-up state, shown compactly in the header while running.
   const [warm, setWarm] = useState<WarmupStatusDTO | null>(null);
@@ -210,6 +235,10 @@ export function LibraryPage() {
         description="A read-only view of everything archived — grouped by capture month, with full provenance on tap. Viewing only; nothing here modifies your files."
         actions={
           <div className="flex items-center gap-2">
+            <div className="flex items-center rounded-md border border-zinc-700 bg-zinc-950 p-0.5">
+              <SegBtn active={view === "grid"} icon={Squares2X2Icon} label="Grid" onClick={() => setViewPersisted("grid")} />
+              <SegBtn active={view === "folders"} icon={FolderIcon} label="Folders" onClick={() => setViewPersisted("folders")} />
+            </div>
             {warmRunning ? (
               <span className="flex items-center gap-1.5 rounded-md border border-blue-500/30 bg-blue-500/5 px-2.5 py-1.5 text-[12px] text-zinc-300 tabular-nums">
                 <BoltIcon className="h-3.5 w-3.5 animate-pulse text-blue-400" />
@@ -235,6 +264,10 @@ export function LibraryPage() {
         }
       />
 
+      {view === "folders" ? <FolderView fit={fitTiles} /> : null}
+
+      {view === "grid" ? (
+      <>
       <Card className="mb-5">
         <div className="flex flex-wrap items-end gap-3">
           <label className="min-w-[15rem] flex-1">
@@ -346,7 +379,27 @@ export function LibraryPage() {
               <h2 className="mb-2 text-[13px] font-semibold text-zinc-300">{g.label}</h2>
               <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6">
                 {g.items.map((asset) => (
-                  <Thumb key={asset.id} asset={asset} fit={fitTiles} onClick={() => setSelectedId(asset.id)} />
+                  <Thumb
+                    key={asset.id}
+                    asset={asset}
+                    fit={fitTiles}
+                    onClick={() => setSelectedId(asset.id)}
+                    onContextMenu={(e) => {
+                      e.preventDefault();
+                      setMenu({
+                        x: e.clientX,
+                        y: e.clientY,
+                        items: [
+                          {
+                            label: "Reveal in Finder",
+                            icon: FolderOpenIcon,
+                            disabled: !asset.hasArchiveCopy,
+                            onClick: () => void revealAsset(asset.id),
+                          },
+                        ],
+                      });
+                    }}
+                  />
                 ))}
               </div>
             </section>
@@ -361,8 +414,10 @@ export function LibraryPage() {
           ) : null}
         </div>
       )}
+      </>
+      ) : null}
 
-      {selectedId ? (
+      {view === "grid" && selectedId ? (
         <DetailDrawer
           assetId={selectedId}
           items={items}
@@ -370,17 +425,56 @@ export function LibraryPage() {
           onNavigate={setSelectedId}
         />
       ) : null}
+
+      <ContextMenu state={menu} onClose={() => setMenu(null)} />
     </div>
   );
 }
 
+/** A segmented-control button used by the Grid|Folders view switch. */
+function SegBtn({
+  active,
+  icon: Icon,
+  label,
+  onClick,
+}: {
+  active: boolean;
+  icon: React.ComponentType<{ className?: string }>;
+  label: string;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      title={`${label} view`}
+      className={`flex items-center gap-1.5 rounded px-2 py-1 text-[12px] font-medium transition ${
+        active ? "bg-zinc-800 text-zinc-100" : "text-zinc-400 hover:text-zinc-200"
+      }`}
+    >
+      <Icon className="h-4 w-4" />
+      {label}
+    </button>
+  );
+}
+
 /** A single grid tile: lazy 512 thumbnail with badges and a placeholder fallback. */
-function Thumb({ asset, onClick, fit }: { asset: BrowseAssetDTO; onClick: () => void; fit: boolean }) {
+function Thumb({
+  asset,
+  onClick,
+  fit,
+  onContextMenu,
+}: {
+  asset: BrowseAssetDTO;
+  onClick: () => void;
+  fit: boolean;
+  onContextMenu?: (e: React.MouseEvent) => void;
+}) {
   const [errored, setErrored] = useState(false);
   const isVideo = asset.mediaType === "video";
   return (
     <button
       onClick={onClick}
+      onContextMenu={onContextMenu}
       title={asset.filename}
       className="group relative aspect-square overflow-hidden rounded-lg border border-zinc-800 bg-zinc-900 focus:ring-2 focus:ring-blue-500/60 focus:outline-none"
     >
@@ -438,11 +532,13 @@ function DetailDrawer({
   items,
   onClose,
   onNavigate,
+  reloadNonce,
 }: {
   assetId: string;
   items: BrowseAssetDTO[];
   onClose: () => void;
   onNavigate: (id: string) => void;
+  reloadNonce?: number;
 }) {
   const toast = useToast();
   const detail = useAsyncData<AssetDetailDTO>(() => BrowserService.AssetDetail(assetId));
@@ -450,7 +546,7 @@ function DetailDrawer({
   useEffect(() => {
     void detail.run().catch((e) => toast.fromError(e, "Failed to load asset"));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [assetId]);
+  }, [assetId, reloadNonce]);
 
   // Position within the CURRENTLY LOADED filtered grid list, for keyboard stepping.
   const index = useMemo(() => items.findIndex((it) => it.id === assetId), [items, assetId]);
@@ -1052,4 +1148,450 @@ function hasCameraInfo(d: AssetDetailDTO): boolean {
     d.aperture ||
     (d.gpsLatitude != null && d.gpsLongitude != null)
   );
+}
+
+/* -------------------------------------------------------------------------- */
+/* Folder view                                                                */
+/* -------------------------------------------------------------------------- */
+
+interface MenuItem {
+  label: string;
+  icon: React.ComponentType<{ className?: string }>;
+  onClick: () => void;
+  disabled?: boolean;
+}
+type ContextMenuState = { x: number; y: number; items: MenuItem[] } | null;
+
+/**
+ * ContextMenu — a custom fixed-position menu (the webview has no native context
+ * menus). Closes on click-away and Escape; the first item is focused on open and
+ * ArrowUp/Down move focus, so it is keyboard accessible.
+ */
+function ContextMenu({ state, onClose }: { state: ContextMenuState; onClose: () => void }) {
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!state) return;
+    const onDown = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) onClose();
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    window.addEventListener("mousedown", onDown);
+    window.addEventListener("keydown", onKey, true);
+    const raf = requestAnimationFrame(() => {
+      ref.current?.querySelector<HTMLButtonElement>("button:not([disabled])")?.focus();
+    });
+    return () => {
+      window.removeEventListener("mousedown", onDown);
+      window.removeEventListener("keydown", onKey, true);
+      cancelAnimationFrame(raf);
+    };
+  }, [state, onClose]);
+
+  if (!state) return null;
+
+  // Clamp to the viewport so the menu never spills off-screen.
+  const estHeight = state.items.length * 34 + 8;
+  const top = Math.min(state.y, Math.max(8, window.innerHeight - estHeight));
+  const left = Math.min(state.x, Math.max(8, window.innerWidth - 208));
+
+  const moveFocus = (e: React.KeyboardEvent, dir: number) => {
+    if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return;
+    e.preventDefault();
+    const btns = Array.from(ref.current?.querySelectorAll<HTMLButtonElement>("button:not([disabled])") ?? []);
+    if (btns.length === 0) return;
+    const idx = btns.indexOf(document.activeElement as HTMLButtonElement);
+    const next = (idx + dir + btns.length) % btns.length;
+    btns[next].focus();
+  };
+
+  return (
+    <div
+      ref={ref}
+      role="menu"
+      style={{ position: "fixed", top, left }}
+      onKeyDown={(e) => moveFocus(e, e.key === "ArrowUp" ? -1 : 1)}
+      className="z-50 min-w-[200px] overflow-hidden rounded-lg border border-zinc-700 bg-zinc-900 py-1 shadow-2xl"
+    >
+      {state.items.map((it, i) => (
+        <button
+          key={i}
+          role="menuitem"
+          disabled={it.disabled}
+          onClick={() => {
+            onClose();
+            it.onClick();
+          }}
+          className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-[12px] text-zinc-200 hover:bg-zinc-800 focus:bg-zinc-800 focus:outline-none disabled:cursor-not-allowed disabled:text-zinc-600 disabled:hover:bg-transparent"
+        >
+          <it.icon className="h-4 w-4 flex-none text-zinc-400" />
+          {it.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+const FOLDER_PAGE_SIZE = 90;
+
+/**
+ * FolderView — the archive tree, driven by BrowserService.ListFolder. Breadcrumb
+ * navigation, folder rows (icon, name, count, cover thumb) that drill in, and the
+ * folder's own assets as rows below. A custom right-click menu offers Rename… /
+ * Reveal in Finder on date-event folders and Reveal in Finder on assets.
+ */
+function FolderView({ fit }: { fit: boolean }) {
+  const toast = useToast();
+  const [relDir, setRelDir] = useState("");
+  const [listing, setListing] = useState<FolderListingDTO | null>(null);
+  const [assets, setAssets] = useState<BrowseAssetDTO[]>([]);
+  const [total, setTotal] = useState(0);
+  const [page, setPage] = useState(0);
+  const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [menu, setMenu] = useState<ContextMenuState>(null);
+  const [renameTarget, setRenameTarget] = useState<{ relDir: string; label: string } | null>(null);
+  const [drawerNonce, setDrawerNonce] = useState(0);
+
+  const load = useCallback(
+    async (dir: string, pageNum: number, reset: boolean) => {
+      if (reset) setLoading(true);
+      else setLoadingMore(true);
+      try {
+        const res = await BrowserService.ListFolder(dir, pageNum, FOLDER_PAGE_SIZE);
+        setListing(res);
+        setTotal(res.assets?.total ?? 0);
+        const incoming = res.assets?.items ?? [];
+        setAssets((prev) => (reset ? incoming : [...prev, ...incoming]));
+        setPage(pageNum);
+      } catch (e) {
+        toast.fromError(e, "Failed to load folder");
+      } finally {
+        setLoading(false);
+        setLoadingMore(false);
+      }
+    },
+    [toast],
+  );
+
+  useEffect(() => {
+    void load(relDir, 1, true);
+  }, [relDir, load]);
+
+  const revealAsset = async (id: string) => {
+    try {
+      await BrowserService.RevealAsset(id, "archive");
+    } catch (e) {
+      toast.fromError(e, "Could not reveal in Finder");
+    }
+  };
+  const revealFolder = async (dir: string) => {
+    try {
+      await BrowserService.RevealFolder(dir);
+    } catch (e) {
+      toast.fromError(e, "Could not reveal folder in Finder");
+    }
+  };
+
+  const doRename = async (dir: string, newLabel: string) => {
+    try {
+      await BrowserService.RenameEventFolder(dir, newLabel);
+      toast.success("Folder renamed");
+      setRenameTarget(null);
+      // If we renamed the folder we're currently inside, follow it to its new path;
+      // otherwise just reload the current listing (a subfolder row changed).
+      if (dir === relDir) {
+        const y = dir.slice(0, dir.lastIndexOf("/"));
+        const datePart = dir.slice(dir.lastIndexOf("/") + 1, dir.lastIndexOf("/") + 11);
+        const nb = newLabel.trim() ? `${datePart} ${newLabel.trim()}` : datePart;
+        setRelDir(y ? `${y}/${nb}` : nb);
+      } else {
+        await load(relDir, 1, true);
+      }
+      setDrawerNonce((n) => n + 1); // refresh an open drawer's provenance paths
+    } catch (e) {
+      toast.fromError(e, "Could not rename folder");
+    }
+  };
+
+  const openFolderMenu = (e: React.MouseEvent, entry: FolderEntryDTO) => {
+    e.preventDefault();
+    const items: MenuItem[] = [];
+    if (entry.isDateFolder) {
+      items.push({
+        label: "Rename…",
+        icon: PencilSquareIcon,
+        onClick: () => setRenameTarget({ relDir: entry.relPath, label: labelOfDateFolder(entry.name) }),
+      });
+    }
+    items.push({ label: "Reveal in Finder", icon: FolderOpenIcon, onClick: () => void revealFolder(entry.relPath) });
+    setMenu({ x: e.clientX, y: e.clientY, items });
+  };
+
+  const openAssetMenu = (e: React.MouseEvent, asset: BrowseAssetDTO) => {
+    e.preventDefault();
+    setMenu({
+      x: e.clientX,
+      y: e.clientY,
+      items: [
+        {
+          label: "Reveal in Finder",
+          icon: FolderOpenIcon,
+          disabled: !asset.hasArchiveCopy,
+          onClick: () => void revealAsset(asset.id),
+        },
+      ],
+    });
+  };
+
+  const crumbs = breadcrumbs(relDir);
+  const hasMore = assets.length < total;
+
+  return (
+    <div>
+      {/* Breadcrumbs + (optional) rename of the current date folder. */}
+      <div className="mb-4 flex items-center justify-between gap-3">
+        <nav className="flex flex-wrap items-center gap-1 text-[13px]">
+          {crumbs.map((c, i) => (
+            <span key={c.path} className="flex items-center gap-1">
+              {i > 0 ? <ChevronRightIcon className="h-3.5 w-3.5 text-zinc-600" /> : null}
+              {i === crumbs.length - 1 ? (
+                <span className="font-medium text-zinc-200">{c.label}</span>
+              ) : (
+                <button className="text-blue-400 hover:text-blue-300" onClick={() => setRelDir(c.path)}>
+                  {c.label}
+                </button>
+              )}
+            </span>
+          ))}
+        </nav>
+        {listing?.isDateFolder ? (
+          <Button
+            size="sm"
+            variant="ghost"
+            icon={PencilSquareIcon}
+            onClick={() => setRenameTarget({ relDir, label: listing.label })}
+          >
+            Rename event
+          </Button>
+        ) : null}
+      </div>
+
+      {loading && !listing ? (
+        <LoadingBlock label="Loading folder…" />
+      ) : (
+        <div className="space-y-5">
+          {/* Subfolders */}
+          {(listing?.subfolders ?? []).length > 0 ? (
+            <div className="overflow-hidden rounded-lg border border-zinc-800">
+              {(listing?.subfolders ?? []).map((f) => (
+                <button
+                  key={f.relPath}
+                  onClick={() => setRelDir(f.relPath)}
+                  onContextMenu={(e) => openFolderMenu(e, f)}
+                  className="flex w-full items-center gap-3 border-b border-zinc-800 px-3 py-2 text-left last:border-b-0 hover:bg-zinc-900/60"
+                >
+                  <FolderCover coverId={f.coverAssetId} />
+                  <FolderIcon className="h-4 w-4 flex-none text-zinc-500" />
+                  <span className="min-w-0 flex-1 truncate text-[13px] text-zinc-200">{f.name}</span>
+                  <span className="flex-none text-[11px] text-zinc-500 tabular-nums">
+                    {formatNumber(f.assetCount)} item{f.assetCount === 1 ? "" : "s"}
+                  </span>
+                  <ChevronRightIcon className="h-4 w-4 flex-none text-zinc-600" />
+                </button>
+              ))}
+            </div>
+          ) : null}
+
+          {/* Assets directly in this folder */}
+          {assets.length > 0 ? (
+            <div className="overflow-hidden rounded-lg border border-zinc-800">
+              {assets.map((a) => (
+                <button
+                  key={a.id}
+                  onClick={() => setSelectedId(a.id)}
+                  onContextMenu={(e) => openAssetMenu(e, a)}
+                  className="flex w-full items-center gap-3 border-b border-zinc-800 px-3 py-2 text-left last:border-b-0 hover:bg-zinc-900/60"
+                >
+                  <AssetRowThumb asset={a} fit={fit} />
+                  <span className="min-w-0 flex-1 truncate text-[13px] text-zinc-200">{a.filename}</span>
+                  <div className="flex flex-none items-center gap-2">
+                    {a.isLivePhotoPair ? <StatusBadge status="live" tone="info" label="Live" /> : null}
+                    {a.verificationStatus !== "verified" ? <StatusBadge status={a.verificationStatus} dot /> : null}
+                    <span className="w-24 text-right text-[11px] text-zinc-500 tabular-nums">
+                      {a.captureDate ? formatDateOnly(a.captureDate) : "—"}
+                    </span>
+                  </div>
+                </button>
+              ))}
+            </div>
+          ) : null}
+
+          {(listing?.subfolders ?? []).length === 0 && assets.length === 0 ? (
+            <Card>
+              <EmptyState icon={FolderIcon} title="Empty folder" description="This folder has no archived items." />
+            </Card>
+          ) : null}
+
+          {hasMore ? (
+            <div className="flex justify-center pt-1">
+              <Button variant="secondary" onClick={() => void load(relDir, page + 1, false)} loading={loadingMore}>
+                Load more ({formatNumber(total - assets.length)} remaining)
+              </Button>
+            </div>
+          ) : null}
+        </div>
+      )}
+
+      {selectedId ? (
+        <DetailDrawer
+          assetId={selectedId}
+          items={assets}
+          reloadNonce={drawerNonce}
+          onClose={() => setSelectedId(null)}
+          onNavigate={setSelectedId}
+        />
+      ) : null}
+
+      <ContextMenu state={menu} onClose={() => setMenu(null)} />
+
+      {renameTarget ? (
+        <RenameFolderDialog
+          relDir={renameTarget.relDir}
+          initialLabel={renameTarget.label}
+          onCancel={() => setRenameTarget(null)}
+          onSubmit={(label) => void doRename(renameTarget.relDir, label)}
+        />
+      ) : null}
+    </div>
+  );
+}
+
+/** Small cover thumbnail for a folder row (falls back to nothing on error). */
+function FolderCover({ coverId }: { coverId: string }) {
+  const [errored, setErrored] = useState(false);
+  if (!coverId || errored) {
+    return <div className="h-9 w-9 flex-none rounded bg-zinc-900" />;
+  }
+  return (
+    <img
+      src={`/thumb/${coverId}`}
+      loading="lazy"
+      alt=""
+      onError={() => setErrored(true)}
+      className="h-9 w-9 flex-none rounded object-cover"
+    />
+  );
+}
+
+/** Thumbnail for an asset row. */
+function AssetRowThumb({ asset, fit }: { asset: BrowseAssetDTO; fit: boolean }) {
+  const [errored, setErrored] = useState(false);
+  const isVideo = asset.mediaType === "video";
+  if (errored) {
+    return (
+      <div className="flex h-9 w-9 flex-none items-center justify-center rounded bg-zinc-900">
+        {isVideo ? <FilmIcon className="h-4 w-4 text-zinc-700" /> : <PhotoIcon className="h-4 w-4 text-zinc-700" />}
+      </div>
+    );
+  }
+  return (
+    <img
+      src={`/thumb/${asset.id}`}
+      loading="lazy"
+      alt={asset.filename}
+      onError={() => setErrored(true)}
+      className={`h-9 w-9 flex-none rounded bg-zinc-900 ${fit ? "object-contain" : "object-cover"}`}
+    />
+  );
+}
+
+/**
+ * RenameFolderDialog — a small modal that edits a date-event folder's label.
+ * The date prefix is fixed; only the label after it changes. An empty label
+ * yields a bare YYYY-MM-DD folder.
+ */
+function RenameFolderDialog({
+  relDir,
+  initialLabel,
+  onCancel,
+  onSubmit,
+}: {
+  relDir: string;
+  initialLabel: string;
+  onCancel: () => void;
+  onSubmit: (label: string) => void;
+}) {
+  const [label, setLabel] = useState(initialLabel);
+  const datePart = relDir.slice(relDir.lastIndexOf("/") + 1, relDir.lastIndexOf("/") + 11);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onCancel();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onCancel]);
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+      <div className="absolute inset-0 bg-black/50" onClick={onCancel} />
+      <div className="relative w-full max-w-md rounded-xl border border-zinc-700 bg-zinc-900 p-5 shadow-2xl">
+        <h3 className="text-[15px] font-semibold text-zinc-100">Rename event folder</h3>
+        <p className="mt-1 text-[12px] text-zinc-500">
+          The date stays <span className="font-mono text-zinc-400">{datePart}</span>; only the label changes. This is
+          the sanctioned way to rename — never rename archive folders in Finder.
+        </p>
+        <div className="mt-4">
+          <label className="mb-1 block text-[11px] font-medium text-zinc-500">Label</label>
+          <input
+            autoFocus
+            value={label}
+            onChange={(e) => setLabel(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") onSubmit(label);
+            }}
+            placeholder="Leave empty for a bare date folder"
+            className="w-full rounded-md border border-zinc-700 bg-zinc-950 px-3 py-2 text-[13px] text-zinc-200 outline-none focus:border-blue-500"
+          />
+          <p className="mt-1.5 font-mono text-[11px] text-zinc-600">
+            → {label.trim() ? `${datePart} ${label.trim()}` : datePart}
+          </p>
+        </div>
+        <div className="mt-5 flex justify-end gap-2">
+          <Button size="sm" variant="secondary" onClick={onCancel}>
+            Cancel
+          </Button>
+          <Button size="sm" variant="primary" icon={CheckIcon} onClick={() => onSubmit(label)}>
+            Rename
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+interface Crumb {
+  label: string;
+  path: string;
+}
+/** Builds breadcrumb segments from a root-relative folder path. */
+function breadcrumbs(relDir: string): Crumb[] {
+  const crumbs: Crumb[] = [{ label: "Library", path: "" }];
+  if (!relDir) return crumbs;
+  const parts = relDir.split("/");
+  let acc = "";
+  for (const p of parts) {
+    acc = acc ? `${acc}/${p}` : p;
+    crumbs.push({ label: p, path: acc });
+  }
+  return crumbs;
+}
+
+/** The label portion of a "YYYY-MM-DD Label" folder name (empty for a bare date). */
+function labelOfDateFolder(name: string): string {
+  return name.length > 10 ? name.slice(10).trim() : "";
 }

@@ -7,13 +7,34 @@ import (
 	"log/slog"
 	"os"
 	"os/exec"
+	"path"
+	"path/filepath"
+	"regexp"
+	"strings"
 	"time"
 
+	"github.com/Sam-Lam/PAIM/internal/archive"
 	"github.com/Sam-Lam/PAIM/internal/domain"
 	"github.com/Sam-Lam/PAIM/internal/library"
 	"github.com/Sam-Lam/PAIM/internal/repo"
 	"gorm.io/gorm"
 )
+
+// ErrOperationActive is returned by mutating BrowserService methods (event
+// rename) when any long operation is in flight. Renaming an archive folder while
+// an import/reorganize is moving files under it is unsafe, so it is refused with
+// the same one-active-operation discipline the importer uses.
+var ErrOperationActive = errors.New("services: an operation is in progress; wait for it to finish, then try again")
+
+// dateFolderRe matches a renameable date-event folder relative path:
+// "YYYY/YYYY-MM-DD" optionally followed by " Label" (the label has no slash).
+var dateFolderRe = regexp.MustCompile(`^\d{4}/\d{4}-\d{2}-\d{2}( [^/]+)?$`)
+
+// activitySnapshotter is the minimal view of the activity tracker the browser
+// consults before a mutating folder operation. *ActivityTracker satisfies it.
+type activitySnapshotter interface {
+	Snapshot() []OperationInfo
+}
 
 // Reveal targets for RevealAsset: which of an asset's two files to select in
 // Finder.
@@ -47,7 +68,14 @@ type BrowserService struct {
 	root string
 	// reveal opens a resolved path in Finder; injectable for tests.
 	reveal revealRunner
+	// activity, when set, lets RenameEventFolder refuse while any long operation
+	// is running. Nil (unit tests) means "never busy".
+	activity activitySnapshotter
 }
+
+// SetActivity injects the shared activity tracker so RenameEventFolder can refuse
+// while any long operation is in flight. Called once by main.go.
+func (s *BrowserService) SetActivity(a activitySnapshotter) { s.activity = a }
 
 // Bind wires the BrowserService to an open library's catalog in place.
 func (s *BrowserService) Bind(core *AppCore) {
@@ -109,6 +137,242 @@ func (s *BrowserService) RevealAsset(ctx context.Context, assetID, which string)
 	}
 	s.log.Info("revealed asset in Finder", "assetId", assetID, "which", which)
 	return nil
+}
+
+// FolderEntryDTO is one immediate subdirectory in a folder listing: its display
+// name, full root-relative path (for drilling in), recursive asset count, a
+// representative cover asset id (for a thumbnail), and whether it is a renameable
+// date-event folder.
+type FolderEntryDTO struct {
+	Name         string `json:"name"`
+	RelPath      string `json:"relPath"`
+	AssetCount   int64  `json:"assetCount"`
+	CoverAssetID string `json:"coverAssetId"`
+	IsDateFolder bool   `json:"isDateFolder"`
+}
+
+// FolderListingDTO is one level of the archive tree: the cleaned directory, its
+// immediate subfolders, and the assets sitting directly in it (paged). For a
+// date-event folder it also carries IsDateFolder=true and the current Label so
+// the UI can offer Rename… prefilled.
+type FolderListingDTO struct {
+	RelDir       string                     `json:"relDir"`
+	IsDateFolder bool                       `json:"isDateFolder"`
+	Label        string                     `json:"label"`
+	Subfolders   []FolderEntryDTO           `json:"subfolders"`
+	Assets       PageResult[BrowseAssetDTO] `json:"assets"`
+}
+
+// ListFolder returns one level of the archive tree derived from the catalog
+// (never a filesystem walk): the immediate subfolders of relDir (each with a
+// recursive asset count and cover thumbnail) plus the assets sitting directly in
+// relDir, paged. relDir is a root-relative forward-slash directory; "" lists the
+// year folders at the root. The returned RelDir is the cleaned, breadcrumb-safe
+// path.
+func (s *BrowserService) ListFolder(ctx context.Context, relDir string, page, pageSize int) (FolderListingDTO, error) {
+	if err := s.guard(); err != nil {
+		return FolderListingDTO{}, err
+	}
+	clean, err := cleanRelDir(relDir)
+	if err != nil {
+		return FolderListingDTO{}, err
+	}
+
+	children, err := s.assets.FolderChildren(ctx, clean)
+	if err != nil {
+		return FolderListingDTO{}, err
+	}
+	subs := make([]FolderEntryDTO, 0, len(children))
+	for _, c := range children {
+		relPath := c.Name
+		if clean != "" {
+			relPath = clean + "/" + c.Name
+		}
+		subs = append(subs, FolderEntryDTO{
+			Name:         c.Name,
+			RelPath:      relPath,
+			AssetCount:   c.AssetCount,
+			CoverAssetID: c.CoverAssetID,
+			IsDateFolder: dateFolderRe.MatchString(relPath),
+		})
+	}
+
+	limit, offset := normalizePage(page, pageSize)
+	rows, total, err := s.assets.FolderAssets(ctx, clean, repo.Page{Limit: limit, Offset: offset})
+	if err != nil {
+		return FolderListingDTO{}, err
+	}
+	items := make([]BrowseAssetDTO, 0, len(rows))
+	for _, a := range rows {
+		items = append(items, toBrowseAssetDTO(a))
+	}
+
+	return FolderListingDTO{
+		RelDir:       clean,
+		IsDateFolder: dateFolderRe.MatchString(clean),
+		Label:        folderLabel(clean),
+		Subfolders:   subs,
+		Assets:       PageResult[BrowseAssetDTO]{Items: items, Total: total, Page: page, PageSize: pageSize},
+	}, nil
+}
+
+// RevealFolder reveals an archive folder in Finder (`open -R`). relDir is a
+// root-relative forward-slash directory resolved SERVER-side; the frontend never
+// passes an absolute path. The directory must exist under the library root.
+func (s *BrowserService) RevealFolder(ctx context.Context, relDir string) error {
+	if err := s.guard(); err != nil {
+		return err
+	}
+	clean, err := cleanRelDir(relDir)
+	if err != nil {
+		return err
+	}
+	if clean == "" {
+		return fmt.Errorf("services: reveal folder: empty path")
+	}
+	abs := filepath.Join(s.root, filepath.FromSlash(clean))
+	if info, err := os.Stat(abs); err != nil || !info.IsDir() {
+		return fmt.Errorf("services: reveal folder: %q not found", clean)
+	}
+	reveal := s.reveal
+	if reveal == nil {
+		reveal = revealInFinder
+	}
+	if err := reveal(abs); err != nil {
+		return fmt.Errorf("services: reveal folder %q: %w", clean, err)
+	}
+	s.log.Info("revealed folder in Finder", "relDir", clean)
+	return nil
+}
+
+// RenameEventFolder renames a date-event folder's human label. relDir must be a
+// "YYYY/YYYY-MM-DD*" folder under the library root; the new folder name is the
+// date prefix plus the sanitized newLabel (an empty label yields the bare
+// "YYYY-MM-DD"). It refuses when the target folder already exists, when relDir is
+// not a date folder, when the resolved path would escape the root, and when any
+// long operation is running. It renames the directory on disk, then rewrites the
+// CurrentArchivePath prefix of every contained asset (RAW/ subpaths ride along)
+// in ONE transaction; on a DB failure it best-effort renames the directory back
+// and returns the error. This is the ONLY sanctioned way to rename an archive
+// folder — doing it in Finder would strand the catalog.
+func (s *BrowserService) RenameEventFolder(ctx context.Context, relDir, newLabel string) (FolderListingDTO, error) {
+	if err := s.guard(); err != nil {
+		return FolderListingDTO{}, err
+	}
+	// One-active-operation guard: never rename under a running move.
+	if s.activity != nil && len(s.activity.Snapshot()) > 0 {
+		return FolderListingDTO{}, ErrOperationActive
+	}
+
+	oldRel, err := cleanRelDir(relDir)
+	if err != nil {
+		return FolderListingDTO{}, err
+	}
+	if !dateFolderRe.MatchString(oldRel) {
+		return FolderListingDTO{}, fmt.Errorf("services: rename: %q is not a YYYY/YYYY-MM-DD event folder", oldRel)
+	}
+
+	year, base := path.Split(oldRel)          // "2019/", "2019-06-12 Trip"
+	datePart := base[:10]                      // "2019-06-12" (regex guarantees length)
+	newBase := datePart
+	if label := archive.SanitizeEvent(newLabel); label != "" {
+		newBase = datePart + " " + label
+	}
+	newRel := path.Join(year, newBase) // year already has trailing slash for Join
+
+	// Resolve absolute paths and confirm neither escapes the root.
+	oldAbs := filepath.Join(s.root, filepath.FromSlash(oldRel))
+	newAbs := filepath.Join(s.root, filepath.FromSlash(newRel))
+	if !underRoot(s.root, oldAbs) || !underRoot(s.root, newAbs) {
+		return FolderListingDTO{}, fmt.Errorf("services: rename: resolved path escapes the library root")
+	}
+
+	if newRel == oldRel {
+		// No change requested; return the current listing unchanged.
+		return s.ListFolder(ctx, oldRel, 1, folderRenamePageSize)
+	}
+
+	// The source must exist and be a directory.
+	if info, err := os.Stat(oldAbs); err != nil || !info.IsDir() {
+		return FolderListingDTO{}, fmt.Errorf("services: rename: source folder %q not found", oldRel)
+	}
+	// Refuse if the target already exists (never merge two folders).
+	if _, err := os.Stat(newAbs); err == nil {
+		return FolderListingDTO{}, fmt.Errorf("services: rename: target folder %q already exists", newRel)
+	} else if !os.IsNotExist(err) {
+		return FolderListingDTO{}, fmt.Errorf("services: rename: stat target %q: %w", newRel, err)
+	}
+
+	if err := os.Rename(oldAbs, newAbs); err != nil {
+		return FolderListingDTO{}, fmt.Errorf("services: rename %q -> %q: %w", oldRel, newRel, err)
+	}
+
+	// Rewrite every contained asset's stored path prefix in one transaction.
+	txErr := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		_, err := s.assets.WithTx(tx).UpdateArchivePathPrefix(ctx, oldRel, newRel)
+		return err
+	})
+	if txErr != nil {
+		// Roll the directory back so disk and catalog stay consistent.
+		if rbErr := os.Rename(newAbs, oldAbs); rbErr != nil {
+			s.log.Error("rename: DB update failed AND rename-back failed (manual repair needed)",
+				"from", oldRel, "to", newRel, "dbError", txErr.Error(), "rollbackError", rbErr.Error())
+			return FolderListingDTO{}, fmt.Errorf("services: rename %q: db update failed (%v) and rollback failed (%v)", oldRel, txErr, rbErr)
+		}
+		s.log.Warn("rename: DB update failed, rolled directory back", "from", oldRel, "to", newRel, "error", txErr.Error())
+		return FolderListingDTO{}, fmt.Errorf("services: rename %q: db update failed, rolled back: %w", oldRel, txErr)
+	}
+
+	s.log.Info("renamed event folder", "from", oldRel, "to", newRel)
+	return s.ListFolder(ctx, newRel, 1, folderRenamePageSize)
+}
+
+// folderRenamePageSize is the first-page size the rename/no-op paths use when
+// returning the refreshed listing.
+const folderRenamePageSize = 60
+
+// cleanRelDir normalizes a caller-supplied relative directory to a
+// forward-slash, root-relative, breadcrumb-safe path, rejecting any attempt to
+// escape the root. "" and "." both normalize to "" (the library root).
+func cleanRelDir(rel string) (string, error) {
+	rel = strings.TrimSpace(filepath.ToSlash(rel))
+	rel = strings.Trim(rel, "/")
+	if rel == "" || rel == "." {
+		return "", nil
+	}
+	cleaned := path.Clean(rel)
+	if cleaned == "." {
+		return "", nil
+	}
+	if cleaned == ".." || strings.HasPrefix(cleaned, "../") || strings.Contains(cleaned, "/../") {
+		return "", fmt.Errorf("services: invalid folder path %q", rel)
+	}
+	return cleaned, nil
+}
+
+// folderLabel returns the human label of a date-event folder relDir (the text
+// after "YYYY-MM-DD "), or "" for a bare date folder or a non-date folder.
+func folderLabel(relDir string) string {
+	if !dateFolderRe.MatchString(relDir) {
+		return ""
+	}
+	base := path.Base(relDir)
+	if len(base) > 10 {
+		return strings.TrimSpace(base[10:])
+	}
+	return ""
+}
+
+// underRoot reports whether abs is root itself or lies within it.
+func underRoot(root, abs string) bool {
+	if root == "" {
+		return true // dev escape hatch (absolute paths, no root)
+	}
+	rel, err := filepath.Rel(root, abs)
+	if err != nil {
+		return false
+	}
+	return rel == "." || (rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)))
 }
 
 // BrowseFilters are the browser grid's optional filters. Empty strings mean "no

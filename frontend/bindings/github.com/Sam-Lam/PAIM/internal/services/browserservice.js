@@ -57,13 +57,52 @@ export function ListAssets(filters, page, pageSize) {
 }
 
 /**
+ * ListFolder returns one level of the archive tree derived from the catalog
+ * (never a filesystem walk): the immediate subfolders of relDir (each with a
+ * recursive asset count and cover thumbnail) plus the assets sitting directly in
+ * relDir, paged. relDir is a root-relative forward-slash directory; "" lists the
+ * year folders at the root. The returned RelDir is the cleaned, breadcrumb-safe
+ * path.
+ * @param {string} relDir
+ * @param {number} page
+ * @param {number} pageSize
+ * @returns {$CancellablePromise<$models.FolderListingDTO>}
+ */
+export function ListFolder(relDir, page, pageSize) {
+    return $Call.ByID(3269834490, relDir, page, pageSize).then(/** @type {($result: any) => any} */(($result) => {
+        return $$createType3($result);
+    }));
+}
+
+/**
  * Months returns distinct capture months with counts (newest first) for the
  * filter dropdown and grid section headers.
  * @returns {$CancellablePromise<$models.MonthCountDTO[]>}
  */
 export function Months() {
     return $Call.ByID(1742568889).then(/** @type {($result: any) => any} */(($result) => {
-        return $$createType4($result);
+        return $$createType5($result);
+    }));
+}
+
+/**
+ * RenameEventFolder renames a date-event folder's human label. relDir must be a
+ * "YYYY/YYYY-MM-DD*" folder under the library root; the new folder name is the
+ * date prefix plus the sanitized newLabel (an empty label yields the bare
+ * "YYYY-MM-DD"). It refuses when the target folder already exists, when relDir is
+ * not a date folder, when the resolved path would escape the root, and when any
+ * long operation is running. It renames the directory on disk, then rewrites the
+ * CurrentArchivePath prefix of every contained asset (RAW/ subpaths ride along)
+ * in ONE transaction; on a DB failure it best-effort renames the directory back
+ * and returns the error. This is the ONLY sanctioned way to rename an archive
+ * folder — doing it in Finder would strand the catalog.
+ * @param {string} relDir
+ * @param {string} newLabel
+ * @returns {$CancellablePromise<$models.FolderListingDTO>}
+ */
+export function RenameEventFolder(relDir, newLabel) {
+    return $Call.ByID(1543151500, relDir, newLabel).then(/** @type {($result: any) => any} */(($result) => {
+        return $$createType3($result);
     }));
 }
 
@@ -84,6 +123,27 @@ export function RevealAsset(assetID, which) {
 }
 
 /**
+ * RevealFolder reveals an archive folder in Finder (`open -R`). relDir is a
+ * root-relative forward-slash directory resolved SERVER-side; the frontend never
+ * passes an absolute path. The directory must exist under the library root.
+ * @param {string} relDir
+ * @returns {$CancellablePromise<void>}
+ */
+export function RevealFolder(relDir) {
+    return $Call.ByID(1662728479, relDir);
+}
+
+/**
+ * SetActivity injects the shared activity tracker so RenameEventFolder can refuse
+ * while any long operation is in flight. Called once by main.go.
+ * @param {$models.activitySnapshotter} a
+ * @returns {$CancellablePromise<void>}
+ */
+export function SetActivity(a) {
+    return $Call.ByID(2613221987, a);
+}
+
+/**
  * SetGate injects the shared library gate. Called once by main.go after
  * construction; never called in unit tests (leaving the service ungated).
  * @param {$models.LibraryGate | null} gate
@@ -97,5 +157,6 @@ export function SetGate(gate) {
 const $$createType0 = $models.AssetDetailDTO.createFrom;
 const $$createType1 = $models.BrowseAssetDTO.createFrom;
 const $$createType2 = $models.PageResult.createFrom($$createType1);
-const $$createType3 = $models.MonthCountDTO.createFrom;
-const $$createType4 = $Create.Array($$createType3);
+const $$createType3 = $models.FolderListingDTO.createFrom;
+const $$createType4 = $models.MonthCountDTO.createFrom;
+const $$createType5 = $Create.Array($$createType4);

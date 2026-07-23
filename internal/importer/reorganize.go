@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Sam-Lam/PAIM/internal/archive"
 	"github.com/Sam-Lam/PAIM/internal/domain"
 	"github.com/Sam-Lam/PAIM/internal/library"
 	"github.com/Sam-Lam/PAIM/internal/mediatype"
@@ -46,8 +47,17 @@ const (
 // folder segment applied to the standard layout (default empty → date-only
 // YYYY-MM-DD folders); it lets the caller reorganize into
 // YYYY/YYYY-MM-DD Event/ when desired.
+//
+// UseSourceFolderLabels turns on "labels survive reorganize": when EventName is
+// empty, each file's label is derived from its CURRENT parent folder name (via
+// archive.DeriveLabel, which strips generic camera dirs, pure dates, and year
+// folders, and keeps only the label part of a "YYYY-MM-DD Label" folder). A
+// non-empty EventName always wins and targets "YYYY-MM-DD EventName" exactly.
+// It defaults to false at the engine layer so existing callers/tests are
+// unaffected; the service UI defaults it ON.
 type ReorganizeOptions struct {
-	EventName string
+	EventName             string
+	UseSourceFolderLabels bool
 }
 
 // ReorganizeEntry is one asset's disposition in a reorganize plan. From and To
@@ -94,6 +104,10 @@ func (p *Pipeline) PlanReorganize(ctx context.Context, opts ReorganizeOptions, p
 		return nil, fmt.Errorf("reorganize: list assets: %w", err)
 	}
 	lay := p.effectiveLayout(p.libraryRoot)
+	// One sticky-date-folder resolver for the whole plan: an empty (or derived-
+	// empty) event may join a single existing "YYYY-MM-DD*" folder, cached per
+	// (year,date) so the plan is deterministic.
+	res := archive.NewDestinationResolver(lay)
 	plan := &ReorganizePlan{EventName: opts.EventName, Entries: make([]ReorganizeEntry, 0, len(assets))}
 
 	total := len(assets)
@@ -148,7 +162,16 @@ func (p *Pipeline) PlanReorganize(ctx context.Context, opts ReorganizeOptions, p
 			date = *a.CaptureDate
 		}
 		kind := mediatype.KindOf(a.OriginalExtension)
-		rawDest := filepath.Join(lay.MasterRoot, lay.DestinationFor(date, opts.EventName, base, kind))
+
+		// Resolve the event label. An explicit EventName always wins; otherwise, if
+		// labels are enabled, derive one from the file's current parent folder name.
+		// An excluded/empty derivation leaves the event empty so the sticky resolver
+		// (or a bare date folder) governs the destination.
+		event := opts.EventName
+		if event == "" && opts.UseSourceFolderLabels {
+			event = archive.DeriveLabel(filepath.Base(filepath.Dir(currentAbs)))
+		}
+		rawDest := filepath.Join(res.MasterRoot(), res.DestinationFor(date, event, base, kind))
 
 		if rawDest == currentAbs {
 			entry.Kind = MoveInPlace

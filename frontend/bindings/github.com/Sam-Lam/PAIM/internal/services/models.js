@@ -2361,6 +2361,138 @@ export class DuplicateProgress {
 }
 
 /**
+ * FolderEntryDTO is one immediate subdirectory in a folder listing: its display
+ * name, full root-relative path (for drilling in), recursive asset count, a
+ * representative cover asset id (for a thumbnail), and whether it is a renameable
+ * date-event folder.
+ */
+export class FolderEntryDTO {
+    /**
+     * Creates a new FolderEntryDTO instance.
+     * @param {Partial<FolderEntryDTO>} [$$source = {}] - The source object to create the FolderEntryDTO.
+     */
+    constructor($$source = {}) {
+        if (!("name" in $$source)) {
+            /**
+             * @member
+             * @type {string}
+             */
+            this["name"] = "";
+        }
+        if (!("relPath" in $$source)) {
+            /**
+             * @member
+             * @type {string}
+             */
+            this["relPath"] = "";
+        }
+        if (!("assetCount" in $$source)) {
+            /**
+             * @member
+             * @type {number}
+             */
+            this["assetCount"] = 0;
+        }
+        if (!("coverAssetId" in $$source)) {
+            /**
+             * @member
+             * @type {string}
+             */
+            this["coverAssetId"] = "";
+        }
+        if (!("isDateFolder" in $$source)) {
+            /**
+             * @member
+             * @type {boolean}
+             */
+            this["isDateFolder"] = false;
+        }
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new FolderEntryDTO instance from a string or object.
+     * @param {any} [$$source = {}]
+     * @returns {FolderEntryDTO}
+     */
+    static createFrom($$source = {}) {
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        return new FolderEntryDTO(/** @type {Partial<FolderEntryDTO>} */($$parsedSource));
+    }
+}
+
+/**
+ * FolderListingDTO is one level of the archive tree: the cleaned directory, its
+ * immediate subfolders, and the assets sitting directly in it (paged). For a
+ * date-event folder it also carries IsDateFolder=true and the current Label so
+ * the UI can offer Rename… prefilled.
+ */
+export class FolderListingDTO {
+    /**
+     * Creates a new FolderListingDTO instance.
+     * @param {Partial<FolderListingDTO>} [$$source = {}] - The source object to create the FolderListingDTO.
+     */
+    constructor($$source = {}) {
+        if (!("relDir" in $$source)) {
+            /**
+             * @member
+             * @type {string}
+             */
+            this["relDir"] = "";
+        }
+        if (!("isDateFolder" in $$source)) {
+            /**
+             * @member
+             * @type {boolean}
+             */
+            this["isDateFolder"] = false;
+        }
+        if (!("label" in $$source)) {
+            /**
+             * @member
+             * @type {string}
+             */
+            this["label"] = "";
+        }
+        if (!("subfolders" in $$source)) {
+            /**
+             * @member
+             * @type {FolderEntryDTO[]}
+             */
+            this["subfolders"] = [];
+        }
+        if (!("assets" in $$source)) {
+            /**
+             * @member
+             * @type {PageResult<BrowseAssetDTO>}
+             */
+            this["assets"] = (new PageResult());
+        }
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new FolderListingDTO instance from a string or object.
+     * @param {any} [$$source = {}]
+     * @returns {FolderListingDTO}
+     */
+    static createFrom($$source = {}) {
+        const $$createField3_0 = $$createType61;
+        const $$createField4_0 = $$createType63;
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        if ("subfolders" in $$parsedSource) {
+            $$parsedSource["subfolders"] = $$createField3_0($$parsedSource["subfolders"]);
+        }
+        if ("assets" in $$parsedSource) {
+            $$parsedSource["assets"] = $$createField4_0($$parsedSource["assets"]);
+        }
+        return new FolderListingDTO(/** @type {Partial<FolderListingDTO>} */($$parsedSource));
+    }
+}
+
+/**
  * ImportCompleted is the payload for import:completed, emitted once when a
  * background import goroutine finishes (successfully, cancelled, or interrupted).
  */
@@ -3037,8 +3169,8 @@ export class OpenResultDTO {
      * @returns {OpenResultDTO}
      */
     static createFrom($$source = {}) {
-        const $$createField1_0 = $$createType61;
-        const $$createField2_0 = $$createType63;
+        const $$createField1_0 = $$createType65;
+        const $$createField2_0 = $$createType67;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("library" in $$parsedSource) {
             $$parsedSource["library"] = $$createField1_0($$parsedSource["library"]);
@@ -3173,7 +3305,7 @@ export class PageResult {
      * @returns {($$source?: any) => PageResult<T>}
      */
     static createFrom($$createParamT) {
-        const $$createField0_0 = $$createType64($$createParamT);
+        const $$createField0_0 = $$createType68($$createParamT);
         return ($$source = {}) => {
             let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
             if ("items" in $$parsedSource) {
@@ -3397,7 +3529,7 @@ export class QuitRequested {
      * @returns {QuitRequested}
      */
     static createFrom($$source = {}) {
-        const $$createField0_0 = $$createType66;
+        const $$createField0_0 = $$createType70;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("operations" in $$parsedSource) {
             $$parsedSource["operations"] = $$createField0_0($$parsedSource["operations"]);
@@ -3697,8 +3829,8 @@ export class ReorganizePlanDTO {
      * @returns {ReorganizePlanDTO}
      */
     static createFrom($$source = {}) {
-        const $$createField6_0 = $$createType68;
-        const $$createField7_0 = $$createType70;
+        const $$createField6_0 = $$createType72;
+        const $$createField7_0 = $$createType74;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("movesSample" in $$parsedSource) {
             $$parsedSource["movesSample"] = $$createField6_0($$parsedSource["movesSample"]);
@@ -4189,7 +4321,7 @@ export class SessionDetail {
      * @returns {SessionDetail}
      */
     static createFrom($$source = {}) {
-        const $$createField0_0 = $$createType71;
+        const $$createField0_0 = $$createType75;
         const $$createField1_0 = $$createType58;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("session" in $$parsedSource) {
@@ -5456,6 +5588,12 @@ export class WarmupStatusDTO {
     }
 }
 
+/**
+ * activitySnapshotter is the minimal view of the activity tracker the browser
+ * consults before a mutating folder operation. *ActivityTracker satisfies it.
+ * @typedef {any} activitySnapshotter
+ */
+
 // Private type creation functions
 const $$createType0 = ImportOptions.createFrom;
 const $$createType1 = ImportProgress.createFrom;
@@ -5517,15 +5655,19 @@ const $$createType56 = $Create.Array($$createType55);
 const $$createType57 = LogEntryDTO.createFrom;
 const $$createType58 = $Create.Array($$createType57);
 const $$createType59 = AssetDTO.createFrom;
-const $$createType60 = CurrentLibraryDTO.createFrom;
-const $$createType61 = $Create.Nullable($$createType60);
-const $$createType62 = LockConflictDTO.createFrom;
-const $$createType63 = $Create.Nullable($$createType62);
-const $$createType64 = /** @type {(...args: any[]) => any} */(($$createParamT) => $Create.Array($$createParamT));
-const $$createType65 = OperationInfo.createFrom;
-const $$createType66 = $Create.Array($$createType65);
-const $$createType67 = ReorganizeMoveDTO.createFrom;
-const $$createType68 = $Create.Array($$createType67);
-const $$createType69 = ReorganizeSkipDTO.createFrom;
+const $$createType60 = FolderEntryDTO.createFrom;
+const $$createType61 = $Create.Array($$createType60);
+const $$createType62 = BrowseAssetDTO.createFrom;
+const $$createType63 = PageResult.createFrom($$createType62);
+const $$createType64 = CurrentLibraryDTO.createFrom;
+const $$createType65 = $Create.Nullable($$createType64);
+const $$createType66 = LockConflictDTO.createFrom;
+const $$createType67 = $Create.Nullable($$createType66);
+const $$createType68 = /** @type {(...args: any[]) => any} */(($$createParamT) => $Create.Array($$createParamT));
+const $$createType69 = OperationInfo.createFrom;
 const $$createType70 = $Create.Array($$createType69);
-const $$createType71 = SessionDTO.createFrom;
+const $$createType71 = ReorganizeMoveDTO.createFrom;
+const $$createType72 = $Create.Array($$createType71);
+const $$createType73 = ReorganizeSkipDTO.createFrom;
+const $$createType74 = $Create.Array($$createType73);
+const $$createType75 = SessionDTO.createFrom;

@@ -273,7 +273,7 @@ function Recommendation({ report }: { report: CleanupReportDTO }) {
             <div className="mt-3">
               <p className="mb-1 text-[11px] font-medium text-amber-300/80">Reasons</p>
               <ul className="space-y-1">
-                {rec.reasons.map((r, i) => (
+                {(rec.reasons ?? []).map((r, i) => (
                   <li key={i} className="flex items-start gap-2 text-[12px] text-amber-100/90">
                     <span className="mt-1.5 h-1.5 w-1.5 flex-none rounded-full bg-amber-400" />
                     <span>{r}</span>

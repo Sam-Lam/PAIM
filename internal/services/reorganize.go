@@ -43,9 +43,12 @@ type ReorganizePlanDTO struct {
 // PlanReorganize computes a non-mutating reorganize preview from the catalog and
 // caches it so a subsequent StartReorganize reuses the exact plan. eventName is
 // the (optional) event folder segment applied to the standard layout; empty
-// yields date-only YYYY-MM-DD folders. The returned DTO caps its move/skip
-// sample at reorgDisplayCap while the counts reflect the full plan.
-func (s *ImportService) PlanReorganize(ctx context.Context, eventName string) (*ReorganizePlanDTO, error) {
+// yields date-only YYYY-MM-DD folders (subject to the labels/sticky rules).
+// useSourceFolderLabels turns on "labels survive reorganize": when eventName is
+// empty, each file's label is derived from its current parent folder name. The
+// returned DTO caps its move/skip sample at reorgDisplayCap while the counts
+// reflect the full plan.
+func (s *ImportService) PlanReorganize(ctx context.Context, eventName string, useSourceFolderLabels bool) (*ReorganizePlanDTO, error) {
 	if err := s.guard(); err != nil {
 		return nil, err
 	}
@@ -60,7 +63,10 @@ func (s *ImportService) PlanReorganize(ctx context.Context, eventName string) (*
 			emitSafe(s.emitter, EventReorganizePlan, ReorganizePlanProgress{Done: done, Total: total})
 		}
 	}
-	plan, err := s.pipeline.PlanReorganize(ctx, importer.ReorganizeOptions{EventName: eventName}, progressFn)
+	plan, err := s.pipeline.PlanReorganize(ctx, importer.ReorganizeOptions{
+		EventName:             eventName,
+		UseSourceFolderLabels: useSourceFolderLabels,
+	}, progressFn)
 	if err != nil {
 		return nil, err
 	}
@@ -69,6 +75,7 @@ func (s *ImportService) PlanReorganize(ctx context.Context, eventName string) (*
 	s.reorgPlan = plan
 	s.reorgPlanAt = time.Now()
 	s.reorgEvent = eventName
+	s.reorgLabels = useSourceFolderLabels
 	s.mu.Unlock()
 
 	return reorganizePlanDTO(plan), nil
@@ -130,12 +137,16 @@ func (s *ImportService) StartReorganize(ctx context.Context) (StartImportResult,
 	s.opKind = "reorganize"
 	plan := s.reorgPlan
 	event := s.reorgEvent
+	labels := s.reorgLabels
 	fresh := plan != nil && time.Since(s.reorgPlanAt) < reorgPlanTTL
 	s.mu.Unlock()
 
 	if !fresh {
-		// Recompute from the catalog with the last-previewed event (or empty).
-		recomputed, err := s.pipeline.PlanReorganize(ctx, importer.ReorganizeOptions{EventName: event}, nil)
+		// Recompute from the catalog with the last-previewed event/labels (or empty).
+		recomputed, err := s.pipeline.PlanReorganize(ctx, importer.ReorganizeOptions{
+			EventName:             event,
+			UseSourceFolderLabels: labels,
+		}, nil)
 		if err != nil {
 			s.mu.Lock()
 			s.active = false

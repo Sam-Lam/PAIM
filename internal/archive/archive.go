@@ -83,6 +83,11 @@ func (l *Layout) DestinationFor(captureDate time.Time, eventName, filename strin
 	return filepath.Join(parts...)
 }
 
+// SanitizeEvent exposes the event-name sanitizer so callers outside the package
+// (e.g. the in-app event-folder rename) can compute the exact same safe,
+// single-component label the layout uses.
+func SanitizeEvent(event string) string { return sanitizeEvent(event) }
+
 // sanitizeEvent makes a user-supplied event name safe to use as a single path
 // component. It removes path separators (so the event cannot introduce extra
 // directory levels or escape the day folder) and control characters, then

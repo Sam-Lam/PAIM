@@ -185,9 +185,11 @@ func sameVolume(srcPath, destDir string) (bool, error) {
 }
 
 // computeDestination returns the absolute destination path for fi given a
-// capture date, event name and layout. RAW files are routed into the RAW/
-// subfolder by the layout.
-func computeDestination(lay *archive.Layout, captureDate time.Time, event string, fi FileInfo) string {
-	rel := lay.DestinationFor(captureDate, event, filepath.Base(fi.Path), fi.Kind)
-	return filepath.Join(lay.MasterRoot, rel)
+// capture date, event name and a destination resolver. RAW files are routed into
+// the RAW/ subfolder by the layout. The resolver applies the sticky-date-folder
+// rule (see archive.DestinationResolver) so an empty event may join a single
+// existing "YYYY-MM-DD*" folder instead of creating a bare date sibling.
+func computeDestination(res *archive.DestinationResolver, captureDate time.Time, event string, fi FileInfo) string {
+	rel := res.DestinationFor(captureDate, event, filepath.Base(fi.Path), fi.Kind)
+	return filepath.Join(res.MasterRoot(), rel)
 }

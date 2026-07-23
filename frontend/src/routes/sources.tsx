@@ -128,7 +128,7 @@ export function SourcesPage() {
             </Card>
           ) : (
             <div className="grid gap-3 lg:grid-cols-2">
-              {volumes.data.map((v) => (
+              {(volumes.data ?? []).map((v) => (
                 <VolumeCard
                   key={v.mountPoint}
                   volume={v}
@@ -242,7 +242,7 @@ function VolumeCard({
 
           {volume.warnings && volume.warnings.length > 0 ? (
             <ul className="mt-2 space-y-0.5">
-              {volume.warnings.map((w, i) => (
+              {(volume.warnings ?? []).map((w, i) => (
                 <li key={i} className="flex items-center gap-1 text-[11px] text-amber-400/90">
                   <ExclamationTriangleIcon className="h-3.5 w-3.5 flex-none" />
                   {w}
@@ -377,7 +377,7 @@ function MatchPanel({ match }: { match: MatchDTO }) {
         <div>
           <p className="mb-1 text-[11px] font-medium text-zinc-500">Why</p>
           <ul className="space-y-1">
-            {match.reasons.map((r, i) => (
+            {(match.reasons ?? []).map((r, i) => (
               <li key={i} className="flex items-start gap-2 text-[12px] text-zinc-300">
                 <CheckBadgeIcon className="mt-0.5 h-3.5 w-3.5 flex-none text-blue-400" />
                 <span>{r}</span>

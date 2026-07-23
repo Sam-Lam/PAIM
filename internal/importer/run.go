@@ -94,6 +94,9 @@ func (p *Pipeline) Run(ctx context.Context, opts Options, progressFn ProgressFun
 // completed scan. It is shared by Run and ResumeSession.
 func (p *Pipeline) runImport(ctx context.Context, session *domain.ImportSession, scan *ScanResult, opts Options, state *sessionState, progressFn ProgressFunc) (*domain.ImportSession, error) {
 	lay := p.effectiveLayout(opts.DestinationRoot)
+	// One sticky-date-folder resolver per run: an empty event may join a single
+	// existing "YYYY-MM-DD*" folder, cached per (year,date) for determinism.
+	res := archive.NewDestinationResolver(lay)
 
 	// Metadata for every file, batched with progress. ContentIdentifier feeds
 	// pairing; capture dates feed the layout. Degrades gracefully per chunk.
@@ -127,7 +130,7 @@ func (p *Pipeline) runImport(ctx context.Context, session *domain.ImportSession,
 			Errors:      errorCount,
 		})
 
-		outcome := p.processFile(ctx, session.ID, fi, opts, lay, quick[fi.Path], full[fi.Path], metaByPath[fi.Path], state, &bytesDone)
+		outcome := p.processFile(ctx, session.ID, fi, opts, res, quick[fi.Path], full[fi.Path], metaByPath[fi.Path], state, &bytesDone)
 		if outcome.abort {
 			p.finishSession(session.ID, domain.SessionStatusInterrupted, state)
 			p.log.Error("import aborted", "sessionId", session.ID, "error", outcome.abortErr.Error())
@@ -178,7 +181,7 @@ type fileOutcome struct {
 // failure increments the session Failures counter, logs, and returns
 // failed=true; unrecoverable destination conditions (disk full, destination root
 // gone) return abort=true.
-func (p *Pipeline) processFile(ctx context.Context, sessionID string, fi FileInfo, opts Options, lay *archive.Layout, quickHash, fullHash string, meta *metadata.AssetMetadata, state *sessionState, bytesDone *int64) fileOutcome {
+func (p *Pipeline) processFile(ctx context.Context, sessionID string, fi FileInfo, opts Options, res *archive.DestinationResolver, quickHash, fullHash string, meta *metadata.AssetMetadata, state *sessionState, bytesDone *int64) fileOutcome {
 	// Source may have vanished (e.g. the drive was pulled).
 	if _, err := statSize(fi.Path); err != nil {
 		return p.fail(ctx, sessionID, fi.Path, "stat", err)
@@ -197,18 +200,18 @@ func (p *Pipeline) processFile(ctx context.Context, sessionID string, fi FileInf
 		p.log.Debug("skip already-imported file", "path", fi.Path, "assetId", cls.MatchedAssetID)
 		return fileOutcome{}
 	case DispositionDuplicate:
-		return p.recordDuplicate(ctx, sessionID, fi, opts, lay, cls, meta, state, bytesDone)
+		return p.recordDuplicate(ctx, sessionID, fi, opts, res, cls, meta, state, bytesDone)
 	default:
 		if opts.mode() == ModeAdopt {
-			return p.adoptFile(ctx, sessionID, fi, opts, lay, cls, meta, state, false, bytesDone)
+			return p.adoptFile(ctx, sessionID, fi, opts, res, cls, meta, state, false, bytesDone)
 		}
-		return p.copyFile(ctx, sessionID, fi, opts, lay, cls, meta, bytesDone)
+		return p.copyFile(ctx, sessionID, fi, opts, res, cls, meta, bytesDone)
 	}
 }
 
 // copyFile implements the copy-mode verification & copy protocol for one new
 // file.
-func (p *Pipeline) copyFile(ctx context.Context, sessionID string, fi FileInfo, opts Options, lay *archive.Layout, cls classification, meta *metadata.AssetMetadata, bytesDone *int64) fileOutcome {
+func (p *Pipeline) copyFile(ctx context.Context, sessionID string, fi FileInfo, opts Options, res *archive.DestinationResolver, cls classification, meta *metadata.AssetMetadata, bytesDone *int64) fileOutcome {
 	// Guard: destination root must exist before we attempt any copy.
 	if opts.DestinationRoot != "" {
 		if _, err := os.Stat(opts.DestinationRoot); err != nil {
@@ -220,7 +223,7 @@ func (p *Pipeline) copyFile(ctx context.Context, sessionID string, fi FileInfo, 
 	if fromMtime {
 		p.log.Info("capture date from file mtime (no EXIF)", "path", fi.Path, "date", captureDate.Format(time.RFC3339))
 	}
-	destPath := computeDestination(lay, captureDate, opts.EventName, fi)
+	destPath := computeDestination(res, captureDate, opts.EventName, fi)
 	destDir := filepath.Dir(destPath)
 
 	partialPath, err := p.copyToPartial(ctx, fi.Path, destDir, func(n int64) {
@@ -283,7 +286,7 @@ func (p *Pipeline) copyFile(ctx context.Context, sessionID string, fi FileInfo, 
 // adoptFile registers an existing file in place (optionally reorganizing it via
 // same-volume rename), computing a full BLAKE3 integrity baseline. duplicate
 // indicates the file is a flagged in-library duplicate (still registered).
-func (p *Pipeline) adoptFile(ctx context.Context, sessionID string, fi FileInfo, opts Options, lay *archive.Layout, cls classification, meta *metadata.AssetMetadata, state *sessionState, duplicate bool, bytesDone *int64) fileOutcome {
+func (p *Pipeline) adoptFile(ctx context.Context, sessionID string, fi FileInfo, opts Options, res *archive.DestinationResolver, cls classification, meta *metadata.AssetMetadata, state *sessionState, duplicate bool, bytesDone *int64) fileOutcome {
 	// Full BLAKE3 is the in-place verification baseline. cls.FullHash is already
 	// set when the dry run full-hashed this file (collision/intra-batch candidate)
 	// and the reuse gate accepted it — that reuse saves re-reading the whole file.
@@ -305,7 +308,7 @@ func (p *Pipeline) adoptFile(ctx context.Context, sessionID string, fi FileInfo,
 		if fromMtime {
 			p.log.Info("capture date from file mtime (no EXIF)", "path", fi.Path)
 		}
-		destPath := computeDestination(lay, captureDate, opts.EventName, fi)
+		destPath := computeDestination(res, captureDate, opts.EventName, fi)
 		if destPath != fi.Path {
 			moved, newPath, err := p.reorganizeInPlace(ctx, fi.Path, destPath, cls.QuickHash, state)
 			if err != nil {
@@ -393,9 +396,9 @@ func (p *Pipeline) reorganizeInPlace(ctx context.Context, src, destPath, srcQuic
 // recordDuplicate records a content duplicate. In copy mode the bytes are NOT
 // copied: a placeholder Asset with DuplicateOfAssetID and an empty archive path
 // is inserted. In adopt mode the in-place file is registered and flagged.
-func (p *Pipeline) recordDuplicate(ctx context.Context, sessionID string, fi FileInfo, opts Options, lay *archive.Layout, cls classification, meta *metadata.AssetMetadata, state *sessionState, bytesDone *int64) fileOutcome {
+func (p *Pipeline) recordDuplicate(ctx context.Context, sessionID string, fi FileInfo, opts Options, res *archive.DestinationResolver, cls classification, meta *metadata.AssetMetadata, state *sessionState, bytesDone *int64) fileOutcome {
 	if opts.mode() == ModeAdopt {
-		return p.adoptFile(ctx, sessionID, fi, opts, lay, cls, meta, state, true, bytesDone)
+		return p.adoptFile(ctx, sessionID, fi, opts, res, cls, meta, state, true, bytesDone)
 	}
 	captureDate, _ := effectiveCaptureDate(meta, fi)
 	dupOf := cls.MatchedAssetID

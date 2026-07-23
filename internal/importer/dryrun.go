@@ -94,6 +94,7 @@ func (p *Pipeline) DryRun(ctx context.Context, scan *ScanResult, opts Options, p
 	}
 
 	lay := p.effectiveLayout(opts.DestinationRoot)
+	res := archive.NewDestinationResolver(lay)
 
 	for i, fi := range scan.Files {
 		if err := ctx.Err(); err != nil {
@@ -136,7 +137,7 @@ func (p *Pipeline) DryRun(ctx context.Context, scan *ScanResult, opts Options, p
 					// mtime (real capture date needs a metadata pass, done at import
 					// time). This can occasionally mis-predict a move across a
 					// midnight boundary but keeps the dry run cheap.
-					dest := computeDestination(lay, time.Unix(fi.ModTime, 0), opts.EventName, fi)
+					dest := computeDestination(res, time.Unix(fi.ModTime, 0), opts.EventName, fi)
 					if dest != fi.Path {
 						report.PlannedMoves++
 					}
@@ -157,7 +158,7 @@ func (p *Pipeline) DryRun(ctx context.Context, scan *ScanResult, opts Options, p
 	// entirely within this batch (the assets do not exist yet). Predict them the
 	// way the import will actually record them: the first occurrence of a repeated
 	// content imports, later occurrences become duplicate rows.
-	p.predictIntraBatchDuplicates(ctx, scan, opts, lay, quick, report)
+	p.predictIntraBatchDuplicates(ctx, scan, opts, res, quick, report)
 
 	multiplier := 3.0
 	if opts.mode() == ModeAdopt {
@@ -181,7 +182,7 @@ func (p *Pipeline) DryRun(ctx context.Context, scan *ScanResult, opts Options, p
 // first occurrence in scan order stays New (it imports); every subsequent
 // full-hash match becomes a Duplicate, with the counters and byte/adopt tallies
 // adjusted to match what the import will record.
-func (p *Pipeline) predictIntraBatchDuplicates(ctx context.Context, scan *ScanResult, opts Options, lay *archive.Layout, quick map[string]string, report *DryRunReport) {
+func (p *Pipeline) predictIntraBatchDuplicates(ctx context.Context, scan *ScanResult, opts Options, res *archive.DestinationResolver, quick map[string]string, report *DryRunReport) {
 	// Group the New-classified files by quick hash, preserving scan order so the
 	// "first occurrence imports" rule is deterministic.
 	byQuick := make(map[string][]FileInfo)
@@ -228,7 +229,7 @@ func (p *Pipeline) predictIntraBatchDuplicates(ctx context.Context, scan *ScanRe
 			if opts.mode() == ModeAdopt {
 				report.PlannedAdoptions--
 				if opts.Reorganize {
-					dest := computeDestination(lay, time.Unix(fi.ModTime, 0), opts.EventName, fi)
+					dest := computeDestination(res, time.Unix(fi.ModTime, 0), opts.EventName, fi)
 					if dest != fi.Path {
 						report.PlannedMoves--
 					}
