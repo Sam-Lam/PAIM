@@ -3,7 +3,10 @@ package services
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
+	"os"
+	"os/exec"
 	"time"
 
 	"github.com/Sam-Lam/PAIM/internal/domain"
@@ -11,6 +14,23 @@ import (
 	"github.com/Sam-Lam/PAIM/internal/repo"
 	"gorm.io/gorm"
 )
+
+// Reveal targets for RevealAsset: which of an asset's two files to select in
+// Finder.
+const (
+	RevealArchive  = "archive"  // the archived copy (resolved CurrentArchivePath)
+	RevealOriginal = "original" // the original source file (OriginalFullPath)
+)
+
+// revealRunner selects a path in the platform file browser (Finder). It is
+// injected so tests can assert path resolution and which-validation without
+// spawning a real `open` process.
+type revealRunner func(path string) error
+
+// revealInFinder selects path in Finder via `open -R`.
+func revealInFinder(path string) error {
+	return exec.Command("open", "-R", path).Run()
+}
 
 // BrowserService powers the read-only asset browser: a filtered, paginated grid
 // of what is archived, plus full provenance for a single asset. It is strictly
@@ -25,6 +45,8 @@ type BrowserService struct {
 	log      *slog.Logger
 	// root resolves stored (relative) archive paths to absolute for display.
 	root string
+	// reveal opens a resolved path in Finder; injectable for tests.
+	reveal revealRunner
 }
 
 // Bind wires the BrowserService to an open library's catalog in place.
@@ -41,7 +63,52 @@ func NewBrowserService(db *gorm.DB, assets *repo.AssetRepo, sources *repo.Source
 	if logger == nil {
 		logger = slog.Default()
 	}
-	return &BrowserService{db: db, assets: assets, sources: sources, sessions: sessions, log: logger.With(slog.String("subsystem", "browser"))}
+	return &BrowserService{db: db, assets: assets, sources: sources, sessions: sessions, log: logger.With(slog.String("subsystem", "browser")), reveal: revealInFinder}
+}
+
+// RevealAsset reveals one of an asset's files in Finder (`open -R`). The path is
+// resolved SERVER-side from the asset row — the frontend never passes a raw
+// filesystem path across the bridge. which selects the archived copy
+// (RevealArchive) or the original source file (RevealOriginal). The file must
+// exist; a missing file (e.g. the SD card was ejected) returns an error the
+// frontend surfaces as a toast — the reveal button is normally disabled when the
+// file is already known to be absent.
+func (s *BrowserService) RevealAsset(ctx context.Context, assetID, which string) error {
+	if err := s.guard(); err != nil {
+		return err
+	}
+	if which != RevealArchive && which != RevealOriginal {
+		return fmt.Errorf("services: reveal: unknown target %q (want %q or %q)", which, RevealArchive, RevealOriginal)
+	}
+	a, err := s.assets.GetByID(ctx, assetID)
+	if err != nil {
+		return err
+	}
+	var path string
+	switch which {
+	case RevealArchive:
+		path = library.ResolvePath(s.root, a.CurrentArchivePath)
+		if path == "" {
+			return fmt.Errorf("services: reveal: asset %q has no archive copy", assetID)
+		}
+	case RevealOriginal:
+		path = a.OriginalFullPath
+		if path == "" {
+			return fmt.Errorf("services: reveal: asset %q has no original path", assetID)
+		}
+	}
+	if _, err := os.Stat(path); err != nil {
+		return fmt.Errorf("services: reveal: file not found for asset %q: %w", assetID, err)
+	}
+	reveal := s.reveal
+	if reveal == nil {
+		reveal = revealInFinder
+	}
+	if err := reveal(path); err != nil {
+		return fmt.Errorf("services: reveal %q: %w", path, err)
+	}
+	s.log.Info("revealed asset in Finder", "assetId", assetID, "which", which)
+	return nil
 }
 
 // BrowseFilters are the browser grid's optional filters. Empty strings mean "no

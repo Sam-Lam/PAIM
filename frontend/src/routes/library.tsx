@@ -1,13 +1,18 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowPathIcon,
   ArrowsPointingInIcon,
   ArrowsPointingOutIcon,
   BoltIcon,
   CheckIcon,
+  ChevronLeftIcon,
+  ChevronRightIcon,
   ClipboardDocumentIcon,
   FilmIcon,
+  FolderOpenIcon,
   MagnifyingGlassIcon,
+  MagnifyingGlassMinusIcon,
+  MagnifyingGlassPlusIcon,
   PhotoIcon,
   XMarkIcon,
 } from "@heroicons/react/24/outline";
@@ -358,7 +363,12 @@ export function LibraryPage() {
       )}
 
       {selectedId ? (
-        <DetailDrawer assetId={selectedId} onClose={() => setSelectedId(null)} onNavigate={setSelectedId} />
+        <DetailDrawer
+          assetId={selectedId}
+          items={items}
+          onClose={() => setSelectedId(null)}
+          onNavigate={setSelectedId}
+        />
       ) : null}
     </div>
   );
@@ -425,75 +435,149 @@ function PlaceholderTile({ isVideo }: { isVideo: boolean }) {
 
 function DetailDrawer({
   assetId,
+  items,
   onClose,
   onNavigate,
 }: {
   assetId: string;
+  items: BrowseAssetDTO[];
   onClose: () => void;
   onNavigate: (id: string) => void;
 }) {
   const toast = useToast();
   const detail = useAsyncData<AssetDetailDTO>(() => BrowserService.AssetDetail(assetId));
-  const [previewError, setPreviewError] = useState(false);
 
   useEffect(() => {
-    setPreviewError(false);
     void detail.run().catch((e) => toast.fromError(e, "Failed to load asset"));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [assetId]);
 
-  // Close on Escape.
+  // Position within the CURRENTLY LOADED filtered grid list, for keyboard stepping.
+  const index = useMemo(() => items.findIndex((it) => it.id === assetId), [items, assetId]);
+  const prevId = index > 0 ? items[index - 1].id : null;
+  const nextId = index >= 0 && index < items.length - 1 ? items[index + 1].id : null;
+
+  // Keyboard: ArrowLeft/Right step within the grid list; Escape closes. Arrows are
+  // ignored while a text input is focused so typing in a filter is never hijacked.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
+      if (e.key === "Escape") {
+        onClose();
+        return;
+      }
+      if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
+      const el = document.activeElement as HTMLElement | null;
+      const tag = el?.tagName;
+      if (tag === "INPUT" || tag === "TEXTAREA" || el?.isContentEditable) return;
+      if (e.key === "ArrowLeft" && prevId) {
+        e.preventDefault();
+        onNavigate(prevId);
+      } else if (e.key === "ArrowRight" && nextId) {
+        e.preventDefault();
+        onNavigate(nextId);
+      }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [onClose]);
+  }, [onClose, onNavigate, prevId, nextId]);
+
+  // Warm the adjacent 2048 previews so stepping feels instant.
+  useEffect(() => {
+    for (const id of [prevId, nextId]) {
+      if (!id) continue;
+      const img = new Image();
+      img.src = `/thumb/${id}?s=2048`;
+    }
+  }, [prevId, nextId]);
 
   const d = detail.data;
+
+  const revealArchive = async () => {
+    if (!d) return;
+    try {
+      await BrowserService.RevealAsset(d.id, "archive");
+    } catch (e) {
+      toast.fromError(e, "Could not reveal in Finder");
+    }
+  };
 
   return (
     <div className="fixed inset-0 z-40 flex justify-end">
       <div className="absolute inset-0 bg-black/50 backdrop-blur-[1px]" onClick={onClose} />
-      <aside className="relative flex h-full w-full max-w-md flex-col overflow-y-auto border-l border-zinc-800 bg-zinc-950 shadow-2xl">
-        <header className="sticky top-0 z-10 flex items-center justify-between border-b border-zinc-800 bg-zinc-950/95 px-4 py-3 backdrop-blur">
-          <div className="min-w-0">
-            <div className="truncate text-[13px] font-semibold text-zinc-100" title={d?.originalFilename}>
-              {d?.originalFilename ?? "Loading…"}
+      <aside className="relative flex h-full w-full max-w-5xl flex-col overflow-hidden border-l border-zinc-800 bg-zinc-950 shadow-2xl md:flex-row">
+        {/* Preview pane (LEFT on wide, TOP when stacked) */}
+        <div className="relative flex h-[42vh] w-full flex-none flex-col bg-zinc-900/40 md:h-full md:flex-1">
+          {!d ? (
+            <div className="flex flex-1 items-center justify-center">
+              {detail.loading ? <LoadingBlock label="Loading preview…" /> : <PlaceholderTile isVideo={false} />}
             </div>
-            <div className="text-[11px] text-zinc-500">Provenance · read-only</div>
-          </div>
-          <button
-            onClick={onClose}
-            className="flex-none rounded-md p-1.5 text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100"
-            aria-label="Close"
-          >
-            <XMarkIcon className="h-5 w-5" />
-          </button>
-        </header>
+          ) : (
+            <ZoomableImage key={d.id} assetId={d.id} alt={d.originalFilename} isVideo={d.mediaType === "video"} />
+          )}
 
-        {detail.loading && !d ? (
-          <LoadingBlock label="Loading asset…" />
-        ) : !d ? (
-          <div className="p-4 text-[13px] text-zinc-500">Could not load this asset.</div>
-        ) : (
-          <div className="space-y-5 p-4">
-            {/* 2048 preview */}
-            <div className="overflow-hidden rounded-lg border border-zinc-800 bg-zinc-900">
-              {previewError ? (
-                <div className="flex aspect-video items-center justify-center">
-                  <PlaceholderTile isVideo={d.mediaType === "video"} />
-                </div>
-              ) : (
-                <img
-                  src={`/thumb/${d.id}?s=2048`}
-                  alt={d.originalFilename}
-                  onError={() => setPreviewError(true)}
-                  className="max-h-[42vh] w-full object-contain"
-                />
-              )}
+          {/* Prev/next arrows, overlaid on the preview. */}
+          {prevId ? (
+            <button
+              onClick={() => onNavigate(prevId)}
+              aria-label="Previous asset"
+              title="Previous (←)"
+              className="absolute top-1/2 left-2 z-10 -translate-y-1/2 rounded-full bg-black/50 p-2 text-zinc-200 backdrop-blur-sm transition hover:bg-black/70 hover:text-white"
+            >
+              <ChevronLeftIcon className="h-5 w-5" />
+            </button>
+          ) : null}
+          {nextId ? (
+            <button
+              onClick={() => onNavigate(nextId)}
+              aria-label="Next asset"
+              title="Next (→)"
+              className="absolute top-1/2 right-2 z-10 -translate-y-1/2 rounded-full bg-black/50 p-2 text-zinc-200 backdrop-blur-sm transition hover:bg-black/70 hover:text-white"
+            >
+              <ChevronRightIcon className="h-5 w-5" />
+            </button>
+          ) : null}
+          {index >= 0 && items.length > 0 ? (
+            <div className="absolute bottom-2 left-1/2 z-10 -translate-x-1/2 rounded-full bg-black/50 px-2.5 py-0.5 text-[11px] text-zinc-300 tabular-nums backdrop-blur-sm">
+              {index + 1} / {items.length}
             </div>
+          ) : null}
+        </div>
+
+        {/* Metadata pane (RIGHT on wide, BELOW when stacked) */}
+        <div className="flex w-full min-w-0 flex-1 flex-col overflow-y-auto border-t border-zinc-800 bg-zinc-950 md:w-[360px] md:flex-none md:border-t-0 md:border-l">
+          <header className="sticky top-0 z-10 flex items-center justify-between border-b border-zinc-800 bg-zinc-950/95 px-4 py-3 backdrop-blur">
+            <div className="min-w-0">
+              <div className="truncate text-[13px] font-semibold text-zinc-100" title={d?.originalFilename}>
+                {d?.originalFilename ?? "Loading…"}
+              </div>
+              <div className="text-[11px] text-zinc-500">Provenance · read-only</div>
+            </div>
+            <button
+              onClick={onClose}
+              className="flex-none rounded-md p-1.5 text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100"
+              aria-label="Close"
+            >
+              <XMarkIcon className="h-5 w-5" />
+            </button>
+          </header>
+
+          {detail.loading && !d ? (
+            <LoadingBlock label="Loading asset…" />
+          ) : !d ? (
+            <div className="p-4 text-[13px] text-zinc-500">Could not load this asset.</div>
+          ) : (
+            <div className="space-y-5 p-4">
+            {/* Reveal in Finder (archive copy) */}
+            <Button
+              size="sm"
+              variant="secondary"
+              icon={FolderOpenIcon}
+              disabled={!d.currentArchivePath}
+              title={d.currentArchivePath ? "Reveal the archived file in Finder" : "No archive copy to reveal"}
+              onClick={() => void revealArchive()}
+            >
+              Reveal in Finder
+            </Button>
 
             {/* Status badges */}
             <div className="flex flex-wrap gap-2">
@@ -588,10 +672,235 @@ function DetailDrawer({
                 ))}
               </Section>
             )}
-          </div>
-        )}
+            </div>
+          )}
+        </div>
       </aside>
     </div>
+  );
+}
+
+const MIN_SCALE = 1;
+const MAX_SCALE = 8;
+const clampScale = (s: number) => Math.max(MIN_SCALE, Math.min(MAX_SCALE, s));
+
+interface ViewState {
+  scale: number;
+  tx: number;
+  ty: number;
+}
+const FIT_VIEW: ViewState = { scale: 1, tx: 0, ty: 0 };
+
+/**
+ * ZoomableImage renders an asset's preview with pan/zoom, keyed by asset so it
+ * remounts (and resets zoom) on navigation.
+ *
+ * Progressive loading: the 512 grid thumb (already warm in the browser cache from
+ * the grid) paints IMMEDIATELY and stays fully interactive; the 2048 preview is
+ * fetched offscreen and swapped into the same layout box on load, preserving the
+ * current zoom/pan (transforms live on the container, not the <img> src). If the
+ * 2048 fails we silently stay on the 512 (console warning only). Zoom is capped
+ * at MAX_SCALE; beyond the 2048's native pixels the preview upscales — we never
+ * load original bytes (originals may be huge RAWs the browser cannot decode).
+ */
+function ZoomableImage({ assetId, alt, isVideo }: { assetId: string; alt: string; isVideo: boolean }) {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [view, setView] = useState<ViewState>(FIT_VIEW);
+  const viewRef = useRef(view);
+  useEffect(() => {
+    viewRef.current = view;
+  }, [view]);
+
+  // Start on the 512 (instant from cache); swap to 2048 once it's confirmed loadable.
+  const [src, setSrc] = useState(`/thumb/${assetId}`);
+  const [hiResLoading, setHiResLoading] = useState(true);
+  const [gridError, setGridError] = useState(false);
+  const natural = useRef({ w: 0, h: 0 });
+
+  useEffect(() => {
+    setHiResLoading(true);
+    const img = new Image();
+    img.onload = () => {
+      natural.current = { w: img.naturalWidth, h: img.naturalHeight };
+      setSrc(`/thumb/${assetId}?s=2048`);
+      setHiResLoading(false);
+    };
+    img.onerror = () => {
+      // 2048 unavailable — keep the 512 showing, no user-facing error.
+      console.warn(`library: 2048 preview failed for ${assetId}; staying on 512`);
+      setHiResLoading(false);
+    };
+    img.src = `/thumb/${assetId}?s=2048`;
+    return () => {
+      img.onload = null;
+      img.onerror = null;
+    };
+  }, [assetId]);
+
+  // Zoom toward a screen point (clientX/clientY), keeping that point fixed.
+  const zoomAt = useCallback((nextScale: number, screenX: number, screenY: number) => {
+    const el = containerRef.current;
+    if (!el) return;
+    const rect = el.getBoundingClientRect();
+    const ns = clampScale(nextScale);
+    const { scale, tx, ty } = viewRef.current;
+    if (ns === scale) return;
+    if (ns === 1) {
+      setView(FIT_VIEW);
+      return;
+    }
+    const cx = screenX - rect.left - rect.width / 2;
+    const cy = screenY - rect.top - rect.height / 2;
+    const ratio = ns / scale;
+    setView({ scale: ns, tx: cx - (cx - tx) * ratio, ty: cy - (cy - ty) * ratio });
+  }, []);
+
+  const zoomAtCenter = useCallback(
+    (nextScale: number) => {
+      const el = containerRef.current;
+      if (!el) return;
+      const rect = el.getBoundingClientRect();
+      zoomAt(nextScale, rect.left + rect.width / 2, rect.top + rect.height / 2);
+    },
+    [zoomAt],
+  );
+
+  // "100%" — one 2048 pixel per screen pixel (clamped to fit .. MAX_SCALE).
+  const oneToOneScale = useCallback(() => {
+    const el = containerRef.current;
+    if (!el || !natural.current.w || !natural.current.h) return MIN_SCALE;
+    const containFactor = Math.min(el.clientWidth / natural.current.w, el.clientHeight / natural.current.h);
+    if (containFactor <= 0) return MIN_SCALE;
+    return clampScale(1 / containFactor);
+  }, []);
+
+  // Native wheel listener (non-passive) so we can preventDefault the page scroll.
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    const onWheel = (e: WheelEvent) => {
+      e.preventDefault();
+      const factor = Math.exp(-e.deltaY * 0.0015);
+      zoomAt(viewRef.current.scale * factor, e.clientX, e.clientY);
+    };
+    el.addEventListener("wheel", onWheel, { passive: false });
+    return () => el.removeEventListener("wheel", onWheel);
+  }, [zoomAt]);
+
+  // Drag-to-pan (pointer events) while zoomed in.
+  const drag = useRef<{ x: number; y: number; tx: number; ty: number } | null>(null);
+  const [dragging, setDragging] = useState(false);
+  const onPointerDown = (e: React.PointerEvent) => {
+    if (viewRef.current.scale <= 1) return;
+    (e.target as Element).setPointerCapture?.(e.pointerId);
+    drag.current = { x: e.clientX, y: e.clientY, tx: viewRef.current.tx, ty: viewRef.current.ty };
+    setDragging(true);
+  };
+  const onPointerMove = (e: React.PointerEvent) => {
+    if (!drag.current) return;
+    setView((v) => ({ ...v, tx: drag.current!.tx + (e.clientX - drag.current!.x), ty: drag.current!.ty + (e.clientY - drag.current!.y) }));
+  };
+  const endDrag = (e: React.PointerEvent) => {
+    if (!drag.current) return;
+    (e.target as Element).releasePointerCapture?.(e.pointerId);
+    drag.current = null;
+    setDragging(false);
+  };
+
+  // Double-click toggles Fit <-> 100%.
+  const onDoubleClick = () => {
+    if (viewRef.current.scale > 1) setView(FIT_VIEW);
+    else zoomAtCenter(oneToOneScale());
+  };
+
+  const zoomed = view.scale > 1;
+
+  return (
+    <div
+      ref={containerRef}
+      onDoubleClick={onDoubleClick}
+      onPointerDown={onPointerDown}
+      onPointerMove={onPointerMove}
+      onPointerUp={endDrag}
+      onPointerCancel={endDrag}
+      className="relative flex min-h-0 flex-1 touch-none items-center justify-center overflow-hidden select-none"
+      style={{ cursor: zoomed ? (dragging ? "grabbing" : "grab") : "default" }}
+    >
+      {gridError ? (
+        <PlaceholderTile isVideo={isVideo} />
+      ) : (
+        <div
+          className="absolute inset-0 flex items-center justify-center will-change-transform"
+          style={{ transform: `translate(${view.tx}px, ${view.ty}px) scale(${view.scale})`, transformOrigin: "center center" }}
+        >
+          <img
+            src={src}
+            alt={alt}
+            draggable={false}
+            onLoad={(e) => {
+              natural.current = { w: e.currentTarget.naturalWidth, h: e.currentTarget.naturalHeight };
+            }}
+            onError={() => {
+              // Only the 512 reaches the visible <img> via onError (the 2048 is
+              // swapped in only after a successful offscreen load).
+              setGridError(true);
+            }}
+            className="max-h-full max-w-full object-contain"
+          />
+        </div>
+      )}
+
+      {/* Loading indicator while the 2048 is still fetching (512 remains visible). */}
+      {hiResLoading && !gridError ? (
+        <div className="absolute top-2 right-2 z-10 rounded-full bg-black/50 px-2 py-0.5 text-[10px] text-zinc-300 backdrop-blur-sm">
+          Loading HD…
+        </div>
+      ) : null}
+
+      {/* Zoom controls */}
+      {!gridError ? (
+        <div className="absolute top-2 left-2 z-10 flex items-center gap-0.5 rounded-lg bg-black/55 p-1 backdrop-blur-sm">
+          <ZoomBtn title="Zoom out (scroll)" onClick={() => zoomAtCenter(view.scale / 1.4)}>
+            <MagnifyingGlassMinusIcon className="h-4 w-4" />
+          </ZoomBtn>
+          <ZoomBtn title="Zoom in (scroll)" onClick={() => zoomAtCenter(view.scale * 1.4)}>
+            <MagnifyingGlassPlusIcon className="h-4 w-4" />
+          </ZoomBtn>
+          <ZoomBtn title="Fit (double-click)" onClick={() => setView(FIT_VIEW)} active={!zoomed}>
+            <ArrowsPointingInIcon className="h-4 w-4" />
+          </ZoomBtn>
+          <button
+            title="Actual pixels (double-click)"
+            onClick={() => zoomAtCenter(oneToOneScale())}
+            className="rounded px-1.5 py-1 text-[10px] font-semibold text-zinc-200 hover:bg-white/10"
+          >
+            100%
+          </button>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function ZoomBtn({
+  title,
+  onClick,
+  active = false,
+  children,
+}: {
+  title: string;
+  onClick: () => void;
+  active?: boolean;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      title={title}
+      onClick={onClick}
+      className={`rounded p-1 transition hover:bg-white/10 ${active ? "text-blue-400" : "text-zinc-200"}`}
+    >
+      {children}
+    </button>
   );
 }
 

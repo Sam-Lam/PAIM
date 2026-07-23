@@ -75,6 +75,17 @@ func trashFile(rootDir, path string) (string, error) {
 	return dst, nil
 }
 
+// pathExists reports whether a file or directory exists at path right now. An
+// empty path is never present. Used for cheap per-page presence checks (e.g. the
+// Duplicate Manager, which stats a page of ~20 paths).
+func pathExists(path string) bool {
+	if path == "" {
+		return false
+	}
+	_, err := os.Stat(path)
+	return err == nil
+}
+
 // ensureDir creates dir (and parents) if it does not already exist.
 func ensureDir(dir string) error {
 	if err := os.MkdirAll(dir, 0o755); err != nil {

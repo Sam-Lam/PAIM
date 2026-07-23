@@ -57,10 +57,24 @@ func NewDuplicateService(db *gorm.DB, assets *repo.AssetRepo, settings *repo.Set
 	return &DuplicateService{db: db, assets: assets, settings: settings, emitter: emitter, log: logger.With(slog.String("subsystem", "duplicate"))}
 }
 
-// DuplicatePairDTO pairs a duplicate asset with the original it duplicates.
+// DuplicatePairDTO pairs a duplicate asset with the original it duplicates,
+// plus per-side presence flags so the UI can label a copy-mode duplicate ("on
+// source only — never copied") and disable reveal actions for files that are not
+// reachable right now (e.g. the source SD card was ejected).
 type DuplicatePairDTO struct {
 	Duplicate AssetDTO `json:"duplicate"`
 	Original  AssetDTO `json:"original"`
+	// DuplicateHasArchiveCopy reports whether the duplicate has its OWN archive
+	// copy. Copy-mode duplicates never do — they were flagged without re-copying,
+	// so the file lives only at the duplicate's OriginalFullPath (its source).
+	DuplicateHasArchiveCopy bool `json:"duplicateHasArchiveCopy"`
+	// DuplicateFileExists reports whether the duplicate's file exists on disk right
+	// now, checked at its archive copy when it has one (adopt mode) or otherwise at
+	// its original source path (copy mode). Computed with os.Stat at list time.
+	DuplicateFileExists bool `json:"duplicateFileExists"`
+	// OriginalFileExists reports whether the original's archived file exists right
+	// now (os.Stat of its resolved archive path).
+	OriginalFileExists bool `json:"originalFileExists"`
 }
 
 // ListDuplicates returns a page of duplicate/original pairs (newest first).
@@ -75,9 +89,21 @@ func (s *DuplicateService) ListDuplicates(ctx context.Context, page, pageSize in
 	}
 	items := make([]DuplicatePairDTO, 0, len(pairs))
 	for _, p := range pairs {
+		dup := toAssetDTO(p.Duplicate, s.root)
+		orig := toAssetDTO(p.Original, s.root)
+		hasArchive := dup.CurrentArchivePath != ""
+		// The duplicate's live location: its archive copy (adopt mode) or, for a
+		// not-copied duplicate, its original source path (e.g. an SD card).
+		dupTarget := dup.OriginalFullPath
+		if hasArchive {
+			dupTarget = dup.CurrentArchivePath
+		}
 		items = append(items, DuplicatePairDTO{
-			Duplicate: toAssetDTO(p.Duplicate, s.root),
-			Original:  toAssetDTO(p.Original, s.root),
+			Duplicate:               dup,
+			Original:                orig,
+			DuplicateHasArchiveCopy: hasArchive,
+			DuplicateFileExists:     pathExists(dupTarget),
+			OriginalFileExists:      pathExists(orig.CurrentArchivePath),
 		})
 	}
 	total, err := s.countDuplicates(ctx)

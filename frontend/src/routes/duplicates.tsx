@@ -5,7 +5,9 @@ import {
   CheckIcon,
   ClipboardDocumentIcon,
   DocumentDuplicateIcon,
+  ExclamationTriangleIcon,
   FolderArrowDownIcon,
+  FolderOpenIcon,
   NoSymbolIcon,
   PhotoIcon,
   Square2StackIcon,
@@ -21,6 +23,7 @@ import {
   StatusBadge,
 } from "../components";
 import {
+  BrowserService,
   CleanupService,
   DuplicateService,
   WailsEvents,
@@ -292,11 +295,40 @@ function DuplicatePairCard({
   onIgnore: () => void;
   onKeepBoth: () => void;
 }) {
+  const toast = useToast();
+
+  const reveal = async (assetId: string, which: "archive" | "original") => {
+    try {
+      await BrowserService.RevealAsset(assetId, which);
+    } catch (e) {
+      toast.fromError(e, "Could not reveal in Finder");
+    }
+  };
+
+  // The duplicate's file lives at its archive copy (adopt mode) or — for a
+  // copy-mode duplicate that was flagged but never copied — only at its source.
+  const dupSourceOnly = !pair.duplicateHasArchiveCopy;
+  const dupWhich = pair.duplicateHasArchiveCopy ? "archive" : "original";
+
   return (
     <Card>
       <div className="grid gap-4 md:grid-cols-2">
-        <AssetColumn asset={pair.duplicate} kind="duplicate" />
-        <AssetColumn asset={pair.original} kind="original" />
+        <AssetColumn
+          asset={pair.duplicate}
+          kind="duplicate"
+          sourceOnly={dupSourceOnly}
+          fileExists={pair.duplicateFileExists}
+          revealLabel={dupSourceOnly ? "Reveal at source" : "Reveal in archive"}
+          onReveal={() => void reveal(pair.duplicate.id, dupWhich)}
+        />
+        <AssetColumn
+          asset={pair.original}
+          kind="original"
+          sourceOnly={false}
+          fileExists={pair.originalFileExists}
+          revealLabel="Reveal in archive"
+          onReveal={() => void reveal(pair.original.id, "archive")}
+        />
       </div>
 
       <div className="mt-4 flex flex-wrap items-center gap-2 border-t border-zinc-800 pt-3">
@@ -318,20 +350,54 @@ function DuplicatePairCard({
   );
 }
 
-function AssetColumn({ asset, kind }: { asset: AssetDTO; kind: "duplicate" | "original" }) {
+function AssetColumn({
+  asset,
+  kind,
+  sourceOnly,
+  fileExists,
+  revealLabel,
+  onReveal,
+}: {
+  asset: AssetDTO;
+  kind: "duplicate" | "original";
+  sourceOnly: boolean;
+  fileExists: boolean;
+  revealLabel: string;
+  onReveal: () => void;
+}) {
+  // The file's current location: an archive copy if one exists, otherwise the
+  // original source path (an SD card / drive for a copy-mode duplicate).
+  const path = asset.currentArchivePath || asset.originalFullPath;
   return (
     <div
       className={`rounded-lg border p-3 ${
         kind === "duplicate" ? "border-amber-500/30 bg-amber-500/[0.03]" : "border-zinc-800 bg-zinc-950/40"
       }`}
     >
-      <div className="mb-2 flex items-center gap-2">
+      <div className="mb-2 flex flex-wrap items-center gap-1.5">
         {kind === "duplicate" ? (
           <StatusBadge status="duplicate" tone="warn" label="Duplicate" dot />
         ) : (
           <StatusBadge status="original" tone="success" label="Original" dot />
         )}
         {kind === "duplicate" ? <ArrowRightCircleIcon className="h-4 w-4 text-zinc-600" /> : null}
+        {sourceOnly ? (
+          <span
+            className="inline-flex items-center gap-1 rounded-full border border-amber-500/40 bg-amber-500/10 px-2 py-0.5 text-[10px] font-semibold text-amber-300"
+            title="PAIM flags duplicates without re-copying them, so this file was never written into your archive. It lives only at its source path above — which may become unreachable once that SD card or drive is ejected."
+          >
+            <ExclamationTriangleIcon className="h-3 w-3" />
+            On source only — never copied
+          </span>
+        ) : null}
+        {!fileExists ? (
+          <span
+            className="inline-flex items-center gap-1 rounded-full border border-zinc-700 bg-zinc-800/60 px-2 py-0.5 text-[10px] font-medium text-zinc-400"
+            title="This file is not reachable right now — the source drive may be ejected or the file was moved."
+          >
+            Unavailable
+          </span>
+        ) : null}
       </div>
 
       <div className="flex gap-3">
@@ -340,12 +406,7 @@ function AssetColumn({ asset, kind }: { asset: AssetDTO; kind: "duplicate" | "or
           <div className="truncate text-[13px] font-medium text-zinc-100" title={asset.originalFilename}>
             {asset.originalFilename}
           </div>
-          <div
-            className="selectable mt-0.5 truncate font-mono text-[11px] text-zinc-500"
-            title={asset.currentArchivePath || asset.originalFullPath}
-          >
-            {asset.currentArchivePath || asset.originalFullPath || "—"}
-          </div>
+          <PathText path={path} />
 
           <div className="mt-3 grid grid-cols-2 gap-x-4 gap-y-1 text-[11px]">
             <Field label="Size" value={formatBytes(asset.fileSize)} />
@@ -354,11 +415,54 @@ function AssetColumn({ asset, kind }: { asset: AssetDTO; kind: "duplicate" | "or
         </div>
       </div>
 
+      {sourceOnly ? (
+        <p className="mt-2 text-[11px] leading-relaxed text-amber-300/80">
+          Recorded as a duplicate without copying — the file above may be unreachable once its source is ejected.
+        </p>
+      ) : null}
+
       <div className="mt-2 space-y-1">
         <HashRow label="Quick" hash={asset.quickHash} />
         <HashRow label="Full" hash={asset.fullHash} />
       </div>
+
+      <div className="mt-2">
+        <Button
+          size="sm"
+          variant="ghost"
+          icon={FolderOpenIcon}
+          disabled={!fileExists}
+          title={fileExists ? "Reveal this file in Finder" : "File not available right now — cannot reveal"}
+          onClick={onReveal}
+        >
+          {revealLabel}
+        </Button>
+      </div>
     </div>
+  );
+}
+
+/**
+ * PathText renders a full path that never truncates un-recoverably: it wraps
+ * (break-all) and is clamped to two lines by default, expanding to the full path
+ * on click. The title tooltip always carries the complete path too.
+ */
+function PathText({ path }: { path: string }) {
+  const [expanded, setExpanded] = useState(false);
+  if (!path) {
+    return <div className="mt-0.5 font-mono text-[11px] text-zinc-600">—</div>;
+  }
+  return (
+    <button
+      type="button"
+      onClick={() => setExpanded((v) => !v)}
+      title={expanded ? "Click to collapse" : path}
+      className={`selectable mt-0.5 block w-full text-left font-mono text-[11px] break-all text-zinc-500 transition hover:text-zinc-300 ${
+        expanded ? "" : "line-clamp-2"
+      }`}
+    >
+      {path}
+    </button>
   );
 }
 

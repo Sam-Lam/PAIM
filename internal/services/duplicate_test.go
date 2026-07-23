@@ -160,4 +160,77 @@ func TestListDuplicatesTotalIsTrueCount(t *testing.T) {
 	}
 }
 
+func TestListDuplicatesPopulatesPresenceFlags(t *testing.T) {
+	svc, _, assets := newDuplicateHarness(t)
+	ctx := context.Background()
+
+	root := t.TempDir()
+	svc.root = root
+
+	// Original: an archived file that exists on disk (stored relative to root).
+	origRel := filepath.Join("2026", "orig.jpg")
+	origAbs := filepath.Join(root, origRel)
+	if err := os.MkdirAll(filepath.Dir(origAbs), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(origAbs, []byte("bytes"), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	orig := seedAsset(t, assets, "orig.jpg", filepath.ToSlash(origRel), nil)
+
+	// Copy-mode duplicate: no archive copy; file lives only at its source path,
+	// which here exists (source still attached).
+	srcAbs := filepath.Join(t.TempDir(), "card", "orig.jpg")
+	if err := os.MkdirAll(filepath.Dir(srcAbs), 0o755); err != nil {
+		t.Fatalf("mkdir src: %v", err)
+	}
+	if err := os.WriteFile(srcAbs, []byte("bytes"), 0o644); err != nil {
+		t.Fatalf("write src: %v", err)
+	}
+	dup := &domain.Asset{
+		OriginalFilename:   "orig.jpg",
+		QuickHash:          "qh-dup",
+		CurrentArchivePath: "", // never copied
+		OriginalFullPath:   srcAbs,
+		VerificationStatus: domain.VerificationStatusVerified,
+		DuplicateOfAssetID: &orig.ID,
+	}
+	if err := assets.Create(ctx, dup); err != nil {
+		t.Fatalf("create dup: %v", err)
+	}
+
+	res, err := svc.ListDuplicates(ctx, 1, 20)
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if len(res.Items) != 1 {
+		t.Fatalf("items = %d, want 1", len(res.Items))
+	}
+	it := res.Items[0]
+	if it.DuplicateHasArchiveCopy {
+		t.Error("copy-mode duplicate must report DuplicateHasArchiveCopy=false")
+	}
+	if !it.DuplicateFileExists {
+		t.Error("duplicate source file exists; want DuplicateFileExists=true")
+	}
+	if !it.OriginalFileExists {
+		t.Error("original archive file exists; want OriginalFileExists=true")
+	}
+
+	// Now remove the source file: the duplicate becomes unreachable.
+	if err := os.Remove(srcAbs); err != nil {
+		t.Fatalf("remove src: %v", err)
+	}
+	res, err = svc.ListDuplicates(ctx, 1, 20)
+	if err != nil {
+		t.Fatalf("list 2: %v", err)
+	}
+	if res.Items[0].DuplicateFileExists {
+		t.Error("source removed; want DuplicateFileExists=false")
+	}
+	if !res.Items[0].OriginalFileExists {
+		t.Error("original still present; want OriginalFileExists=true")
+	}
+}
+
 func strPtr(s string) *string { return &s }

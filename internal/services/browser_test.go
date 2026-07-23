@@ -2,7 +2,9 @@ package services
 
 import (
 	"context"
+	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -140,6 +142,123 @@ func TestMonthsReturnsCaptureMonthCounts(t *testing.T) {
 	}
 	if months[1].Month != "2026-06" || months[1].Count != 1 {
 		t.Errorf("months[1] = %+v, want 2026-06 count 1", months[1])
+	}
+}
+
+func TestRevealAssetResolvesPathServerSide(t *testing.T) {
+	svc, _, assets := newBrowserHarness(t)
+	ctx := context.Background()
+
+	root := t.TempDir()
+	svc.root = root
+
+	// An archived file that exists, plus an original source file that exists.
+	archiveRel := filepath.Join("2026", "IMG_1.jpg")
+	archiveAbs := filepath.Join(root, archiveRel)
+	if err := os.MkdirAll(filepath.Dir(archiveAbs), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(archiveAbs, []byte("bytes"), 0o644); err != nil {
+		t.Fatalf("write archive: %v", err)
+	}
+	origAbs := filepath.Join(t.TempDir(), "card", "IMG_1.jpg")
+	if err := os.MkdirAll(filepath.Dir(origAbs), 0o755); err != nil {
+		t.Fatalf("mkdir orig: %v", err)
+	}
+	if err := os.WriteFile(origAbs, []byte("bytes"), 0o644); err != nil {
+		t.Fatalf("write orig: %v", err)
+	}
+
+	a := &domain.Asset{
+		OriginalFilename:   "IMG_1.jpg",
+		QuickHash:          "qh-reveal",
+		CurrentArchivePath: filepath.ToSlash(archiveRel),
+		OriginalFullPath:   origAbs,
+		VerificationStatus: domain.VerificationStatusVerified,
+	}
+	if err := assets.Create(ctx, a); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+
+	// Capture the path the injected runner is asked to reveal (never spawn `open`).
+	var revealed string
+	svc.reveal = func(path string) error {
+		revealed = path
+		return nil
+	}
+
+	// which=archive resolves the RELATIVE stored path against the root.
+	if err := svc.RevealAsset(ctx, a.ID, RevealArchive); err != nil {
+		t.Fatalf("reveal archive: %v", err)
+	}
+	if revealed != archiveAbs {
+		t.Errorf("archive reveal path = %q, want %q", revealed, archiveAbs)
+	}
+
+	// which=original reveals the original source path unchanged.
+	revealed = ""
+	if err := svc.RevealAsset(ctx, a.ID, RevealOriginal); err != nil {
+		t.Fatalf("reveal original: %v", err)
+	}
+	if revealed != origAbs {
+		t.Errorf("original reveal path = %q, want %q", revealed, origAbs)
+	}
+}
+
+func TestRevealAssetValidatesWhich(t *testing.T) {
+	svc, _, assets := newBrowserHarness(t)
+	ctx := context.Background()
+
+	called := false
+	svc.reveal = func(string) error { called = true; return nil }
+
+	a := &domain.Asset{OriginalFilename: "x.jpg", QuickHash: "qh-x", VerificationStatus: domain.VerificationStatusVerified}
+	if err := assets.Create(ctx, a); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+
+	err := svc.RevealAsset(ctx, a.ID, "sideways")
+	if err == nil {
+		t.Fatal("expected error for unknown which")
+	}
+	if !strings.Contains(err.Error(), "unknown target") {
+		t.Errorf("error = %v, want unknown-target", err)
+	}
+	if called {
+		t.Error("runner must not be invoked for an invalid which")
+	}
+}
+
+func TestRevealAssetNotFoundAndMissingFile(t *testing.T) {
+	svc, _, assets := newBrowserHarness(t)
+	ctx := context.Background()
+	svc.root = t.TempDir()
+
+	called := false
+	svc.reveal = func(string) error { called = true; return nil }
+
+	// Unknown asset ID.
+	if err := svc.RevealAsset(ctx, "no-such-id", RevealArchive); err == nil {
+		t.Error("expected error for unknown asset")
+	}
+
+	// Asset with no archive copy (copy-mode duplicate) → archive reveal errors.
+	dup := &domain.Asset{OriginalFilename: "d.jpg", QuickHash: "qh-d", CurrentArchivePath: "",
+		OriginalFullPath: filepath.Join(t.TempDir(), "gone.jpg"), VerificationStatus: domain.VerificationStatusVerified}
+	if err := assets.Create(ctx, dup); err != nil {
+		t.Fatalf("create dup: %v", err)
+	}
+	if err := svc.RevealAsset(ctx, dup.ID, RevealArchive); err == nil {
+		t.Error("expected error for asset with no archive copy")
+	}
+
+	// Original path points at a file that does not exist → not-found error.
+	if err := svc.RevealAsset(ctx, dup.ID, RevealOriginal); err == nil {
+		t.Error("expected not-found error for missing original file")
+	}
+
+	if called {
+		t.Error("runner must not be invoked when path resolution/stat fails")
 	}
 }
 
