@@ -209,7 +209,8 @@ function AddDestination({
       setRclone(res);
       // Default the remote to the first available one.
       if (res.remotes && res.remotes.length > 0) {
-        setRemote((cur) => (cur && res.remotes.includes(cur) ? cur : res.remotes[0]));
+        const remotes = res.remotes ?? [];
+        setRemote((cur) => (cur && remotes.includes(cur) ? cur : (remotes[0] ?? "")));
       }
     } catch (e) {
       toast.fromError(e, "Could not query rclone");
