@@ -512,6 +512,44 @@ everything after it is the human label. Four capabilities make labels first-clas
    webview): on date-event folders → Rename… (dialog → RenameEventFolder) and Reveal in
    Finder; on assets → Reveal in Finder. Renames refresh the view and any open drawer.
 
+## Self-contained distribution — FUTURE SPEC (not yet implemented)
+
+Goal: PAIM ships as ONE signed, notarized `.app` a user drags to /Applications — no brew,
+no installers, no external tools to set up. Direction locked now so new code stops
+acquiring external dependencies casually; implementation deferred until distribution
+matters.
+
+**Dependency inventory & per-dependency strategy:**
+- **SQLite, BLAKE3, Wails runtime, frontend assets** — already compiled/embedded in the
+  binary. Nothing to do.
+- **macOS built-ins** (`qlmanage`, `sips`, `diskutil`, `system_profiler`, `caffeinate`,
+  `mount`, `open`) — part of the OS, not installable dependencies; acceptable forever.
+- **rclone** — two options, in preference order: (1) embed as a LIBRARY via
+  `github.com/rclone/librclone` (rclone is Go; in-process RC calls replace the subprocess,
+  ~+50 MB binary, no PATH discovery, config file handling unchanged); (2) bundle the
+  static rclone binary in `PAIM.app/Contents/Resources/bin/` (MIT-licensed). Either way
+  `rclone config` for OAuth remains a documented one-time Terminal step until an in-app
+  OAuth flow is built (explicitly out of scope here).
+- **exiftool** — the hard one (Perl script). Strategy: bundle the exiftool distribution
+  under `Resources/exiftool/` and run it with the system `/usr/bin/perl`; RISK: Apple has
+  deprecated bundled scripting runtimes and may remove perl in a future macOS — mitigation
+  path, in order of ambition: (a) accept the risk short-term with graceful degradation
+  (already built), (b) bundle a relocatable perl alongside, (c) long-term: replace with a
+  cgo exiv2 binding or pure-Go extractor for the core tag set (capture date, camera,
+  lens, GPS, orientation, duration, ContentIdentifier) and keep bundled exiftool only as
+  an enrichment fallback.
+- **Discovery-order convention (adopt NOW for all tool lookups):** bundled
+  (`Resources/bin`, resolved relative to the executable) → user PATH → known Homebrew
+  paths → degrade with the existing UI surfacing. Centralize in one `internal/toolpath`
+  helper so every subprocess call site (exiftool, rclone) resolves identically; new code
+  MUST use it rather than exec.LookPath directly.
+- **Packaging:** `wails3 package` producing the `.app`; Developer ID signing +
+  notarization + hardened runtime (entitlements audit: no sandbox initially — full-disk
+  access patterns are incompatible with sandboxing for an archive manager); embed
+  Sparkle-style auto-update only if distribution beyond personal use ever happens.
+- **Non-goals:** Windows/Linux packaging, Mac App Store (sandboxing incompatible), in-app
+  OAuth for rclone remotes.
+
 ## Quit guard — main.go, services, frontend
 
 Quitting must never surprise the user about in-flight work. Safety already comes from the
