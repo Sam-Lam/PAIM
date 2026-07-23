@@ -14,6 +14,7 @@ import {
   ProviderService,
   type PluginDTO,
   type ProviderDTO,
+  type RcloneRemotesDTO,
 } from "../lib/api";
 import { useAsyncData } from "../lib/hooks";
 import { useToast } from "../lib/toast";
@@ -192,7 +193,38 @@ function AddDestination({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // rclone state.
+  const [rclone, setRclone] = useState<RcloneRemotesDTO | null>(null);
+  const [rcloneLoading, setRcloneLoading] = useState(false);
+  const [remote, setRemote] = useState("");
+  const [rclonePath, setRclonePath] = useState("PAIM-Backup");
+
   const isLocalfs = pluginName === "localfs";
+  const isRclone = pluginName === "rclone";
+
+  const loadRemotes = async () => {
+    setRcloneLoading(true);
+    try {
+      const res = await ProviderService.RcloneRemotes();
+      setRclone(res);
+      // Default the remote to the first available one.
+      if (res.remotes && res.remotes.length > 0) {
+        setRemote((cur) => (cur && res.remotes.includes(cur) ? cur : res.remotes[0]));
+      }
+    } catch (e) {
+      toast.fromError(e, "Could not query rclone");
+    } finally {
+      setRcloneLoading(false);
+    }
+  };
+
+  // Probe rclone install status whenever the rclone plugin is selected.
+  useEffect(() => {
+    if (isRclone && rclone === null && !rcloneLoading) {
+      void loadRemotes();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isRclone]);
 
   const pick = async () => {
     try {
@@ -209,7 +241,18 @@ function AddDestination({
       setError("Choose a root folder for the local filesystem destination.");
       return;
     }
-    const configJSON = isLocalfs ? JSON.stringify({ root: root.trim() }) : rawConfig.trim() || "{}";
+    if (isRclone && !remote.trim()) {
+      setError("Choose an rclone remote for this destination.");
+      return;
+    }
+    let configJSON: string;
+    if (isLocalfs) {
+      configJSON = JSON.stringify({ root: root.trim() });
+    } else if (isRclone) {
+      configJSON = JSON.stringify({ remote: remote.trim(), path: rclonePath.trim() || "PAIM-Backup" });
+    } else {
+      configJSON = rawConfig.trim() || "{}";
+    }
     setSaving(true);
     try {
       await ProviderService.Add(pluginName, configJSON);
@@ -222,6 +265,8 @@ function AddDestination({
       setSaving(false);
     }
   };
+
+  const rcloneReady = isRclone && rclone?.installed === true;
 
   return (
     <Card title="Add destination" subtitle="Validated against the plugin before it is saved.">
@@ -260,6 +305,16 @@ function AddDestination({
               />
             </div>
           </label>
+        ) : isRclone ? (
+          <RcloneConfig
+            status={rclone}
+            loading={rcloneLoading}
+            remote={remote}
+            onRemote={setRemote}
+            path={rclonePath}
+            onPath={setRclonePath}
+            onRetry={() => void loadRemotes()}
+          />
         ) : (
           <label className="block">
             <span className="text-xs font-medium text-zinc-400">Config (JSON)</span>
@@ -280,12 +335,120 @@ function AddDestination({
           <Button variant="ghost" onClick={onCancel} disabled={saving}>
             Cancel
           </Button>
-          <Button variant="primary" icon={CheckCircleIcon} onClick={() => void submit()} loading={saving}>
+          <Button
+            variant="primary"
+            icon={CheckCircleIcon}
+            onClick={() => void submit()}
+            loading={saving}
+            disabled={isRclone && !rcloneReady}
+          >
             Add destination
           </Button>
         </div>
       </div>
     </Card>
+  );
+}
+
+/** RcloneConfig renders install status, a remotes dropdown, and a destination
+ *  path field for the rclone plugin. When rclone is missing or has no remotes it
+ *  shows first-time setup guidance instead. */
+function RcloneConfig({
+  status,
+  loading,
+  remote,
+  onRemote,
+  path,
+  onPath,
+  onRetry,
+}: {
+  status: RcloneRemotesDTO | null;
+  loading: boolean;
+  remote: string;
+  onRemote: (v: string) => void;
+  path: string;
+  onPath: (v: string) => void;
+  onRetry: () => void;
+}) {
+  if (loading || status === null) {
+    return <LoadingBlock label="Checking rclone…" />;
+  }
+
+  if (!status.installed) {
+    return (
+      <div className="space-y-2 rounded-md border border-amber-500/30 bg-amber-500/5 p-3 text-[12px] text-amber-200/90">
+        <p className="font-medium">rclone is not installed</p>
+        <p>
+          PAIM uses <span className="font-mono">rclone</span> to back up to Google Drive and other cloud remotes. Install
+          it, then configure a remote:
+        </p>
+        <pre className="selectable overflow-x-auto rounded bg-zinc-950/60 p-2 font-mono text-[11px] text-zinc-300">
+          brew install rclone{"\n"}rclone config
+        </pre>
+        <p>
+          For Google Drive choose <span className="font-mono">drive</span> in <span className="font-mono">rclone config</span>{" "}
+          and follow the browser sign-in. Then reopen this dialog.
+        </p>
+        <Button icon={ArrowPathIcon} variant="secondary" size="sm" onClick={onRetry}>
+          Re-check
+        </Button>
+      </div>
+    );
+  }
+
+  const remotes = status.remotes ?? [];
+
+  return (
+    <div className="space-y-3">
+      {status.error ? (
+        <p className="rounded-md border border-red-500/30 bg-red-500/5 px-3 py-2 text-[12px] text-red-400">
+          {status.error}
+        </p>
+      ) : null}
+
+      {remotes.length === 0 ? (
+        <div className="space-y-2 rounded-md border border-amber-500/30 bg-amber-500/5 p-3 text-[12px] text-amber-200/90">
+          <p className="font-medium">No rclone remotes configured</p>
+          <p>
+            Run <span className="font-mono">rclone config</span> to add one (choose <span className="font-mono">drive</span>{" "}
+            for Google Drive), then re-check.
+          </p>
+          <Button icon={ArrowPathIcon} variant="secondary" size="sm" onClick={onRetry}>
+            Re-check
+          </Button>
+        </div>
+      ) : (
+        <>
+          <label className="block">
+            <span className="text-xs font-medium text-zinc-400">Remote</span>
+            <select
+              value={remote}
+              onChange={(e) => onRemote(e.target.value)}
+              className="mt-1.5 w-full rounded-md border border-zinc-700 bg-zinc-950 px-3 py-1.5 font-mono text-[12px] text-zinc-200 outline-none focus:border-blue-500"
+            >
+              {remotes.map((r) => (
+                <option key={r} value={r}>
+                  {r}
+                </option>
+              ))}
+            </select>
+          </label>
+
+          <label className="block">
+            <span className="text-xs font-medium text-zinc-400">Destination path</span>
+            <input
+              value={path}
+              onChange={(e) => onPath(e.target.value)}
+              placeholder="PAIM-Backup"
+              className="mt-1.5 w-full rounded-md border border-zinc-700 bg-zinc-950 px-3 py-1.5 font-mono text-[12px] text-zinc-200 outline-none focus:border-blue-500"
+            />
+            <span className="mt-1 block text-[11px] text-zinc-500">
+              Folder within the remote where the archive tree is mirrored.
+            </span>
+          </label>
+        </>
+      )}
+    </div>
   );
 }
 
@@ -295,6 +458,12 @@ function configSummary(configJson: string): string {
   try {
     const parsed = JSON.parse(configJson) as Record<string, unknown>;
     if (typeof parsed.root === "string" && parsed.root) return parsed.root;
+    // rclone: show "remote:path" (e.g. gdrive:PAIM-Backup).
+    if (typeof parsed.remote === "string" && parsed.remote) {
+      const rem = parsed.remote.endsWith(":") ? parsed.remote : `${parsed.remote}:`;
+      const p = typeof parsed.path === "string" ? parsed.path.replace(/^\/+/, "") : "";
+      return p ? `${rem}${p}` : rem;
+    }
     const entries = Object.entries(parsed);
     if (entries.length === 0) return "No configuration";
     return entries.map(([k, v]) => `${k}: ${String(v)}`).join(" · ");

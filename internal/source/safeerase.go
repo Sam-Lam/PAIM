@@ -6,6 +6,7 @@ import (
 	"io/fs"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 // ArchivedAsset is the minimal view of a stored asset that safe-to-erase needs.
@@ -22,14 +23,36 @@ type ArchivedAsset struct {
 	Verified bool
 	// BackupComplete is true when all required backups for the asset are complete.
 	BackupComplete bool
+	// HasArchiveCopy is true when the asset has its own archived copy (a non-empty
+	// CurrentArchivePath). It gates the fast path: a copy-mode duplicate placeholder
+	// (no archive copy, never backed up on its own) is NOT authoritative for its
+	// source file's status — the canonical original is — so such a match falls back
+	// to the hashing path, which resolves the canonical asset by content hash.
+	HasArchiveCopy bool
+	// OriginalFullPath is the absolute source path recorded when the asset was
+	// imported. It is the key of the catalog-informed fast path (a source file at
+	// this exact path may be the same file PAIM already verified at import).
+	OriginalFullPath string
+	// FileSize is the asset's recorded byte size, the fast path's size gate.
+	FileSize int64
+	// ImportDate is when PAIM imported (and verified) the asset. The fast path
+	// trusts a source file whose mtime is at or before this instant — i.e. it has
+	// not been modified since PAIM last read and verified its bytes.
+	ImportDate time.Time
 }
 
-// AssetLookup finds archived assets by content hash. Implemented over the asset
-// repo and wired in main.go/services; kept narrow so this package stays testable
-// with fakes.
+// AssetLookup finds archived assets by content hash or original source path.
+// Implemented over the asset repo and wired in main.go/services; kept narrow so
+// this package stays testable with fakes.
 type AssetLookup interface {
 	// FindByQuickHash returns every non-deleted asset sharing the quick hash.
 	FindByQuickHash(ctx context.Context, quickHash string) ([]ArchivedAsset, error)
+	// FindByOriginalPath returns every non-deleted asset whose recorded original
+	// source path equals path. It powers the catalog-informed fast path so a
+	// just-imported card can be evaluated without re-hashing. An implementation
+	// that cannot answer (or has no such asset) returns an empty slice, which
+	// simply forces the (correct) hashing path for that file.
+	FindByOriginalPath(ctx context.Context, path string) ([]ArchivedAsset, error)
 }
 
 // FullHasher optionally provides a file's full hash, used to confirm a match
@@ -58,6 +81,22 @@ type SafeToEraseReport struct {
 	Unverified int `json:"unverified"`
 	// BackupIncomplete counts files whose verified asset lacks complete backups.
 	BackupIncomplete int `json:"backupIncomplete"`
+
+	// FastPath counts files classified from the catalog without hashing (the
+	// file's path+size matched an imported asset and its mtime proved it
+	// unmodified since import). Hashed counts files that had to be (re)hashed
+	// because they missed the catalog lookup, size-mismatched, or were modified
+	// after import. FastPath+Hashed == TotalMedia. The pair makes the speedup
+	// honest and visible; it does not change the evaluation's semantics.
+	FastPath int `json:"fastPath"`
+	Hashed   int `json:"hashed"`
+
+	// SafeFiles is the absolute path of every media file classified as Archived
+	// (verified + fully backed up) — exactly the set a source-clear operation may
+	// move to trash. It is memory-bounded (paths only) and never serialized to the
+	// frontend: the clear action re-reads it server-side, never re-deciding on its
+	// own.
+	SafeFiles []string `json:"-"`
 }
 
 // SafeToEraseProgress reports safe-to-erase evaluation progress: how many media
@@ -66,17 +105,45 @@ type SafeToEraseReport struct {
 // hash (enumeration completes up front) so the UI can render a determinate bar.
 type SafeToEraseProgress func(filesDone, filesTotal int, currentFile string)
 
+// walkedFile is a media file discovered by the enumeration phase, carrying the
+// size and mtime the fast path needs so classification does not stat again.
+type walkedFile struct {
+	path    string
+	size    int64
+	modTime time.Time
+}
+
+// classification is the single bucket a media file falls into.
+type classification int
+
+const (
+	classArchived classification = iota
+	classNew
+	classUnverified
+	classBackupIncomplete
+)
+
 // EvaluateSafeToErase walks the media files under root and reports whether the
 // source is safe to erase. Every media file must map — by quick hash, confirmed
-// by full hash on a quick-hash collision — to a verified asset whose required
-// backups are complete. Any New, Unverified, or BackupIncomplete file makes the
-// volume unsafe.
+// by full hash on a quick-hash collision, OR by the catalog-informed fast path —
+// to a verified asset whose required backups are complete. Any New, Unverified,
+// or BackupIncomplete file makes the volume unsafe.
 //
 // It runs in two phases so progress is determinate: first it enumerates every
-// media file under root (fast, no hashing) to learn the total, then it hashes
-// and classifies each one, invoking progressFn (which may be nil) per file. The
-// hashing phase is the slow part on a large card, which is why it is a
-// re-attachable background job at the service layer.
+// media file under root (fast, no hashing) recording each file's size and mtime,
+// then it classifies each one, invoking progressFn (which may be nil) per file.
+//
+// Fast path: before hashing a file, it asks the lookup for an asset recorded with
+// this exact original source path. If one exists whose FileSize matches the
+// file's size AND whose ImportDate is at or after the file's mtime (the file has
+// not been touched since PAIM verified it at import), the asset's own
+// verification+backup status classifies the file WITHOUT hashing. This mirrors
+// the size+mtime staleness gate the analyze→import hash reuse already relies on:
+// the same trust posture (unchanged size+mtime ⇒ unchanged bytes). Any file that
+// misses the lookup, size-mismatches, or was modified after import falls back to
+// the full hashing path for that file only. The result semantics are identical to
+// hashing every file; only the compute path differs. FastPath/Hashed counts
+// record how many files took each path.
 //
 // lookup and isMedia are injected (rather than being constructor dependencies of
 // the Identifier) because they are only needed for this evaluation.
@@ -101,9 +168,9 @@ func (id *Identifier) EvaluateSafeToErase(
 	report := &SafeToEraseReport{SourceID: sourceID}
 	fullHasher, _ := id.hasher.(FullHasher)
 
-	// Phase 1: enumerate media files (no hashing) so the total is known before the
-	// slow classification phase begins.
-	var mediaFiles []string
+	// Phase 1: enumerate media files (no content hashing) recording size+mtime so
+	// the total is known before classification and the fast path need not re-stat.
+	var mediaFiles []walkedFile
 	walkErr := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			if d != nil && d.IsDir() {
@@ -127,7 +194,12 @@ func (id *Identifier) EvaluateSafeToErase(
 		if !isMedia(normaliseExt(name)) {
 			return nil
 		}
-		mediaFiles = append(mediaFiles, path)
+		wf := walkedFile{path: path}
+		if info, ierr := d.Info(); ierr == nil {
+			wf.size = info.Size()
+			wf.modTime = info.ModTime()
+		}
+		mediaFiles = append(mediaFiles, wf)
 		return nil
 	})
 	if walkErr != nil {
@@ -140,15 +212,32 @@ func (id *Identifier) EvaluateSafeToErase(
 		progressFn(0, total, "")
 	}
 
-	// Phase 2: hash and classify each media file, reporting progress per file.
-	for i, path := range mediaFiles {
+	// Phase 2: classify each media file (fast path first, hashing as fallback),
+	// reporting progress per file.
+	for i, wf := range mediaFiles {
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return nil, ctxErr
 		}
 		if progressFn != nil {
-			progressFn(i, total, path)
+			progressFn(i, total, wf.path)
 		}
-		classifyFile(ctx, id.hasher, fullHasher, lookup, path, report)
+		cls, hashed := classifyFile(ctx, id.hasher, fullHasher, lookup, wf)
+		switch cls {
+		case classArchived:
+			report.Archived++
+			report.SafeFiles = append(report.SafeFiles, wf.path)
+		case classNew:
+			report.New++
+		case classUnverified:
+			report.Unverified++
+		case classBackupIncomplete:
+			report.BackupIncomplete++
+		}
+		if hashed {
+			report.Hashed++
+		} else {
+			report.FastPath++
+		}
 	}
 	if progressFn != nil {
 		progressFn(total, total, "")
@@ -158,26 +247,58 @@ func (id *Identifier) EvaluateSafeToErase(
 	return report, nil
 }
 
-// classifyFile buckets a single media file into exactly one of the report's
-// counters (Archived, New, Unverified, BackupIncomplete).
+// classifyFile buckets a single media file into exactly one classification,
+// returning whether the file had to be hashed (false = classified via the
+// catalog-informed fast path).
 func classifyFile(
 	ctx context.Context,
 	hasher FileHasher,
 	fullHasher FullHasher,
 	lookup AssetLookup,
+	wf walkedFile,
+) (classification, bool) {
+	if asset, ok := fastPathAsset(ctx, lookup, wf); ok {
+		return bucketFor(asset), false
+	}
+	return classifyByHash(ctx, hasher, fullHasher, lookup, wf.path), true
+}
+
+// fastPathAsset returns the imported asset that lets wf be classified without
+// hashing: one recorded at wf's exact original path whose size matches and whose
+// ImportDate is at or after wf's mtime (proving wf is unmodified since PAIM
+// verified it). It returns ok=false — forcing the hashing path — when the file
+// misses the lookup, size-mismatches, or was modified after import.
+func fastPathAsset(ctx context.Context, lookup AssetLookup, wf walkedFile) (ArchivedAsset, bool) {
+	candidates, err := lookup.FindByOriginalPath(ctx, wf.path)
+	if err != nil || len(candidates) == 0 {
+		return ArchivedAsset{}, false
+	}
+	for _, c := range candidates {
+		if c.HasArchiveCopy && c.FileSize == wf.size && !wf.modTime.After(c.ImportDate) {
+			return c, true
+		}
+	}
+	return ArchivedAsset{}, false
+}
+
+// classifyByHash buckets a media file by (re)hashing it: quick hash, confirmed by
+// full hash on a quick-hash collision, then the matched asset's verification and
+// backup status.
+func classifyByHash(
+	ctx context.Context,
+	hasher FileHasher,
+	fullHasher FullHasher,
+	lookup AssetLookup,
 	path string,
-	report *SafeToEraseReport,
-) {
+) classification {
 	quick, err := hasher.QuickHash(path)
 	if err != nil {
 		// Unreadable/unhashable source file: cannot prove it is archived.
-		report.Unverified++
-		return
+		return classUnverified
 	}
 	candidates, err := lookup.FindByQuickHash(ctx, quick)
 	if err != nil || len(candidates) == 0 {
-		report.New++
-		return
+		return classNew
 	}
 
 	// Narrow to the asset that actually corresponds to this file. With a single
@@ -186,17 +307,21 @@ func classifyFile(
 	asset, resolved := resolveAsset(fullHasher, path, candidates)
 	if !resolved {
 		// Could not confirm which colliding asset this file is: be conservative.
-		report.Unverified++
-		return
+		return classUnverified
 	}
+	return bucketFor(asset)
+}
 
+// bucketFor classifies an already-resolved archived asset by its verification and
+// backup status.
+func bucketFor(asset ArchivedAsset) classification {
 	switch {
 	case !asset.Verified:
-		report.Unverified++
+		return classUnverified
 	case !asset.BackupComplete:
-		report.BackupIncomplete++
+		return classBackupIncomplete
 	default:
-		report.Archived++
+		return classArchived
 	}
 }
 

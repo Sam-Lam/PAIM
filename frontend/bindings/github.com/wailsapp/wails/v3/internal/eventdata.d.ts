@@ -24,6 +24,7 @@ declare module "@wailsio/runtime" {
             "library:progress": services$0.LibraryProgress;
             "log:export-progress": services$0.LogExportProgress;
             "reorganize:plan-progress": services$0.ReorganizePlanProgress;
+            "source:cleared": services$0.SourceCleared;
             "source:evaluated": services$0.SourceEvaluated;
             "source:identified": services$0.SourceIdentified;
             "source:progress": services$0.SourceProgress;

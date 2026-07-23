@@ -30,6 +30,7 @@ const (
 	EventSourceIdentified   = "source:identified"
 	EventSourceProgress     = "source:progress"
 	EventSourceEvaluated    = "source:evaluated"
+	EventSourceCleared      = "source:cleared"
 	EventCleanupProgress    = "cleanup:progress"
 	EventCleanupCompleted   = "cleanup:completed"
 	EventReorganizePlan     = "reorganize:plan-progress"
@@ -130,8 +131,10 @@ type SourceIdentified struct {
 
 // SourceProgress is the payload for source:progress, carrying the progress of a
 // long-running source operation. Kind is "safe-to-erase" (determinate:
-// FilesTotal is known) or "identify" (indeterminate: only Scanned advances,
-// FilesTotal is 0). MountPoint correlates the update with a volume card.
+// FilesTotal is known), "clear" (determinate: moving evaluated-safe files to
+// trash), or "identify" (indeterminate: only Scanned advances, FilesTotal is 0).
+// MountPoint correlates the update with a volume card (or the source root for a
+// clear).
 type SourceProgress struct {
 	Kind        string `json:"kind"`
 	MountPoint  string `json:"mountPoint"`
@@ -150,6 +153,19 @@ type SourceEvaluated struct {
 	Report     *SafeToEraseDTO `json:"report"`
 	Cancelled  bool            `json:"cancelled"`
 	Error      string          `json:"error"`
+}
+
+// SourceCleared is the payload for source:cleared, emitted once when a background
+// clear-source job finishes (successfully or cancelled). Moved is how many
+// evaluated-safe files were moved into TrashDir; SkippedUnsafe is how many unsafe
+// files were deliberately left in place; Errors is how many moves failed.
+type SourceCleared struct {
+	Root          string `json:"root"`
+	TrashDir      string `json:"trashDir"`
+	Moved         int    `json:"moved"`
+	SkippedUnsafe int    `json:"skippedUnsafe"`
+	Errors        int    `json:"errors"`
+	Cancelled     bool   `json:"cancelled"`
 }
 
 // CleanupProgress is the payload for cleanup:progress. FilesDone advances per

@@ -17,6 +17,16 @@ import { Call as $Call, CancellablePromise as $CancellablePromise, Create as $Cr
 import * as $models from "./models.js";
 
 /**
+ * ActiveClearSource returns the current clear job's state for re-attachment.
+ * @returns {$CancellablePromise<$models.ActiveClearSourceDTO>}
+ */
+export function ActiveClearSource() {
+    return $Call.ByID(3666593646).then(/** @type {($result: any) => any} */(($result) => {
+        return $$createType0($result);
+    }));
+}
+
+/**
  * ActiveSafeToErase returns the current evaluation state for re-attachment:
  * "running" with the latest progress snapshot, "completed" with the report (or a
  * cancelled/failed marker), or "none". A completed snapshot lapses to "none"
@@ -25,7 +35,7 @@ import * as $models from "./models.js";
  */
 export function ActiveSafeToErase() {
     return $Call.ByID(1201452976).then(/** @type {($result: any) => any} */(($result) => {
-        return $$createType0($result);
+        return $$createType1($result);
     }));
 }
 
@@ -37,6 +47,15 @@ export function ActiveSafeToErase() {
  */
 export function Bind(core) {
     return $Call.ByID(1781319071, core);
+}
+
+/**
+ * CancelClearSource cancels a running clear (if any). Files already moved stay
+ * moved; the job stops cleanly before the next file.
+ * @returns {$CancellablePromise<void>}
+ */
+export function CancelClearSource() {
+    return $Call.ByID(2312521710);
 }
 
 /**
@@ -59,6 +78,20 @@ export function CancelSafeToErase() {
 }
 
 /**
+ * ClearSourcePreview validates the clear gate for root and returns the confirm-
+ * dialog inputs (file count, total bytes, trash destination). It returns a typed
+ * gate error when the evaluation is missing, stale, red, for a different root, or
+ * when root overlaps the library.
+ * @param {string} root
+ * @returns {$CancellablePromise<$models.ClearSourcePreviewDTO>}
+ */
+export function ClearSourcePreview(root) {
+    return $Call.ByID(4285950892, root).then(/** @type {($result: any) => any} */(($result) => {
+        return $$createType2($result);
+    }));
+}
+
+/**
  * IdentifyVolume identifies the volume at mountPoint, persists the resulting
  * source (creating a new record or updating the matched one and its LastSeen),
  * emits source:identified, and returns the match with confidence and reasons.
@@ -67,7 +100,7 @@ export function CancelSafeToErase() {
  */
 export function IdentifyVolume(mountPoint) {
     return $Call.ByID(3239382622, mountPoint).then(/** @type {($result: any) => any} */(($result) => {
-        return $$createType1($result);
+        return $$createType3($result);
     }));
 }
 
@@ -77,7 +110,7 @@ export function IdentifyVolume(mountPoint) {
  */
 export function ListKnownSources() {
     return $Call.ByID(3142920755).then(/** @type {($result: any) => any} */(($result) => {
-        return $$createType3($result);
+        return $$createType5($result);
     }));
 }
 
@@ -87,7 +120,7 @@ export function ListKnownSources() {
  */
 export function ListVolumes() {
     return $Call.ByID(2030789603).then(/** @type {($result: any) => any} */(($result) => {
-        return $$createType5($result);
+        return $$createType7($result);
     }));
 }
 
@@ -112,6 +145,27 @@ export function SetSleepGuard(g) {
 }
 
 /**
+ * StartClearSource launches a background job that moves every evaluated-safe media
+ * file under root into <root>/.paim-trash/<yyyymmdd-hhmmss>/, preserving each
+ * file's path relative to root (so identically-named files across subfolders never
+ * collide). It is gated: a fresh GREEN safe-to-erase evaluation for exactly this
+ * root must exist (validateClearGate), else a typed error the UI renders as
+ * "evaluate first". PAIM never hard-deletes — the user formats the card or empties
+ * the trash folder afterward. Files that are not evaluated-safe are never touched.
+ * 
+ * The job is cancellable between files: cancelling stops cleanly before the next
+ * move; files already moved stay moved (they are provably safe — that is the whole
+ * point). It is activity-tracked (quit guard) and sleep-guarded.
+ * @param {string} root
+ * @returns {$CancellablePromise<$models.StartClearSourceResult>}
+ */
+export function StartClearSource(root) {
+    return $Call.ByID(2705697556, root).then(/** @type {($result: any) => any} */(($result) => {
+        return $$createType8($result);
+    }));
+}
+
+/**
  * StartSafeToErase launches a background safe-to-erase evaluation of the volume
  * at mountPoint. Only one evaluation may run at a time (ErrSafeToEraseInProgress
  * otherwise). It emits throttled source:progress (kind "safe-to-erase") while
@@ -124,7 +178,7 @@ export function SetSleepGuard(g) {
  */
 export function StartSafeToErase(sourceID, mountPoint) {
     return $Call.ByID(3941016818, sourceID, mountPoint).then(/** @type {($result: any) => any} */(($result) => {
-        return $$createType6($result);
+        return $$createType9($result);
     }));
 }
 
@@ -140,10 +194,13 @@ export function StartWatching() {
 }
 
 // Private type creation functions
-const $$createType0 = $models.ActiveSafeToEraseDTO.createFrom;
-const $$createType1 = $models.MatchDTO.createFrom;
-const $$createType2 = $models.SourceDTO.createFrom;
-const $$createType3 = $Create.Array($$createType2);
-const $$createType4 = $models.VolumeDTO.createFrom;
+const $$createType0 = $models.ActiveClearSourceDTO.createFrom;
+const $$createType1 = $models.ActiveSafeToEraseDTO.createFrom;
+const $$createType2 = $models.ClearSourcePreviewDTO.createFrom;
+const $$createType3 = $models.MatchDTO.createFrom;
+const $$createType4 = $models.SourceDTO.createFrom;
 const $$createType5 = $Create.Array($$createType4);
-const $$createType6 = $models.StartSafeToEraseResult.createFrom;
+const $$createType6 = $models.VolumeDTO.createFrom;
+const $$createType7 = $Create.Array($$createType6);
+const $$createType8 = $models.StartClearSourceResult.createFrom;
+const $$createType9 = $models.StartSafeToEraseResult.createFrom;

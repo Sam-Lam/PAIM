@@ -105,6 +105,19 @@ export function Retry(jobID) {
 }
 
 /**
+ * SessionBackupStatus reports how many of a session's backup-eligible assets are
+ * fully backed up, so the import completion panel can show live progress and
+ * enable evaluation once backups drain.
+ * @param {string} sessionID
+ * @returns {$CancellablePromise<$models.SessionBackupStatusDTO>}
+ */
+export function SessionBackupStatus(sessionID) {
+    return $Call.ByID(3411884294, sessionID).then(/** @type {($result: any) => any} */(($result) => {
+        return $$createType3($result);
+    }));
+}
+
+/**
  * SetGate injects the shared library gate. Called once by main.go after
  * construction; never called in unit tests (leaving the service ungated).
  * @param {$models.LibraryGate | null} gate
@@ -118,3 +131,4 @@ export function SetGate(gate) {
 const $$createType0 = $models.BackupJobDTO.createFrom;
 const $$createType1 = $models.PageResult.createFrom($$createType0);
 const $$createType2 = $models.QueueSummaryDTO.createFrom;
+const $$createType3 = $models.SessionBackupStatusDTO.createFrom;

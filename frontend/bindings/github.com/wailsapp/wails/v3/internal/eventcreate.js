@@ -24,12 +24,13 @@ function configure() {
         "library:progress": $$createType9,
         "log:export-progress": $$createType10,
         "reorganize:plan-progress": $$createType11,
-        "source:evaluated": $$createType12,
-        "source:identified": $$createType13,
-        "source:progress": $$createType14,
-        "thumbs:progress": $$createType15,
-        "volume:mounted": $$createType16,
-        "volume:unmounted": $$createType16,
+        "source:cleared": $$createType12,
+        "source:evaluated": $$createType13,
+        "source:identified": $$createType14,
+        "source:progress": $$createType15,
+        "thumbs:progress": $$createType16,
+        "volume:mounted": $$createType17,
+        "volume:unmounted": $$createType17,
     }));
 }
 
@@ -46,10 +47,11 @@ const $$createType8 = services$0.ImportProgress.createFrom;
 const $$createType9 = services$0.LibraryProgress.createFrom;
 const $$createType10 = services$0.LogExportProgress.createFrom;
 const $$createType11 = services$0.ReorganizePlanProgress.createFrom;
-const $$createType12 = services$0.SourceEvaluated.createFrom;
-const $$createType13 = services$0.SourceIdentified.createFrom;
-const $$createType14 = services$0.SourceProgress.createFrom;
-const $$createType15 = services$0.ThumbsProgress.createFrom;
-const $$createType16 = services$0.VolumeEvent.createFrom;
+const $$createType12 = services$0.SourceCleared.createFrom;
+const $$createType13 = services$0.SourceEvaluated.createFrom;
+const $$createType14 = services$0.SourceIdentified.createFrom;
+const $$createType15 = services$0.SourceProgress.createFrom;
+const $$createType16 = services$0.ThumbsProgress.createFrom;
+const $$createType17 = services$0.VolumeEvent.createFrom;
 
 configure();

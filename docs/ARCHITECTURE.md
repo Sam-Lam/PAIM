@@ -440,6 +440,28 @@ The Library grid gets a view toggle (icon button in the filter bar): **Crop** (c
 the tile background, preserving aspect ratio). Preference persisted per machine
 (localStorage) and applied immediately; detail-drawer preview is always fit (unchanged).
 
+## Source clear-after-import — services, frontend
+
+Closing the import loop: once a source's contents are provably safe, offer to clear it —
+never before, and never on the import result alone.
+
+- **Gate**: clearing is allowed only after a FRESH (≤15 min) green Safe-to-Erase
+  evaluation of that source root — every media file maps to a verified archived asset
+  with required backups complete. The erase action re-validates server-side (it never
+  trusts frontend state) and refuses on any staleness or non-green result.
+- **Action**: `SourcesService.ClearSourceMedia(root)` — background job (progress events,
+  activity-tracked, sleep-guarded, cancellable) that moves each evaluated-safe media
+  file into `<sourceRoot>/.paim-trash/<timestamp>/` (PAIM never hard-deletes; the user
+  formats the card or empties the folder themselves afterward). Files that are not
+  evaluated-safe (non-media, unknown, unverified, backup-incomplete) are NEVER touched
+  and are reported. Per-file logging (subsystem "source-clear"); typed confirmation
+  ("CLEAR") stating counts and the trash location.
+- **Import completion panel**: when a copy-mode import finishes, a "Clear the source?"
+  section explains the gate ("backups must finish first"), shows live backup-queue
+  status for that session's assets, offers Evaluate now, and enables "Clear imported
+  media…" only on a green evaluation. The Dashboard's Safe-to-Erase card remains the
+  ambient surface for sources that turn green later.
+
 ## Quit guard — main.go, services, frontend
 
 Quitting must never surprise the user about in-flight work. Safety already comes from the

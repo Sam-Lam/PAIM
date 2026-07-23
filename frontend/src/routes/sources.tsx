@@ -13,6 +13,7 @@ import {
 import {
   Button,
   Card,
+  ClearSourceControl,
   DataTable,
   EmptyState,
   LoadingBlock,
@@ -281,7 +282,9 @@ function VolumeCard({
       {erase?.state === "running" ? (
         <SafeToEraseProgress progress={erase.progress} onCancel={cancelEvaluate} />
       ) : null}
-      {erase?.state === "completed" && erase.report ? <SafeToErasePanel report={erase.report} /> : null}
+      {erase?.state === "completed" && erase.report ? (
+        <SafeToErasePanel report={erase.report} root={volume.mountPoint} />
+      ) : null}
       {erase?.state === "completed" && erase.cancelled ? (
         <p className="mt-3 text-[11px] text-zinc-500">Safe-to-erase evaluation cancelled.</p>
       ) : null}
@@ -392,7 +395,7 @@ function MatchPanel({ match }: { match: MatchDTO }) {
   );
 }
 
-function SafeToErasePanel({ report }: { report: SafeToEraseDTO }) {
+function SafeToErasePanel({ report, root }: { report: SafeToEraseDTO; root: string }) {
   return (
     <div className="mt-3 rounded-lg border border-zinc-800 bg-zinc-950/40 p-3">
       <div className="mb-2 flex items-center justify-between">
@@ -407,6 +410,12 @@ function SafeToErasePanel({ report }: { report: SafeToEraseDTO }) {
         <MiniStat label="Unverified" value={report.unverified} tone={report.unverified > 0 ? "warn" : "default"} />
         <MiniStat label="Backup incomplete" value={report.backupIncomplete} tone={report.backupIncomplete > 0 ? "danger" : "default"} />
       </div>
+      {report.fastPath + report.hashed > 0 ? (
+        <p className="mt-2 text-[10px] text-zinc-600">
+          {formatNumber(report.fastPath)} verified from the catalog without re-reading · {formatNumber(report.hashed)} re-hashed
+        </p>
+      ) : null}
+      {report.safe ? <ClearSourceControl root={root} report={report} fresh /> : null}
     </div>
   );
 }

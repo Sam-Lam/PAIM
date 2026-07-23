@@ -2,6 +2,7 @@ package services
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"time"
 
@@ -61,6 +62,41 @@ func (s *BackupService) queueSummary(ctx context.Context) (QueueSummaryDTO, erro
 		values[i] = c.Count
 	}
 	return summaryFromCounts(statuses, values), nil
+}
+
+// SessionBackupStatusDTO is the live per-session backup progress the import
+// completion panel shows ("N of M backed up"). TotalAssets counts the session's
+// backup-eligible assets (those with an archive copy); BackedUp counts those
+// whose aggregate BackupStatus is complete — the same signal safe-to-erase uses
+// per asset. Complete is true when every eligible asset is backed up (or there
+// are none to back up), i.e. the usual clear-after-import blocker has cleared.
+type SessionBackupStatusDTO struct {
+	SessionID   string `json:"sessionId"`
+	TotalAssets int    `json:"totalAssets"`
+	BackedUp    int    `json:"backedUp"`
+	Complete    bool   `json:"complete"`
+}
+
+// SessionBackupStatus reports how many of a session's backup-eligible assets are
+// fully backed up, so the import completion panel can show live progress and
+// enable evaluation once backups drain.
+func (s *BackupService) SessionBackupStatus(ctx context.Context, sessionID string) (SessionBackupStatusDTO, error) {
+	if err := s.guard(); err != nil {
+		return SessionBackupStatusDTO{}, err
+	}
+	if sessionID == "" {
+		return SessionBackupStatusDTO{}, fmt.Errorf("services: session backup status: empty session id")
+	}
+	total, complete, err := s.assets.SessionBackupCounts(ctx, sessionID)
+	if err != nil {
+		return SessionBackupStatusDTO{}, err
+	}
+	return SessionBackupStatusDTO{
+		SessionID:   sessionID,
+		TotalAssets: int(total),
+		BackedUp:    int(complete),
+		Complete:    complete >= total,
+	}, nil
 }
 
 // ListJobs returns a page of backup jobs (optionally filtered by status), joined

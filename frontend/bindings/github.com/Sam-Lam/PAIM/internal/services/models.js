@@ -191,6 +191,82 @@ export class ActiveCleanupAnalyzeDTO {
 }
 
 /**
+ * ActiveClearSourceDTO is the re-attachment snapshot for a clear job: "running"
+ * (Progress holds the latest snapshot), "completed" (Result, or Cancelled/Error),
+ * or "none". A completed snapshot lapses to "none" after safeEraseReportTTL.
+ */
+export class ActiveClearSourceDTO {
+    /**
+     * Creates a new ActiveClearSourceDTO instance.
+     * @param {Partial<ActiveClearSourceDTO>} [$$source = {}] - The source object to create the ActiveClearSourceDTO.
+     */
+    constructor($$source = {}) {
+        if (!("state" in $$source)) {
+            /**
+             * @member
+             * @type {string}
+             */
+            this["state"] = "";
+        }
+        if (!("root" in $$source)) {
+            /**
+             * @member
+             * @type {string}
+             */
+            this["root"] = "";
+        }
+        if (!("progress" in $$source)) {
+            /**
+             * @member
+             * @type {SourceProgress | null}
+             */
+            this["progress"] = null;
+        }
+        if (!("result" in $$source)) {
+            /**
+             * @member
+             * @type {ClearSourceResultDTO | null}
+             */
+            this["result"] = null;
+        }
+        if (!("cancelled" in $$source)) {
+            /**
+             * @member
+             * @type {boolean}
+             */
+            this["cancelled"] = false;
+        }
+        if (!("error" in $$source)) {
+            /**
+             * @member
+             * @type {string}
+             */
+            this["error"] = "";
+        }
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new ActiveClearSourceDTO instance from a string or object.
+     * @param {any} [$$source = {}]
+     * @returns {ActiveClearSourceDTO}
+     */
+    static createFrom($$source = {}) {
+        const $$createField2_0 = $$createType10;
+        const $$createField3_0 = $$createType12;
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        if ("progress" in $$parsedSource) {
+            $$parsedSource["progress"] = $$createField2_0($$parsedSource["progress"]);
+        }
+        if ("result" in $$parsedSource) {
+            $$parsedSource["result"] = $$createField3_0($$parsedSource["result"]);
+        }
+        return new ActiveClearSourceDTO(/** @type {Partial<ActiveClearSourceDTO>} */($$parsedSource));
+    }
+}
+
+/**
  * ActiveSafeToEraseDTO is the re-attachment snapshot returned by
  * ActiveSafeToErase. State is "running" (Progress holds the latest snapshot),
  * "completed" (Report, or Cancelled/Error, is populated), or "none". MountPoint
@@ -262,7 +338,7 @@ export class ActiveSafeToEraseDTO {
      */
     static createFrom($$source = {}) {
         const $$createField3_0 = $$createType10;
-        const $$createField4_0 = $$createType12;
+        const $$createField4_0 = $$createType14;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("progress" in $$parsedSource) {
             $$parsedSource["progress"] = $$createField3_0($$parsedSource["progress"]);
@@ -471,19 +547,19 @@ export class AppCore {
      * @returns {AppCore}
      */
     static createFrom($$source = {}) {
-        const $$createField1_0 = $$createType14;
-        const $$createField2_0 = $$createType16;
-        const $$createField3_0 = $$createType18;
-        const $$createField4_0 = $$createType20;
-        const $$createField5_0 = $$createType22;
-        const $$createField6_0 = $$createType24;
-        const $$createField7_0 = $$createType26;
-        const $$createField8_0 = $$createType28;
-        const $$createField9_0 = $$createType30;
-        const $$createField10_0 = $$createType32;
-        const $$createField11_0 = $$createType34;
-        const $$createField12_0 = $$createType36;
-        const $$createField13_0 = $$createType38;
+        const $$createField1_0 = $$createType16;
+        const $$createField2_0 = $$createType18;
+        const $$createField3_0 = $$createType20;
+        const $$createField4_0 = $$createType22;
+        const $$createField5_0 = $$createType24;
+        const $$createField6_0 = $$createType26;
+        const $$createField7_0 = $$createType28;
+        const $$createField8_0 = $$createType30;
+        const $$createField9_0 = $$createType32;
+        const $$createField10_0 = $$createType34;
+        const $$createField11_0 = $$createType36;
+        const $$createField12_0 = $$createType38;
+        const $$createField13_0 = $$createType40;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("Meta" in $$parsedSource) {
             $$parsedSource["Meta"] = $$createField1_0($$parsedSource["Meta"]);
@@ -959,10 +1035,10 @@ export class AssetDetailDTO {
      * @returns {AssetDetailDTO}
      */
     static createFrom($$source = {}) {
-        const $$createField30_0 = $$createType40;
-        const $$createField31_0 = $$createType42;
-        const $$createField32_0 = $$createType43;
-        const $$createField33_0 = $$createType42;
+        const $$createField30_0 = $$createType42;
+        const $$createField31_0 = $$createType44;
+        const $$createField32_0 = $$createType45;
+        const $$createField33_0 = $$createType44;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("backupJobs" in $$parsedSource) {
             $$parsedSource["backupJobs"] = $$createField30_0($$parsedSource["backupJobs"]);
@@ -1260,7 +1336,7 @@ export class BackupQueueChanged {
      * @returns {BackupQueueChanged}
      */
     static createFrom($$source = {}) {
-        const $$createField0_0 = $$createType44;
+        const $$createField0_0 = $$createType46;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("summary" in $$parsedSource) {
             $$parsedSource["summary"] = $$createField0_0($$parsedSource["summary"]);
@@ -1544,7 +1620,7 @@ export class ClassStatDTO {
      * @returns {ClassStatDTO}
      */
     static createFrom($$source = {}) {
-        const $$createField3_0 = $$createType45;
+        const $$createField3_0 = $$createType47;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("files" in $$parsedSource) {
             $$parsedSource["files"] = $$createField3_0($$parsedSource["files"]);
@@ -1749,8 +1825,8 @@ export class CleanupReportDTO {
      * @returns {CleanupReportDTO}
      */
     static createFrom($$source = {}) {
-        const $$createField1_0 = $$createType47;
-        const $$createField9_0 = $$createType48;
+        const $$createField1_0 = $$createType49;
+        const $$createField9_0 = $$createType50;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("classes" in $$parsedSource) {
             $$parsedSource["classes"] = $$createField1_0($$parsedSource["classes"]);
@@ -1759,6 +1835,130 @@ export class CleanupReportDTO {
             $$parsedSource["recommendation"] = $$createField9_0($$parsedSource["recommendation"]);
         }
         return new CleanupReportDTO(/** @type {Partial<CleanupReportDTO>} */($$parsedSource));
+    }
+}
+
+/**
+ * ClearSourcePreviewDTO is what the confirmation dialog needs before a clear:
+ * the number of evaluated-safe files, their total size (best-effort stat), and
+ * the trash destination parent. It is produced only when the gate is satisfied;
+ * otherwise the preview call returns a typed gate error.
+ */
+export class ClearSourcePreviewDTO {
+    /**
+     * Creates a new ClearSourcePreviewDTO instance.
+     * @param {Partial<ClearSourcePreviewDTO>} [$$source = {}] - The source object to create the ClearSourcePreviewDTO.
+     */
+    constructor($$source = {}) {
+        if (!("root" in $$source)) {
+            /**
+             * @member
+             * @type {string}
+             */
+            this["root"] = "";
+        }
+        if (!("fileCount" in $$source)) {
+            /**
+             * @member
+             * @type {number}
+             */
+            this["fileCount"] = 0;
+        }
+        if (!("totalBytes" in $$source)) {
+            /**
+             * @member
+             * @type {number}
+             */
+            this["totalBytes"] = 0;
+        }
+        if (!("trashDir" in $$source)) {
+            /**
+             * @member
+             * @type {string}
+             */
+            this["trashDir"] = "";
+        }
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new ClearSourcePreviewDTO instance from a string or object.
+     * @param {any} [$$source = {}]
+     * @returns {ClearSourcePreviewDTO}
+     */
+    static createFrom($$source = {}) {
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        return new ClearSourcePreviewDTO(/** @type {Partial<ClearSourcePreviewDTO>} */($$parsedSource));
+    }
+}
+
+/**
+ * ClearSourceResultDTO summarizes a completed clear: how many evaluated-safe
+ * files were moved to the timestamped trash directory, how many unsafe files were
+ * deliberately left untouched, and how many moves errored. TrashDir is the exact
+ * destination so the UI can tell the user where the files went.
+ */
+export class ClearSourceResultDTO {
+    /**
+     * Creates a new ClearSourceResultDTO instance.
+     * @param {Partial<ClearSourceResultDTO>} [$$source = {}] - The source object to create the ClearSourceResultDTO.
+     */
+    constructor($$source = {}) {
+        if (!("root" in $$source)) {
+            /**
+             * @member
+             * @type {string}
+             */
+            this["root"] = "";
+        }
+        if (!("trashDir" in $$source)) {
+            /**
+             * @member
+             * @type {string}
+             */
+            this["trashDir"] = "";
+        }
+        if (!("moved" in $$source)) {
+            /**
+             * @member
+             * @type {number}
+             */
+            this["moved"] = 0;
+        }
+        if (!("skippedUnsafe" in $$source)) {
+            /**
+             * @member
+             * @type {number}
+             */
+            this["skippedUnsafe"] = 0;
+        }
+        if (!("errors" in $$source)) {
+            /**
+             * @member
+             * @type {number}
+             */
+            this["errors"] = 0;
+        }
+        if (!("cancelled" in $$source)) {
+            /**
+             * @member
+             * @type {boolean}
+             */
+            this["cancelled"] = false;
+        }
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new ClearSourceResultDTO instance from a string or object.
+     * @param {any} [$$source = {}]
+     * @returns {ClearSourceResultDTO}
+     */
+    static createFrom($$source = {}) {
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        return new ClearSourceResultDTO(/** @type {Partial<ClearSourceResultDTO>} */($$parsedSource));
     }
 }
 
@@ -1897,12 +2097,12 @@ export class DashboardStats {
      * @returns {DashboardStats}
      */
     static createFrom($$source = {}) {
-        const $$createField0_0 = $$createType49;
-        const $$createField1_0 = $$createType51;
-        const $$createField3_0 = $$createType52;
-        const $$createField5_0 = $$createType54;
-        const $$createField6_0 = $$createType54;
-        const $$createField7_0 = $$createType56;
+        const $$createField0_0 = $$createType51;
+        const $$createField1_0 = $$createType53;
+        const $$createField3_0 = $$createType54;
+        const $$createField5_0 = $$createType56;
+        const $$createField6_0 = $$createType56;
+        const $$createField7_0 = $$createType58;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("totals" in $$parsedSource) {
             $$parsedSource["totals"] = $$createField0_0($$parsedSource["totals"]);
@@ -2101,8 +2301,8 @@ export class DuplicatePairDTO {
      * @returns {DuplicatePairDTO}
      */
     static createFrom($$source = {}) {
-        const $$createField0_0 = $$createType57;
-        const $$createField1_0 = $$createType57;
+        const $$createField0_0 = $$createType59;
+        const $$createField1_0 = $$createType59;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("duplicate" in $$parsedSource) {
             $$parsedSource["duplicate"] = $$createField0_0($$parsedSource["duplicate"]);
@@ -2740,8 +2940,8 @@ export class MatchDTO {
      * @returns {MatchDTO}
      */
     static createFrom($$source = {}) {
-        const $$createField1_0 = $$createType53;
-        const $$createField3_0 = $$createType45;
+        const $$createField1_0 = $$createType55;
+        const $$createField3_0 = $$createType47;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("source" in $$parsedSource) {
             $$parsedSource["source"] = $$createField1_0($$parsedSource["source"]);
@@ -2837,8 +3037,8 @@ export class OpenResultDTO {
      * @returns {OpenResultDTO}
      */
     static createFrom($$source = {}) {
-        const $$createField1_0 = $$createType59;
-        const $$createField2_0 = $$createType61;
+        const $$createField1_0 = $$createType61;
+        const $$createField2_0 = $$createType63;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("library" in $$parsedSource) {
             $$parsedSource["library"] = $$createField1_0($$parsedSource["library"]);
@@ -2973,7 +3173,7 @@ export class PageResult {
      * @returns {($$source?: any) => PageResult<T>}
      */
     static createFrom($$createParamT) {
-        const $$createField0_0 = $$createType62($$createParamT);
+        const $$createField0_0 = $$createType64($$createParamT);
         return ($$source = {}) => {
             let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
             if ("items" in $$parsedSource) {
@@ -3197,12 +3397,73 @@ export class QuitRequested {
      * @returns {QuitRequested}
      */
     static createFrom($$source = {}) {
-        const $$createField0_0 = $$createType64;
+        const $$createField0_0 = $$createType66;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("operations" in $$parsedSource) {
             $$parsedSource["operations"] = $$createField0_0($$parsedSource["operations"]);
         }
         return new QuitRequested(/** @type {Partial<QuitRequested>} */($$parsedSource));
+    }
+}
+
+/**
+ * RcloneRemotesDTO reports rclone's install status and the remotes it has
+ * configured, for the Add-destination UI. When Installed is false the UI shows
+ * install guidance (brew install rclone) instead of a remotes dropdown; when
+ * Installed is true but Error is set, rclone is present but listing its remotes
+ * failed (surfaced inline). This is deliberately NOT gated on an open library —
+ * discovering rclone remotes is independent of the catalog.
+ */
+export class RcloneRemotesDTO {
+    /**
+     * Creates a new RcloneRemotesDTO instance.
+     * @param {Partial<RcloneRemotesDTO>} [$$source = {}] - The source object to create the RcloneRemotesDTO.
+     */
+    constructor($$source = {}) {
+        if (!("installed" in $$source)) {
+            /**
+             * @member
+             * @type {boolean}
+             */
+            this["installed"] = false;
+        }
+        if (!("binary" in $$source)) {
+            /**
+             * @member
+             * @type {string}
+             */
+            this["binary"] = "";
+        }
+        if (!("remotes" in $$source)) {
+            /**
+             * @member
+             * @type {string[]}
+             */
+            this["remotes"] = [];
+        }
+        if (!("error" in $$source)) {
+            /**
+             * @member
+             * @type {string}
+             */
+            this["error"] = "";
+        }
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new RcloneRemotesDTO instance from a string or object.
+     * @param {any} [$$source = {}]
+     * @returns {RcloneRemotesDTO}
+     */
+    static createFrom($$source = {}) {
+        const $$createField2_0 = $$createType47;
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        if ("remotes" in $$parsedSource) {
+            $$parsedSource["remotes"] = $$createField2_0($$parsedSource["remotes"]);
+        }
+        return new RcloneRemotesDTO(/** @type {Partial<RcloneRemotesDTO>} */($$parsedSource));
     }
 }
 
@@ -3298,7 +3559,7 @@ export class RecommendationDTO {
      * @returns {RecommendationDTO}
      */
     static createFrom($$source = {}) {
-        const $$createField3_0 = $$createType45;
+        const $$createField3_0 = $$createType47;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("reasons" in $$parsedSource) {
             $$parsedSource["reasons"] = $$createField3_0($$parsedSource["reasons"]);
@@ -3436,8 +3697,8 @@ export class ReorganizePlanDTO {
      * @returns {ReorganizePlanDTO}
      */
     static createFrom($$source = {}) {
-        const $$createField6_0 = $$createType66;
-        const $$createField7_0 = $$createType68;
+        const $$createField6_0 = $$createType68;
+        const $$createField7_0 = $$createType70;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("movesSample" in $$parsedSource) {
             $$parsedSource["movesSample"] = $$createField6_0($$parsedSource["movesSample"]);
@@ -3543,7 +3804,9 @@ export class ReorganizeSkipDTO {
 }
 
 /**
- * SafeToEraseDTO is the JSON-friendly safe-to-erase report.
+ * SafeToEraseDTO is the JSON-friendly safe-to-erase report. FastPath/Hashed
+ * report how many media files were classified from the catalog without hashing
+ * vs by (re)hashing, so the UI can show how cheap a just-imported evaluation was.
  */
 export class SafeToEraseDTO {
     /**
@@ -3606,6 +3869,20 @@ export class SafeToEraseDTO {
              * @type {number}
              */
             this["backupIncomplete"] = 0;
+        }
+        if (!("fastPath" in $$source)) {
+            /**
+             * @member
+             * @type {number}
+             */
+            this["fastPath"] = 0;
+        }
+        if (!("hashed" in $$source)) {
+            /**
+             * @member
+             * @type {number}
+             */
+            this["hashed"] = 0;
         }
 
         Object.assign(this, $$source);
@@ -3693,6 +3970,63 @@ export class ScanSummary {
     static createFrom($$source = {}) {
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         return new ScanSummary(/** @type {Partial<ScanSummary>} */($$parsedSource));
+    }
+}
+
+/**
+ * SessionBackupStatusDTO is the live per-session backup progress the import
+ * completion panel shows ("N of M backed up"). TotalAssets counts the session's
+ * backup-eligible assets (those with an archive copy); BackedUp counts those
+ * whose aggregate BackupStatus is complete — the same signal safe-to-erase uses
+ * per asset. Complete is true when every eligible asset is backed up (or there
+ * are none to back up), i.e. the usual clear-after-import blocker has cleared.
+ */
+export class SessionBackupStatusDTO {
+    /**
+     * Creates a new SessionBackupStatusDTO instance.
+     * @param {Partial<SessionBackupStatusDTO>} [$$source = {}] - The source object to create the SessionBackupStatusDTO.
+     */
+    constructor($$source = {}) {
+        if (!("sessionId" in $$source)) {
+            /**
+             * @member
+             * @type {string}
+             */
+            this["sessionId"] = "";
+        }
+        if (!("totalAssets" in $$source)) {
+            /**
+             * @member
+             * @type {number}
+             */
+            this["totalAssets"] = 0;
+        }
+        if (!("backedUp" in $$source)) {
+            /**
+             * @member
+             * @type {number}
+             */
+            this["backedUp"] = 0;
+        }
+        if (!("complete" in $$source)) {
+            /**
+             * @member
+             * @type {boolean}
+             */
+            this["complete"] = false;
+        }
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new SessionBackupStatusDTO instance from a string or object.
+     * @param {any} [$$source = {}]
+     * @returns {SessionBackupStatusDTO}
+     */
+    static createFrom($$source = {}) {
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        return new SessionBackupStatusDTO(/** @type {Partial<SessionBackupStatusDTO>} */($$parsedSource));
     }
 }
 
@@ -3855,8 +4189,8 @@ export class SessionDetail {
      * @returns {SessionDetail}
      */
     static createFrom($$source = {}) {
-        const $$createField0_0 = $$createType69;
-        const $$createField1_0 = $$createType56;
+        const $$createField0_0 = $$createType71;
+        const $$createField1_0 = $$createType58;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("session" in $$parsedSource) {
             $$parsedSource["session"] = $$createField0_0($$parsedSource["session"]);
@@ -4095,6 +4429,75 @@ export class SnapshotStatusDTO {
 }
 
 /**
+ * SourceCleared is the payload for source:cleared, emitted once when a background
+ * clear-source job finishes (successfully or cancelled). Moved is how many
+ * evaluated-safe files were moved into TrashDir; SkippedUnsafe is how many unsafe
+ * files were deliberately left in place; Errors is how many moves failed.
+ */
+export class SourceCleared {
+    /**
+     * Creates a new SourceCleared instance.
+     * @param {Partial<SourceCleared>} [$$source = {}] - The source object to create the SourceCleared.
+     */
+    constructor($$source = {}) {
+        if (!("root" in $$source)) {
+            /**
+             * @member
+             * @type {string}
+             */
+            this["root"] = "";
+        }
+        if (!("trashDir" in $$source)) {
+            /**
+             * @member
+             * @type {string}
+             */
+            this["trashDir"] = "";
+        }
+        if (!("moved" in $$source)) {
+            /**
+             * @member
+             * @type {number}
+             */
+            this["moved"] = 0;
+        }
+        if (!("skippedUnsafe" in $$source)) {
+            /**
+             * @member
+             * @type {number}
+             */
+            this["skippedUnsafe"] = 0;
+        }
+        if (!("errors" in $$source)) {
+            /**
+             * @member
+             * @type {number}
+             */
+            this["errors"] = 0;
+        }
+        if (!("cancelled" in $$source)) {
+            /**
+             * @member
+             * @type {boolean}
+             */
+            this["cancelled"] = false;
+        }
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new SourceCleared instance from a string or object.
+     * @param {any} [$$source = {}]
+     * @returns {SourceCleared}
+     */
+    static createFrom($$source = {}) {
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        return new SourceCleared(/** @type {Partial<SourceCleared>} */($$parsedSource));
+    }
+}
+
+/**
  * SourceDTO is the JSON-friendly projection of an ImportSource.
  */
 export class SourceDTO {
@@ -4286,7 +4689,7 @@ export class SourceEvaluated {
      * @returns {SourceEvaluated}
      */
     static createFrom($$source = {}) {
-        const $$createField2_0 = $$createType12;
+        const $$createField2_0 = $$createType14;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("report" in $$parsedSource) {
             $$parsedSource["report"] = $$createField2_0($$parsedSource["report"]);
@@ -4351,8 +4754,10 @@ export class SourceIdentified {
 /**
  * SourceProgress is the payload for source:progress, carrying the progress of a
  * long-running source operation. Kind is "safe-to-erase" (determinate:
- * FilesTotal is known) or "identify" (indeterminate: only Scanned advances,
- * FilesTotal is 0). MountPoint correlates the update with a volume card.
+ * FilesTotal is known), "clear" (determinate: moving evaluated-safe files to
+ * trash), or "identify" (indeterminate: only Scanned advances, FilesTotal is 0).
+ * MountPoint correlates the update with a volume card (or the source root for a
+ * clear).
  */
 export class SourceProgress {
     /**
@@ -4481,6 +4886,51 @@ export class StartCleanupAnalyzeResult {
     static createFrom($$source = {}) {
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         return new StartCleanupAnalyzeResult(/** @type {Partial<StartCleanupAnalyzeResult>} */($$parsedSource));
+    }
+}
+
+/**
+ * StartClearSourceResult is returned immediately once the clear job launches.
+ */
+export class StartClearSourceResult {
+    /**
+     * Creates a new StartClearSourceResult instance.
+     * @param {Partial<StartClearSourceResult>} [$$source = {}] - The source object to create the StartClearSourceResult.
+     */
+    constructor($$source = {}) {
+        if (!("root" in $$source)) {
+            /**
+             * @member
+             * @type {string}
+             */
+            this["root"] = "";
+        }
+        if (!("trashDir" in $$source)) {
+            /**
+             * @member
+             * @type {string}
+             */
+            this["trashDir"] = "";
+        }
+        if (!("files" in $$source)) {
+            /**
+             * @member
+             * @type {number}
+             */
+            this["files"] = 0;
+        }
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new StartClearSourceResult instance from a string or object.
+     * @param {any} [$$source = {}]
+     * @returns {StartClearSourceResult}
+     */
+    static createFrom($$source = {}) {
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        return new StartClearSourceResult(/** @type {Partial<StartClearSourceResult>} */($$parsedSource));
     }
 }
 
@@ -4914,7 +5364,7 @@ export class VolumeDTO {
      * @returns {VolumeDTO}
      */
     static createFrom($$source = {}) {
-        const $$createField16_0 = $$createType45;
+        const $$createField16_0 = $$createType47;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("warnings" in $$parsedSource) {
             $$parsedSource["warnings"] = $$createField16_0($$parsedSource["warnings"]);
@@ -5018,62 +5468,64 @@ const $$createType7 = CleanupReportDTO.createFrom;
 const $$createType8 = $Create.Nullable($$createType7);
 const $$createType9 = SourceProgress.createFrom;
 const $$createType10 = $Create.Nullable($$createType9);
-const $$createType11 = SafeToEraseDTO.createFrom;
+const $$createType11 = ClearSourceResultDTO.createFrom;
 const $$createType12 = $Create.Nullable($$createType11);
-const $$createType13 = db$0.Meta.createFrom;
+const $$createType13 = SafeToEraseDTO.createFrom;
 const $$createType14 = $Create.Nullable($$createType13);
-const $$createType15 = gorm$0.DB.createFrom;
+const $$createType15 = db$0.Meta.createFrom;
 const $$createType16 = $Create.Nullable($$createType15);
-const $$createType17 = repo$0.AssetRepo.createFrom;
+const $$createType17 = gorm$0.DB.createFrom;
 const $$createType18 = $Create.Nullable($$createType17);
-const $$createType19 = repo$0.SessionRepo.createFrom;
+const $$createType19 = repo$0.AssetRepo.createFrom;
 const $$createType20 = $Create.Nullable($$createType19);
-const $$createType21 = repo$0.SourceRepo.createFrom;
+const $$createType21 = repo$0.SessionRepo.createFrom;
 const $$createType22 = $Create.Nullable($$createType21);
-const $$createType23 = repo$0.BackupRepo.createFrom;
+const $$createType23 = repo$0.SourceRepo.createFrom;
 const $$createType24 = $Create.Nullable($$createType23);
-const $$createType25 = repo$0.LogRepo.createFrom;
+const $$createType25 = repo$0.BackupRepo.createFrom;
 const $$createType26 = $Create.Nullable($$createType25);
-const $$createType27 = repo$0.SettingsRepo.createFrom;
+const $$createType27 = repo$0.LogRepo.createFrom;
 const $$createType28 = $Create.Nullable($$createType27);
-const $$createType29 = backup$0.Manager.createFrom;
+const $$createType29 = repo$0.SettingsRepo.createFrom;
 const $$createType30 = $Create.Nullable($$createType29);
-const $$createType31 = importer$0.Pipeline.createFrom;
+const $$createType31 = backup$0.Manager.createFrom;
 const $$createType32 = $Create.Nullable($$createType31);
-const $$createType33 = cleanup$0.Analyzer.createFrom;
+const $$createType33 = importer$0.Pipeline.createFrom;
 const $$createType34 = $Create.Nullable($$createType33);
-const $$createType35 = source$0.Identifier.createFrom;
+const $$createType35 = cleanup$0.Analyzer.createFrom;
 const $$createType36 = $Create.Nullable($$createType35);
-const $$createType37 = thumbs$0.Cache.createFrom;
+const $$createType37 = source$0.Identifier.createFrom;
 const $$createType38 = $Create.Nullable($$createType37);
-const $$createType39 = BackupJobRefDTO.createFrom;
-const $$createType40 = $Create.Array($$createType39);
-const $$createType41 = AssetRefDTO.createFrom;
-const $$createType42 = $Create.Nullable($$createType41);
-const $$createType43 = $Create.Array($$createType41);
-const $$createType44 = QueueSummaryDTO.createFrom;
-const $$createType45 = $Create.Array($Create.Any);
-const $$createType46 = ClassStatDTO.createFrom;
-const $$createType47 = $Create.Array($$createType46);
-const $$createType48 = RecommendationDTO.createFrom;
-const $$createType49 = TotalsDTO.createFrom;
-const $$createType50 = MonthCountDTO.createFrom;
-const $$createType51 = $Create.Array($$createType50);
-const $$createType52 = BackupSummaryDTO.createFrom;
-const $$createType53 = SourceDTO.createFrom;
-const $$createType54 = $Create.Array($$createType53);
-const $$createType55 = LogEntryDTO.createFrom;
+const $$createType39 = thumbs$0.Cache.createFrom;
+const $$createType40 = $Create.Nullable($$createType39);
+const $$createType41 = BackupJobRefDTO.createFrom;
+const $$createType42 = $Create.Array($$createType41);
+const $$createType43 = AssetRefDTO.createFrom;
+const $$createType44 = $Create.Nullable($$createType43);
+const $$createType45 = $Create.Array($$createType43);
+const $$createType46 = QueueSummaryDTO.createFrom;
+const $$createType47 = $Create.Array($Create.Any);
+const $$createType48 = ClassStatDTO.createFrom;
+const $$createType49 = $Create.Array($$createType48);
+const $$createType50 = RecommendationDTO.createFrom;
+const $$createType51 = TotalsDTO.createFrom;
+const $$createType52 = MonthCountDTO.createFrom;
+const $$createType53 = $Create.Array($$createType52);
+const $$createType54 = BackupSummaryDTO.createFrom;
+const $$createType55 = SourceDTO.createFrom;
 const $$createType56 = $Create.Array($$createType55);
-const $$createType57 = AssetDTO.createFrom;
-const $$createType58 = CurrentLibraryDTO.createFrom;
-const $$createType59 = $Create.Nullable($$createType58);
-const $$createType60 = LockConflictDTO.createFrom;
+const $$createType57 = LogEntryDTO.createFrom;
+const $$createType58 = $Create.Array($$createType57);
+const $$createType59 = AssetDTO.createFrom;
+const $$createType60 = CurrentLibraryDTO.createFrom;
 const $$createType61 = $Create.Nullable($$createType60);
-const $$createType62 = /** @type {(...args: any[]) => any} */(($$createParamT) => $Create.Array($$createParamT));
-const $$createType63 = OperationInfo.createFrom;
-const $$createType64 = $Create.Array($$createType63);
-const $$createType65 = ReorganizeMoveDTO.createFrom;
+const $$createType62 = LockConflictDTO.createFrom;
+const $$createType63 = $Create.Nullable($$createType62);
+const $$createType64 = /** @type {(...args: any[]) => any} */(($$createParamT) => $Create.Array($$createParamT));
+const $$createType65 = OperationInfo.createFrom;
 const $$createType66 = $Create.Array($$createType65);
-const $$createType67 = ReorganizeSkipDTO.createFrom;
+const $$createType67 = ReorganizeMoveDTO.createFrom;
 const $$createType68 = $Create.Array($$createType67);
-const $$createType69 = SessionDTO.createFrom;
+const $$createType69 = ReorganizeSkipDTO.createFrom;
+const $$createType70 = $Create.Array($$createType69);
+const $$createType71 = SessionDTO.createFrom;

@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Sam-Lam/PAIM/internal/domain"
 	"github.com/Sam-Lam/PAIM/internal/hashing"
 	"github.com/Sam-Lam/PAIM/internal/mediatype"
 	"github.com/Sam-Lam/PAIM/internal/repo"
@@ -32,6 +33,7 @@ type safeEraseRun struct {
 	sourceID   string
 	progress   *SourceProgress // latest throttled snapshot
 	report     *SafeToEraseDTO // populated on success
+	safeFiles  []string        // absolute paths of evaluated-safe media (clear-source input)
 	err        string          // populated on failure
 	cancelled  bool            // populated when cancelled
 	running    bool
@@ -67,17 +69,37 @@ func (a assetLookupAdapter) FindByQuickHash(ctx context.Context, quickHash strin
 	if err != nil {
 		return nil, err
 	}
+	return toArchivedAssets(rows), nil
+}
+
+// FindByOriginalPath returns archived-asset views for every non-deleted asset
+// recorded at the given original source path (the safe-to-erase fast-path key).
+func (a assetLookupAdapter) FindByOriginalPath(ctx context.Context, path string) ([]source.ArchivedAsset, error) {
+	rows, err := a.assets.FindByOriginalPath(ctx, path)
+	if err != nil {
+		return nil, err
+	}
+	return toArchivedAssets(rows), nil
+}
+
+// toArchivedAssets projects domain assets into the minimal source.ArchivedAsset
+// view (with backup completeness folded in and the fast-path fields populated).
+func toArchivedAssets(rows []domain.Asset) []source.ArchivedAsset {
 	out := make([]source.ArchivedAsset, 0, len(rows))
 	for _, r := range rows {
 		out = append(out, source.ArchivedAsset{
-			ID:             r.ID,
-			QuickHash:      r.QuickHash,
-			FullHash:       r.FullHash,
-			Verified:       r.VerificationStatus == domainVerified,
-			BackupComplete: r.BackupStatus == domainBackupComplete,
+			ID:               r.ID,
+			QuickHash:        r.QuickHash,
+			FullHash:         r.FullHash,
+			Verified:         r.VerificationStatus == domainVerified,
+			BackupComplete:   r.BackupStatus == domainBackupComplete,
+			HasArchiveCopy:   r.CurrentArchivePath != "",
+			OriginalFullPath: r.OriginalFullPath,
+			FileSize:         r.FileSize,
+			ImportDate:       r.ImportDate,
 		})
 	}
-	return out, nil
+	return out
 }
 
 // SourcesService lists volumes, identifies import sources, and evaluates
@@ -92,12 +114,18 @@ type SourcesService struct {
 	watcher    *volumes.Watcher
 	emitter    Emitter
 	log        *slog.Logger
+	// root is the open library root, used to refuse clearing the archive itself.
+	root string
 
 	mu             sync.Mutex
 	active         bool
 	cancel         context.CancelFunc
 	run            *safeEraseRun
 	identifyCancel context.CancelFunc
+
+	clearing    bool
+	clearCancel context.CancelFunc
+	clearRun    *clearSourceRun
 }
 
 // Bind wires the SourcesService to an open library's identifier and repos in
@@ -106,6 +134,7 @@ func (s *SourcesService) Bind(core *AppCore) {
 	s.identifier = core.Identifier
 	s.sources = core.Sources
 	s.assets = core.Assets
+	s.root = core.Root
 }
 
 // NewSourcesService constructs a SourcesService.
@@ -232,7 +261,9 @@ func (s *SourcesService) ListKnownSources(ctx context.Context) ([]SourceDTO, err
 	return out, nil
 }
 
-// SafeToEraseDTO is the JSON-friendly safe-to-erase report.
+// SafeToEraseDTO is the JSON-friendly safe-to-erase report. FastPath/Hashed
+// report how many media files were classified from the catalog without hashing
+// vs by (re)hashing, so the UI can show how cheap a just-imported evaluation was.
 type SafeToEraseDTO struct {
 	SourceID         string `json:"sourceId"`
 	Safe             bool   `json:"safe"`
@@ -242,6 +273,8 @@ type SafeToEraseDTO struct {
 	New              int    `json:"new"`
 	Unverified       int    `json:"unverified"`
 	BackupIncomplete int    `json:"backupIncomplete"`
+	FastPath         int    `json:"fastPath"`
+	Hashed           int    `json:"hashed"`
 }
 
 // StartSafeToEraseResult is returned immediately from StartSafeToErase once the
@@ -328,7 +361,7 @@ func (s *SourcesService) runSafeToErase(ctx context.Context, sourceID, mountPoin
 
 	report, err := s.identifier.EvaluateSafeToErase(ctx, sourceID, mountPoint, assetLookupAdapter{assets: s.assets}, mediatype.IsMedia, progressFn)
 	if err != nil {
-		s.finishSafeToErase(mountPoint, sourceID, nil, err)
+		s.finishSafeToErase(mountPoint, sourceID, nil, nil, err)
 		return
 	}
 	if sourceID != "" {
@@ -336,6 +369,9 @@ func (s *SourcesService) runSafeToErase(ctx context.Context, sourceID, mountPoin
 			s.log.Warn("could not persist safe-to-erase", "sourceId", sourceID, "error", err.Error())
 		}
 	}
+	s.log.Info("safe-to-erase evaluated",
+		"mountPoint", mountPoint, "safe", report.Safe,
+		"totalMedia", report.TotalMedia, "fastPath", report.FastPath, "hashed", report.Hashed)
 	dto := SafeToEraseDTO{
 		SourceID:         report.SourceID,
 		Safe:             report.Safe,
@@ -345,13 +381,15 @@ func (s *SourcesService) runSafeToErase(ctx context.Context, sourceID, mountPoin
 		New:              report.New,
 		Unverified:       report.Unverified,
 		BackupIncomplete: report.BackupIncomplete,
+		FastPath:         report.FastPath,
+		Hashed:           report.Hashed,
 	}
-	s.finishSafeToErase(mountPoint, sourceID, &dto, nil)
+	s.finishSafeToErase(mountPoint, sourceID, &dto, report.SafeFiles, nil)
 }
 
 // finishSafeToErase records the terminal state and emits source:evaluated. A
 // context-cancelled run is reported as Cancelled (not an error).
-func (s *SourcesService) finishSafeToErase(mountPoint, sourceID string, report *SafeToEraseDTO, runErr error) {
+func (s *SourcesService) finishSafeToErase(mountPoint, sourceID string, report *SafeToEraseDTO, safeFiles []string, runErr error) {
 	cancelled := false
 	errMsg := ""
 	if runErr != nil {
@@ -366,6 +404,7 @@ func (s *SourcesService) finishSafeToErase(mountPoint, sourceID string, report *
 	if s.run != nil {
 		s.run.running = false
 		s.run.report = report
+		s.run.safeFiles = safeFiles
 		s.run.cancelled = cancelled
 		s.run.err = errMsg
 		s.run.at = time.Now()
@@ -446,19 +485,30 @@ func (s *SourcesService) CancelIdentify(ctx context.Context) error {
 func (s *SourcesService) activeOps() []OperationInfo {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if !s.active || s.run == nil {
-		return nil
+	var ops []OperationInfo
+	if s.active && s.run != nil {
+		info := OperationInfo{Kind: "safe_to_erase", Label: "Checking whether a card is safe to erase"}
+		if s.run.progress != nil {
+			info.FilesDone, info.FilesTotal = s.run.progress.FilesDone, s.run.progress.FilesTotal
+		}
+		ops = append(ops, info)
 	}
-	info := OperationInfo{Kind: "safe_to_erase", Label: "Checking whether a card is safe to erase"}
-	if s.run.progress != nil {
-		info.FilesDone, info.FilesTotal = s.run.progress.FilesDone, s.run.progress.FilesTotal
+	if s.clearing && s.clearRun != nil {
+		info := OperationInfo{Kind: "clear_source", Label: "Clearing an imported source"}
+		if s.clearRun.progress != nil {
+			info.FilesDone, info.FilesTotal = s.clearRun.progress.FilesDone, s.clearRun.progress.FilesTotal
+		}
+		ops = append(ops, info)
 	}
-	return []OperationInfo{info}
+	return ops
 }
 
-// cancelActive cancels a running safe-to-erase evaluation via the existing
-// CancelSafeToErase path. It is a no-op when nothing is running.
-func (s *SourcesService) cancelActive() { _ = s.CancelSafeToErase(context.Background()) }
+// cancelActive cancels a running safe-to-erase evaluation and/or clear via their
+// existing cancel paths. It is a no-op when nothing is running.
+func (s *SourcesService) cancelActive() {
+	_ = s.CancelSafeToErase(context.Background())
+	_ = s.CancelClearSource(context.Background())
+}
 
 // StartWatching runs the volume watcher until ctx is cancelled, emitting
 // volume:mounted / volume:unmounted for each change. It is invoked once from

@@ -62,6 +62,19 @@ export function List() {
 }
 
 /**
+ * RcloneRemotes resolves the rclone binary and lists its configured remotes so
+ * the Add flow can present a dropdown. A missing binary is reported as a typed
+ * "not installed" state (Installed=false) rather than an error, so the UI can
+ * render setup guidance.
+ * @returns {$CancellablePromise<$models.RcloneRemotesDTO>}
+ */
+export function RcloneRemotes() {
+    return $Call.ByID(3498411557).then(/** @type {($result: any) => any} */(($result) => {
+        return $$createType4($result);
+    }));
+}
+
+/**
  * SetGate injects the shared library gate. Called once by main.go after
  * construction; never called in unit tests (leaving the service ungated).
  * @param {$models.LibraryGate | null} gate
@@ -90,3 +103,4 @@ const $$createType0 = $models.ProviderDTO.createFrom;
 const $$createType1 = $models.PluginDTO.createFrom;
 const $$createType2 = $Create.Array($$createType1);
 const $$createType3 = $Create.Array($$createType0);
+const $$createType4 = $models.RcloneRemotesDTO.createFrom;

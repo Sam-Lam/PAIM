@@ -10,7 +10,7 @@ import "fmt"
 // Version is the current PAIM application version (semantic versioning). Bump it
 // when releasing; migrations and the library_meta bookkeeping key off it (the
 // semver alone is what is stored in library_meta).
-const Version = "0.2.1"
+const Version = "0.2.2"
 
 // Commit and Date are stamped at build time via -ldflags -X (see the darwin
 // build task). They are empty in a plain `go build` / `go run` / test binary, in

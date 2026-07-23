@@ -71,6 +71,48 @@ func (r *AssetRepo) FindByFullHash(ctx context.Context, fullHash string) ([]doma
 	return assets, nil
 }
 
+// FindByOriginalPath returns all non-deleted assets whose recorded original
+// source path equals path. It backs the safe-to-erase fast path, which trusts
+// import-time verification for a source file still sitting at its imported path
+// with an unchanged size and mtime. An empty argument returns no rows.
+func (r *AssetRepo) FindByOriginalPath(ctx context.Context, path string) ([]domain.Asset, error) {
+	if path == "" {
+		return nil, nil
+	}
+	var assets []domain.Asset
+	err := r.db.WithContext(ctx).
+		Where("original_full_path = ?", path).
+		Find(&assets).Error
+	if err != nil {
+		return nil, fmt.Errorf("repo: find assets by original path: %w", err)
+	}
+	return assets, nil
+}
+
+// SessionBackupCounts returns, for the assets imported under sessionID that have
+// an archive copy (backup-eligible), how many exist in total and how many have a
+// complete aggregate backup status. It powers the import completion panel's live
+// "N of M backed up" indicator, aligned with the same BackupStatusComplete signal
+// safe-to-erase uses per asset.
+func (r *AssetRepo) SessionBackupCounts(ctx context.Context, sessionID string) (total, complete int64, err error) {
+	if err = r.db.WithContext(ctx).
+		Model(&domain.Asset{}).
+		Where("session_id = ?", sessionID).
+		Where("current_archive_path <> ''").
+		Count(&total).Error; err != nil {
+		return 0, 0, fmt.Errorf("repo: count session assets: %w", err)
+	}
+	if err = r.db.WithContext(ctx).
+		Model(&domain.Asset{}).
+		Where("session_id = ?", sessionID).
+		Where("current_archive_path <> ''").
+		Where("backup_status = ?", domain.BackupStatusComplete).
+		Count(&complete).Error; err != nil {
+		return 0, 0, fmt.Errorf("repo: count session backed-up assets: %w", err)
+	}
+	return total, complete, nil
+}
+
 // UpdateFullHash backfills the full hash of an asset (used when a quick-hash
 // collision forces full-hash computation).
 func (r *AssetRepo) UpdateFullHash(ctx context.Context, id, fullHash string) error {

@@ -699,17 +699,33 @@ func (l srcLookup) FindByQuickHash(ctx context.Context, quickHash string) ([]sou
 	if err != nil {
 		return nil, err
 	}
+	return srcArchivedAssets(rows), nil
+}
+
+func (l srcLookup) FindByOriginalPath(ctx context.Context, path string) ([]source.ArchivedAsset, error) {
+	rows, err := l.assets.FindByOriginalPath(ctx, path)
+	if err != nil {
+		return nil, err
+	}
+	return srcArchivedAssets(rows), nil
+}
+
+func srcArchivedAssets(rows []domain.Asset) []source.ArchivedAsset {
 	out := make([]source.ArchivedAsset, 0, len(rows))
 	for _, r := range rows {
 		out = append(out, source.ArchivedAsset{
-			ID:             r.ID,
-			QuickHash:      r.QuickHash,
-			FullHash:       r.FullHash,
-			Verified:       r.VerificationStatus == domain.VerificationStatusVerified,
-			BackupComplete: r.BackupStatus == domain.BackupStatusComplete,
+			ID:               r.ID,
+			QuickHash:        r.QuickHash,
+			FullHash:         r.FullHash,
+			Verified:         r.VerificationStatus == domain.VerificationStatusVerified,
+			BackupComplete:   r.BackupStatus == domain.BackupStatusComplete,
+			HasArchiveCopy:   r.CurrentArchivePath != "",
+			OriginalFullPath: r.OriginalFullPath,
+			FileSize:         r.FileSize,
+			ImportDate:       r.ImportDate,
 		})
 	}
-	return out, nil
+	return out
 }
 
 // ---- generic test helpers ---------------------------------------------------

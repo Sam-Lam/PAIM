@@ -24,6 +24,7 @@ import (
 
 	"github.com/Sam-Lam/PAIM/internal/backup"
 	"github.com/Sam-Lam/PAIM/internal/backup/plugins/localfs"
+	"github.com/Sam-Lam/PAIM/internal/backup/plugins/rclone"
 	"github.com/Sam-Lam/PAIM/internal/db"
 	"github.com/Sam-Lam/PAIM/internal/library"
 	"github.com/Sam-Lam/PAIM/internal/logging"
@@ -53,6 +54,7 @@ func init() {
 	application.RegisterEvent[services.SourceIdentified](services.EventSourceIdentified)
 	application.RegisterEvent[services.SourceProgress](services.EventSourceProgress)
 	application.RegisterEvent[services.SourceEvaluated](services.EventSourceEvaluated)
+	application.RegisterEvent[services.SourceCleared](services.EventSourceCleared)
 	application.RegisterEvent[services.CleanupProgress](services.EventCleanupProgress)
 	application.RegisterEvent[services.CleanupCompleted](services.EventCleanupCompleted)
 	application.RegisterEvent[services.ReorganizePlanProgress](services.EventReorganizePlan)
@@ -171,6 +173,7 @@ func run() error {
 
 	registry := backup.NewRegistry()
 	registry.Register(localfs.PluginName, localfs.New)
+	registry.Register(rclone.PluginName, rclone.New)
 
 	extractor := metadata.NewExtractor(logger)
 	collector := volumes.NewCollector(logger)

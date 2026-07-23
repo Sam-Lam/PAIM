@@ -71,6 +71,7 @@ func TestOpenCreatesExplicitIndexes(t *testing.T) {
 		"idx_assets_source_id",
 		"idx_assets_session_id",
 		"idx_assets_duplicate_of",
+		"idx_assets_original_full_path",
 		"idx_backup_jobs_asset_id",
 		"idx_backup_jobs_status",
 		"idx_log_entries_timestamp",

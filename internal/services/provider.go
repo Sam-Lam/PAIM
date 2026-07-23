@@ -2,10 +2,13 @@ package services
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
+	"time"
 
 	"github.com/Sam-Lam/PAIM/internal/backup"
+	"github.com/Sam-Lam/PAIM/internal/backup/plugins/rclone"
 	"github.com/Sam-Lam/PAIM/internal/domain"
 	"gorm.io/gorm"
 )
@@ -113,6 +116,40 @@ func (s *ProviderService) Update(ctx context.Context, id, configJSON string, ena
 	p.Enabled = enabled
 	s.log.Info("backup provider updated", "id", id, "enabled", enabled)
 	return toProviderDTO(p), nil
+}
+
+// RcloneRemotesDTO reports rclone's install status and the remotes it has
+// configured, for the Add-destination UI. When Installed is false the UI shows
+// install guidance (brew install rclone) instead of a remotes dropdown; when
+// Installed is true but Error is set, rclone is present but listing its remotes
+// failed (surfaced inline). This is deliberately NOT gated on an open library —
+// discovering rclone remotes is independent of the catalog.
+type RcloneRemotesDTO struct {
+	Installed bool     `json:"installed"`
+	Binary    string   `json:"binary"`
+	Remotes   []string `json:"remotes"`
+	Error     string   `json:"error"`
+}
+
+// RcloneRemotes resolves the rclone binary and lists its configured remotes so
+// the Add flow can present a dropdown. A missing binary is reported as a typed
+// "not installed" state (Installed=false) rather than an error, so the UI can
+// render setup guidance.
+func (s *ProviderService) RcloneRemotes(ctx context.Context) (RcloneRemotesDTO, error) {
+	binary, err := rclone.ResolveBinary("")
+	if err != nil {
+		if errors.Is(err, rclone.ErrNotInstalled) {
+			return RcloneRemotesDTO{Installed: false, Error: err.Error()}, nil
+		}
+		return RcloneRemotesDTO{}, fmt.Errorf("services: resolve rclone binary: %w", err)
+	}
+	cctx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+	remotes, err := rclone.ListRemotes(cctx, binary)
+	if err != nil {
+		return RcloneRemotesDTO{Installed: true, Binary: binary, Error: err.Error()}, nil
+	}
+	return RcloneRemotesDTO{Installed: true, Binary: binary, Remotes: remotes}, nil
 }
 
 // AvailablePlugins lists the registered plugins with their capabilities.

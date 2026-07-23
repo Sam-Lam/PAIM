@@ -11,22 +11,29 @@ import {
   InformationCircleIcon,
   PhotoIcon,
   PlayIcon,
+  ShieldCheckIcon,
   Squares2X2Icon,
   StopIcon,
 } from "@heroicons/react/24/outline";
-import { Button, Card, ConfirmDialog, LoadingBlock, PageHeader, ProgressBar, StatusBadge } from "../components";
+import { Button, Card, ClearSourceControl, ConfirmDialog, LoadingBlock, PageHeader, ProgressBar, StatusBadge } from "../components";
 import {
+  BackupService,
   HistoryService,
   ImportOptions,
   ImportService,
+  SourcesService,
   SettingsService,
   WailsEvents,
   type AnalyzeCompleted,
   type DryRunReportDTO,
   type ImportCompleted,
   type ImportProgress,
+  type SafeToEraseDTO,
+  type SessionBackupStatusDTO,
   type SessionDTO,
   type Settings,
+  type SourceEvaluated,
+  type SourceProgress,
 } from "../lib/api";
 import { useWailsEvent } from "../lib/hooks";
 import { useToast } from "../lib/toast";
@@ -364,6 +371,8 @@ export function ImportPage() {
         <ImportStep
           progress={progress}
           completed={completed}
+          mode={mode}
+          root={root}
           onCancel={() => setShowCancel(true)}
           onNewImport={resetToStart}
           onViewHistory={() => navigate({ to: "/history" })}
@@ -818,6 +827,8 @@ function SummaryCard({
 function ImportStep({
   progress,
   completed,
+  mode,
+  root,
   onCancel,
   onNewImport,
   onViewHistory,
@@ -825,6 +836,8 @@ function ImportStep({
 }: {
   progress: ImportProgress | null;
   completed: ImportCompleted | null;
+  mode: Mode;
+  root: string;
   onCancel: () => void;
   onNewImport: () => void;
   onViewHistory: () => void;
@@ -903,6 +916,13 @@ function ImportStep({
           </Link>
           .
         </p>
+
+        {/* Clear-after-import: copy mode only, with a real source root, and only
+            once the import itself succeeded. Adopt mode has no source to clear —
+            the source IS the library. */}
+        {mode === "copy" && !failed && !cancelled && !interrupted && root ? (
+          <ClearTheSourceSection root={root} sessionId={completed.sessionId} />
+        ) : null}
       </Card>
     );
   }
@@ -966,6 +986,165 @@ function ImportStep({
         </p>
       ) : null}
     </Card>
+  );
+}
+
+/* -------------------------- Clear the source? --------------------------- */
+
+/**
+ * ClearTheSourceSection closes the import loop on a completed copy-mode import.
+ * It explains the gate ("backups must finish first"), shows live per-session
+ * backup progress, offers "Evaluate now" (reusing the safe-to-erase background
+ * job for the source root), and — only on a fresh green evaluation — the gated
+ * "Clear imported media…" affordance.
+ *
+ * When the per-session backup status reaches complete AND the last evaluation was
+ * green-except-for-backups, it re-runs the (now cheap, catalog-informed) safe-to-
+ * erase evaluation automatically so the user does not have to click Evaluate
+ * twice.
+ */
+function ClearTheSourceSection({ root, sessionId }: { root: string; sessionId: string }) {
+  const toast = useToast();
+  const [backup, setBackup] = useState<SessionBackupStatusDTO | null>(null);
+  const [report, setReport] = useState<SafeToEraseDTO | null>(null);
+  const [evalProgress, setEvalProgress] = useState<SourceProgress | null>(null);
+  const [evalRunning, setEvalRunning] = useState(false);
+  const [evalError, setEvalError] = useState("");
+
+  const refreshBackup = useCallback(() => {
+    void BackupService.SessionBackupStatus(sessionId)
+      .then(setBackup)
+      .catch(() => undefined);
+  }, [sessionId]);
+
+  const evaluate = useCallback(async () => {
+    setEvalError("");
+    try {
+      await SourcesService.StartSafeToErase("", root);
+    } catch (e) {
+      toast.fromError(e, "Could not start evaluation");
+    }
+  }, [root, toast]);
+
+  // Load backup status + re-attach any running/completed evaluation for this root.
+  useEffect(() => {
+    refreshBackup();
+    void SourcesService.ActiveSafeToErase()
+      .then((dto) => {
+        if (dto.mountPoint !== root) return;
+        if (dto.state === "running") {
+          setEvalRunning(true);
+          setEvalProgress(dto.progress);
+        } else if (dto.state === "completed" && dto.report) {
+          setReport(dto.report);
+        }
+      })
+      .catch(() => undefined);
+  }, [root, refreshBackup]);
+
+  // Poll backup status; also refresh promptly on any queue change.
+  useEffect(() => {
+    const id = setInterval(refreshBackup, 4000);
+    return () => clearInterval(id);
+  }, [refreshBackup]);
+  useWailsEvent(WailsEvents.BackupQueueChanged, () => refreshBackup());
+
+  useWailsEvent<SourceProgress>(WailsEvents.SourceProgress, (p) => {
+    if (p.kind === "safe-to-erase" && p.mountPoint === root) {
+      setEvalRunning(true);
+      setEvalProgress(p);
+    }
+  });
+  useWailsEvent<SourceEvaluated>(WailsEvents.SourceEvaluated, (e) => {
+    if (e.mountPoint !== root) return;
+    setEvalRunning(false);
+    setEvalProgress(null);
+    setReport(e.report);
+    setEvalError(e.error);
+  });
+
+  // Auto-refresh: once backups finish, if the only thing that had kept the source
+  // from being safe was incomplete backups, re-run the (now cheap) evaluation.
+  const backupComplete = !!backup?.complete && (backup?.totalAssets ?? 0) > 0;
+  const greenExceptBackups =
+    !!report && !report.safe && report.new === 0 && report.unverified === 0 && report.backupIncomplete > 0;
+  useEffect(() => {
+    if (backupComplete && greenExceptBackups && !evalRunning) {
+      void evaluate();
+    }
+    // Only react to the backup-completion transition; report/evalRunning are read
+    // fresh above.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [backupComplete]);
+
+  const cancelEvaluate = () => void SourcesService.CancelSafeToErase().catch(() => undefined);
+
+  const backedUp = backup?.backedUp ?? 0;
+  const totalAssets = backup?.totalAssets ?? 0;
+  const backupPct = totalAssets > 0 ? Math.min(100, Math.round((backedUp / totalAssets) * 100)) : 0;
+
+  return (
+    <div className="mt-5 rounded-lg border border-zinc-800 bg-zinc-950/40 p-4">
+      <div className="mb-1 flex items-center gap-2">
+        <ShieldCheckIcon className="h-4 w-4 text-zinc-400" />
+        <h4 className="text-sm font-semibold text-zinc-200">Clear the source?</h4>
+      </div>
+      <p className="text-[12px] leading-relaxed text-zinc-500">
+        Once every imported file is verified and fully backed up, PAIM can move the originals off the card into a trash
+        folder on the card (it never deletes). Backups must finish first.
+      </p>
+
+      {/* Live per-session backup status. */}
+      <div className="mt-3">
+        <div className="mb-1 flex items-center justify-between text-[11px]">
+          <span className="text-zinc-500">Backups for this import</span>
+          <span className="tabular-nums text-zinc-400">
+            {formatNumber(backedUp)} of {formatNumber(totalAssets)} backed up
+          </span>
+        </div>
+        <div className="h-1.5 w-full overflow-hidden rounded-full bg-zinc-800">
+          <div
+            className={`h-full rounded-full ${backupComplete ? "bg-emerald-500" : "bg-blue-500"} transition-all`}
+            style={{ width: `${backupPct}%` }}
+          />
+        </div>
+        {totalAssets === 0 ? (
+          <p className="mt-1 text-[10px] text-zinc-600">No backup jobs for this import (no backup destination configured).</p>
+        ) : null}
+      </div>
+
+      {/* Evaluate + result. */}
+      <div className="mt-3 flex flex-wrap items-center gap-2">
+        <Button icon={ShieldCheckIcon} variant="secondary" onClick={() => void evaluate()} loading={evalRunning} disabled={evalRunning}>
+          {report ? "Re-evaluate" : "Evaluate now"}
+        </Button>
+        {evalRunning ? (
+          <span className="flex items-center gap-2 text-[11px] text-zinc-500">
+            <span className="tabular-nums">
+              {formatNumber(evalProgress?.filesDone ?? 0)} of {formatNumber(evalProgress?.filesTotal ?? 0)} checked
+            </span>
+            <button className="text-blue-400 hover:underline" onClick={cancelEvaluate}>
+              Cancel
+            </button>
+          </span>
+        ) : null}
+      </div>
+
+      {evalError ? <p className="mt-2 text-[11px] text-red-400">Evaluation failed: {evalError}</p> : null}
+      {report ? (
+        <p className={`mt-2 text-[12px] leading-relaxed ${report.safe ? "text-emerald-400" : "text-zinc-400"}`}>
+          {report.reason}
+          {report.fastPath + report.hashed > 0 ? (
+            <span className="text-zinc-600">
+              {" "}
+              ({formatNumber(report.fastPath)} from catalog · {formatNumber(report.hashed)} re-hashed)
+            </span>
+          ) : null}
+        </p>
+      ) : null}
+
+      <ClearSourceControl root={root} report={report} fresh={!!report?.safe && !evalRunning} />
+    </div>
   );
 }
 
