@@ -12,19 +12,21 @@ import (
 // canonical configuration surface shared by main.go wiring and the frontend
 // Settings page.
 const (
-	KeyMasterLibraryRoot = "master_library_root"
-	KeyBackupWorkers     = "backup_workers"
-	KeyMaxRetries        = "max_retries"
-	KeyImportConcurrency = "import_concurrency"
-	KeyDefaultEventName  = "default_event_name"
+	KeyMasterLibraryRoot         = "master_library_root"
+	KeyBackupWorkers             = "backup_workers"
+	KeyMaxRetries                = "max_retries"
+	KeyImportConcurrency         = "import_concurrency"
+	KeyDefaultEventName          = "default_event_name"
+	KeyGenerateThumbsAfterImport = "generate_thumbs_after_import"
 )
 
 // Default setting values, applied when a key has never been written.
 const (
-	DefaultBackupWorkers     = 2
-	DefaultMaxRetries        = 5
-	DefaultImportConcurrency = 0 // 0 means "use runtime.NumCPU()" in the importer
-	DefaultEventName         = ""
+	DefaultBackupWorkers             = 2
+	DefaultMaxRetries                = 5
+	DefaultImportConcurrency         = 0 // 0 means "use runtime.NumCPU()" in the importer
+	DefaultEventName                 = ""
+	DefaultGenerateThumbsAfterImport = true
 )
 
 // Settings is the typed, JSON-friendly view of PAIM's configuration returned by
@@ -32,12 +34,13 @@ const (
 // backup worker pool, and import concurrency. MetadataAvailable is read-only,
 // derived at runtime from whether exiftool (or the fallback) can extract data.
 type Settings struct {
-	MasterLibraryRoot string `json:"masterLibraryRoot"`
-	BackupWorkers     int    `json:"backupWorkers"`
-	MaxRetries        int    `json:"maxRetries"`
-	ImportConcurrency int    `json:"importConcurrency"`
-	DefaultEventName  string `json:"defaultEventName"`
-	MetadataAvailable bool   `json:"metadataAvailable"`
+	MasterLibraryRoot         string `json:"masterLibraryRoot"`
+	BackupWorkers             int    `json:"backupWorkers"`
+	MaxRetries                int    `json:"maxRetries"`
+	ImportConcurrency         int    `json:"importConcurrency"`
+	DefaultEventName          string `json:"defaultEventName"`
+	GenerateThumbsAfterImport bool   `json:"generateThumbsAfterImport"`
+	MetadataAvailable         bool   `json:"metadataAvailable"`
 }
 
 // LoadSettings reads every setting (applying defaults for absent keys) from the
@@ -65,12 +68,17 @@ func LoadSettings(ctx context.Context, settings *repo.SettingsRepo) (Settings, e
 	if err != nil {
 		return Settings{}, err
 	}
+	genThumbs, err := settings.GetBool(ctx, KeyGenerateThumbsAfterImport, DefaultGenerateThumbsAfterImport)
+	if err != nil {
+		return Settings{}, err
+	}
 	return Settings{
-		MasterLibraryRoot: root,
-		BackupWorkers:     workers,
-		MaxRetries:        retries,
-		ImportConcurrency: concurrency,
-		DefaultEventName:  eventName,
+		MasterLibraryRoot:         root,
+		BackupWorkers:             workers,
+		MaxRetries:                retries,
+		ImportConcurrency:         concurrency,
+		DefaultEventName:          eventName,
+		GenerateThumbsAfterImport: genThumbs,
 	}, nil
 }
 
@@ -143,6 +151,7 @@ func (s *SettingsService) Update(ctx context.Context, in Settings) (Settings, er
 		{KeyMaxRetries, in.MaxRetries},
 		{KeyImportConcurrency, in.ImportConcurrency},
 		{KeyDefaultEventName, in.DefaultEventName},
+		{KeyGenerateThumbsAfterImport, in.GenerateThumbsAfterImport},
 	}
 	for _, p := range pairs {
 		if err := s.settings.Set(ctx, p.key, p.val); err != nil {

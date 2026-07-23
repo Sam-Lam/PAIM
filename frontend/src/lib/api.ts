@@ -15,7 +15,9 @@ export {
   LogService,
   ProviderService,
   SettingsService,
+  SnapshotService,
   SourcesService,
+  ThumbnailService,
 } from "../../bindings/github.com/Sam-Lam/PAIM/internal/services";
 
 export type {
@@ -74,13 +76,19 @@ export type {
   SessionDTO,
   SessionDetail,
   Settings,
+  SnapshotConfigDTO,
+  SnapshotStatusDTO,
   SourceDTO,
   SourceIdentified,
   StartAnalyzeResult,
   StartImportResult,
+  ThumbCacheDTO,
+  ThumbsProgress,
   TotalsDTO,
+  VersionInfo,
   VolumeDTO,
   VolumeEvent,
+  WarmupStatusDTO,
 } from "../../bindings/github.com/Sam-Lam/PAIM/internal/services";
 
 // Canonical event names emitted by the Go services (internal/services/events.go).
@@ -102,4 +110,5 @@ export const WailsEvents = {
   DuplicateProgress: "duplicate:progress",
   LibraryProgress: "library:progress",
   QuitRequested: "app:quit-requested",
+  ThumbsProgress: "thumbs:progress",
 } as const;

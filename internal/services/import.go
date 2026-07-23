@@ -42,6 +42,12 @@ type ImportService struct {
 	settings *repo.SettingsRepo
 	log      *slog.Logger
 
+	// OnCompleted, when set, is invoked (synchronously, after import:completed is
+	// emitted) with the finished session ID. main.go wires it to trigger the
+	// post-import thumbnail warm-up. It is an exported field, not a bound method,
+	// so it stays off the Wails frontend API.
+	OnCompleted func(sessionID string)
+
 	mu        sync.Mutex
 	active    bool
 	opKind    string // "import" | "analyze" | "reorganize" while active; for the quit guard
@@ -663,6 +669,9 @@ func (s *ImportService) emitCompleted(sessionID string) {
 		Failures:      session.Failures,
 		Skipped:       session.Skipped,
 	})
+	if s.OnCompleted != nil {
+		s.OnCompleted(session.ID)
+	}
 }
 
 // CancelImport cancels the active import (if any). The pipeline finalizes the

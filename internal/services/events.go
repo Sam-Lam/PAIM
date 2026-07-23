@@ -37,6 +37,7 @@ const (
 	EventDuplicateProgress  = "duplicate:progress"
 	EventLibraryProgress    = "library:progress"
 	EventQuitRequested      = "app:quit-requested"
+	EventThumbsProgress     = "thumbs:progress"
 )
 
 // Emitter delivers a typed event payload to the frontend. It is implemented in
@@ -204,6 +205,17 @@ type LibraryProgress struct {
 	Message string `json:"message"`
 	Done    int    `json:"done"`
 	Total   int    `json:"total"`
+}
+
+// ThumbsProgress is the payload for thumbs:progress, emitted (throttled) while a
+// thumbnail warm-up runs. Done/Total count assets processed; Label distinguishes
+// a whole-catalog warm-up from a post-import one so the UI can word it. Done ==
+// Total with Running=false marks completion.
+type ThumbsProgress struct {
+	Done    int    `json:"done"`
+	Total   int    `json:"total"`
+	Label   string `json:"label"`
+	Running bool   `json:"running"`
 }
 
 // QuitRequested is the payload for app:quit-requested, emitted when the user

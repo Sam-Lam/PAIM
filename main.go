@@ -60,6 +60,7 @@ func init() {
 	application.RegisterEvent[services.DuplicateProgress](services.EventDuplicateProgress)
 	application.RegisterEvent[services.LibraryProgress](services.EventLibraryProgress)
 	application.RegisterEvent[services.QuitRequested](services.EventQuitRequested)
+	application.RegisterEvent[services.ThumbsProgress](services.EventThumbsProgress)
 }
 
 // wailsEmitter adapts the Wails event manager to services.Emitter. Its app
@@ -128,19 +129,21 @@ type composition struct {
 	// through to the normal graceful shutdown.
 	quitConfirmed atomic.Bool
 
-	libSvc      *services.LibraryService
-	dashSvc     *services.DashboardService
-	importSvc   *services.ImportService
-	sourcesSvc  *services.SourcesService
-	historySvc  *services.HistoryService
-	dupSvc      *services.DuplicateService
-	cleanupSvc  *services.CleanupService
-	backupSvc   *services.BackupService
-	providerSvc *services.ProviderService
-	logSvc      *services.LogService
-	settingsSvc *services.SettingsService
-	browserSvc  *services.BrowserService
-	appSvc      *services.AppService
+	libSvc       *services.LibraryService
+	dashSvc      *services.DashboardService
+	importSvc    *services.ImportService
+	sourcesSvc   *services.SourcesService
+	historySvc   *services.HistoryService
+	dupSvc       *services.DuplicateService
+	cleanupSvc   *services.CleanupService
+	backupSvc    *services.BackupService
+	providerSvc  *services.ProviderService
+	logSvc       *services.LogService
+	settingsSvc  *services.SettingsService
+	browserSvc   *services.BrowserService
+	thumbnailSvc *services.ThumbnailService
+	snapshotSvc  *services.SnapshotService
+	appSvc       *services.AppService
 
 	mu       sync.Mutex
 	core     *services.AppCore
@@ -156,7 +159,7 @@ func run() error {
 	// default keeps early messages visible. logging.New requires a LogRepo, so the
 	// persistent tee is installed when the library opens (see bindAll).
 	logger := slog.Default()
-	logger.Info("PAIM starting", "version", appVersion)
+	logger.Info("PAIM starting", "version", version.Full())
 
 	configStore, err := library.NewConfigStore("")
 	if err != nil {
@@ -208,12 +211,14 @@ func run() error {
 	comp.logSvc = services.NewLogService(nil, nil, dialoger, emitter, logger)
 	comp.settingsSvc = services.NewSettingsService(nil, extractor.Available())
 	comp.browserSvc = services.NewBrowserService(nil, nil, nil, nil, logger)
+	comp.thumbnailSvc = services.NewThumbnailService(configStore, emitter, logger)
+	comp.snapshotSvc = services.NewSnapshotService(configStore, dialoger, logger)
 	comp.appSvc = services.NewAppService(tracker)
 
 	for _, g := range []interface{ SetGate(*services.LibraryGate) }{
 		comp.dashSvc, comp.importSvc, comp.sourcesSvc, comp.historySvc, comp.dupSvc,
 		comp.cleanupSvc, comp.backupSvc, comp.providerSvc, comp.logSvc, comp.settingsSvc,
-		comp.browserSvc,
+		comp.browserSvc, comp.thumbnailSvc, comp.snapshotSvc,
 	} {
 		g.SetGate(gate)
 	}
@@ -222,7 +227,7 @@ func run() error {
 	// unattended import/analyze/reorganize/safe-to-erase/cleanup does not stall
 	// when the Mac sleeps. Only the services that run such jobs need it.
 	for _, sa := range []interface{ SetSleepGuard(*services.SleepGuard) }{
-		comp.importSvc, comp.sourcesSvc, comp.cleanupSvc,
+		comp.importSvc, comp.sourcesSvc, comp.cleanupSvc, comp.thumbnailSvc,
 	} {
 		sa.SetSleepGuard(sleep)
 	}
@@ -235,6 +240,16 @@ func run() error {
 	tracker.Register(comp.sourcesSvc)
 	tracker.Register(comp.cleanupSvc)
 	tracker.Register(comp.backupSvc)
+	tracker.Register(comp.thumbnailSvc)
+
+	// After an import/adopt session completes, warm that session's thumbnails when
+	// the setting is on (default). This runs after completion — never inline during
+	// the import — and quietly no-ops for reorganize sessions or when disabled.
+	comp.importSvc.OnCompleted = func(sessionID string) {
+		if err := comp.thumbnailSvc.WarmSessionIfEnabled(context.Background(), sessionID); err != nil {
+			logger.Warn("post-import thumbnail warm-up", "sessionId", sessionID, "error", err.Error())
+		}
+	}
 
 	app := application.New(application.Options{
 		Name:        "Photo Archive Integrity Manager",
@@ -252,6 +267,8 @@ func run() error {
 			application.NewService(comp.logSvc),
 			application.NewService(comp.settingsSvc),
 			application.NewService(comp.browserSvc),
+			application.NewService(comp.thumbnailSvc),
+			application.NewService(comp.snapshotSvc),
 			application.NewService(comp.appSvc),
 		},
 		Assets: application.AssetOptions{
@@ -365,10 +382,13 @@ func (c *composition) Open(ctx context.Context, root string, force, migrateLegac
 	lockPath := library.LockPath(root)
 	var lock *library.Lock
 	var lockErr error
+	// The lock file records the FULL build string (semver + commit + date); the
+	// library_meta bookkeeping keeps just the semver (see c.appVersion below).
+	lockVersion := version.Full()
 	if force {
-		lock, lockErr = library.ForceAcquireLock(lockPath, c.appVersion)
+		lock, lockErr = library.ForceAcquireLock(lockPath, lockVersion)
 	} else {
-		lock, lockErr = library.AcquireLock(lockPath, c.appVersion)
+		lock, lockErr = library.AcquireLock(lockPath, lockVersion)
 	}
 	if lockErr != nil {
 		if held, ok := library.AsLockHeld(lockErr); ok {
@@ -383,15 +403,27 @@ func (c *composition) Open(ctx context.Context, root string, force, migrateLegac
 	// not to quit; migrations are not cancellable (they run to completion or roll
 	// back atomically).
 	c.emitLibraryProgress("migrating", "Upgrading library catalog — don't quit PAIM")
+
+	// Resolve the per-machine thumbnail-cache location preference to a directory so
+	// the cache opens at the right place from the start (in-library or this Mac's
+	// local disk). A config error falls back to the in-library default.
+	thumbDir := ""
+	if cfg, cerr := c.config.Load(); cerr == nil {
+		if d, derr := library.ResolveThumbCacheDir(root, cfg.ThumbnailCacheLocation); derr == nil {
+			thumbDir = d
+		}
+	}
+
 	core, err := services.BuildCore(services.CoreDeps{
-		Root:       root,
-		AppVersion: c.appVersion,
-		Emitter:    c.emitter,
-		Registry:   c.registry,
-		Extractor:  c.extractor,
-		Collector:  c.collector,
-		Watcher:    c.watcher,
-		Logger:     c.logger,
+		Root:          root,
+		AppVersion:    c.appVersion,
+		Emitter:       c.emitter,
+		Registry:      c.registry,
+		Extractor:     c.extractor,
+		Collector:     c.collector,
+		Watcher:       c.watcher,
+		Logger:        c.logger,
+		ThumbCacheDir: thumbDir,
 	})
 	if err != nil {
 		_ = lock.Release()
@@ -508,6 +540,8 @@ func (c *composition) activate(core *services.AppCore, lock *library.Lock) {
 	c.logSvc.Bind(core)
 	c.settingsSvc.Bind(core)
 	c.browserSvc.Bind(core)
+	c.thumbnailSvc.Bind(core)
+	c.snapshotSvc.Bind(core)
 
 	if err := core.Manager.Start(c.rootCtx); err != nil {
 		c.logger.Error("could not start backup manager", "error", err.Error())
@@ -515,6 +549,9 @@ func (c *composition) activate(core *services.AppCore, lock *library.Lock) {
 	if err := c.sourcesSvc.StartWatching(c.rootCtx); err != nil {
 		c.logger.Warn("could not start volume watcher", "error", err.Error())
 	}
+	// Arm the catalog-snapshot timer for the life of the app (idles when no
+	// destination/interval is configured; re-arms when the setting changes).
+	c.snapshotSvc.StartTimer(c.rootCtx)
 
 	c.mu.Lock()
 	c.core = core
@@ -549,6 +586,11 @@ func (c *composition) shutdown() {
 
 	if core != nil {
 		core.Manager.Stop()
+		// Best-effort final catalog snapshot on graceful quit (when configured and
+		// the interval is not "off"). Bounded so it never wedges shutdown.
+		snapCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		c.snapshotSvc.SnapshotOnQuit(snapCtx)
+		cancel()
 	}
 	// Force-stop the sleep assertion so no caffeinate child outlives the app.
 	c.sleep.Shutdown()

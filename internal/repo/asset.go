@@ -103,6 +103,40 @@ func (r *AssetRepo) ListActiveArchived(ctx context.Context) ([]domain.Asset, err
 	return assets, nil
 }
 
+// ArchivedIDs returns the IDs of non-deleted assets that have an archive copy on
+// disk (a non-empty CurrentArchivePath), ordered oldest-import-first so a
+// thumbnail warm-up walks the library in a stable, resumable order. Duplicates
+// with no physical copy are excluded (there is nothing to render).
+func (r *AssetRepo) ArchivedIDs(ctx context.Context) ([]string, error) {
+	var ids []string
+	err := r.db.WithContext(ctx).
+		Model(&domain.Asset{}).
+		Where("current_archive_path <> ''").
+		Order("import_date ASC, created_at ASC").
+		Pluck("id", &ids).Error
+	if err != nil {
+		return nil, fmt.Errorf("repo: list archived asset ids: %w", err)
+	}
+	return ids, nil
+}
+
+// IDsForSession returns the IDs of non-deleted assets imported under sessionID
+// that have an archive copy on disk, ordered oldest-import-first. Used to warm
+// thumbnails for exactly the assets a just-completed import added.
+func (r *AssetRepo) IDsForSession(ctx context.Context, sessionID string) ([]string, error) {
+	var ids []string
+	err := r.db.WithContext(ctx).
+		Model(&domain.Asset{}).
+		Where("session_id = ?", sessionID).
+		Where("current_archive_path <> ''").
+		Order("import_date ASC, created_at ASC").
+		Pluck("id", &ids).Error
+	if err != nil {
+		return nil, fmt.Errorf("repo: list session asset ids: %w", err)
+	}
+	return ids, nil
+}
+
 // UpdateVerificationStatus sets the verification status of an asset.
 func (r *AssetRepo) UpdateVerificationStatus(ctx context.Context, id string, status domain.VerificationStatus) error {
 	return r.updateColumns(ctx, id, map[string]any{"verification_status": status})

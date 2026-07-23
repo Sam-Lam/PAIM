@@ -3,6 +3,8 @@ package services
 import (
 	"context"
 	"time"
+
+	"github.com/Sam-Lam/PAIM/internal/version"
 )
 
 // quitGracePeriod bounds how long ConfirmQuit waits, after cancelling every
@@ -50,6 +52,28 @@ func NewAppService(tracker *ActivityTracker) *AppService {
 		now:     time.Now,
 		sleep:   time.Sleep,
 	}
+}
+
+// VersionInfo is the build-stamped application version surfaced to the frontend
+// (Settings → About, Welcome subtitle). Commit and Date are empty in a dev build;
+// Full is always non-empty (it degrades to "<version> (dev)").
+type VersionInfo struct {
+	Version string `json:"version"`
+	Commit  string `json:"commit"`
+	Date    string `json:"date"`
+	Full    string `json:"full"`
+}
+
+// Version returns the build-stamped application version. It is bound to the
+// frontend so the About card and Welcome screen show the real running build
+// instead of a hardcoded constant.
+func (s *AppService) Version(ctx context.Context) (VersionInfo, error) {
+	return VersionInfo{
+		Version: version.Version,
+		Commit:  version.Commit,
+		Date:    version.Date,
+		Full:    version.Full(),
+	}, nil
 }
 
 // ActiveOperations returns the long operations currently running across the app.

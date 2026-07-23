@@ -72,9 +72,13 @@ type generator interface {
 	generate(ctx context.Context, srcPath, dstPath string, sizePx, quality int) error
 }
 
-// Cache is a content-addressed thumbnail cache rooted at <root>/.paim/thumbs.
+// Cache is a content-addressed thumbnail cache. Its directory is normally
+// <root>/.paim/thumbs but may be re-pointed at runtime (see Repoint) when the
+// user moves the cache to this Mac's local disk; dmu guards the mutable dir so
+// concurrent Ensure calls and a Repoint never race.
 type Cache struct {
-	dir     string // <root>/.paim/thumbs
+	dmu     sync.RWMutex // guards dir
+	dir     string
 	gen     generator
 	quality int
 	sem     chan struct{}
@@ -82,16 +86,29 @@ type Cache struct {
 	log     *slog.Logger
 }
 
-// New constructs a Cache backed by the macOS QuickLook pipeline. It sweeps stale
-// negative markers so a failed render from a previous run is retried once after a
-// restart.
+// New constructs a Cache at the library's default in-library location
+// (<root>/.paim/thumbs). It sweeps stale negative markers so a failed render from
+// a previous run is retried once after a restart.
 func New(root string, logger *slog.Logger) *Cache {
-	return newCache(root, qlGenerator{}, defaultConcurrency, logger)
+	return NewInDir(filepath.Join(root, ".paim", "thumbs"), logger)
+}
+
+// NewInDir constructs a Cache whose thumbnails live directly under dir. It backs
+// the configurable cache-location feature: main.go resolves the per-machine
+// preference to a directory and hands it here.
+func NewInDir(dir string, logger *slog.Logger) *Cache {
+	return newCacheAt(dir, qlGenerator{}, defaultConcurrency, logger)
 }
 
 // newCache is the injectable constructor used by tests to supply a fake
-// generator and a small concurrency bound.
+// generator and a small concurrency bound. It keeps the historical
+// "<root>/.paim/thumbs" layout so existing tests are unchanged.
 func newCache(root string, gen generator, concurrency int, logger *slog.Logger) *Cache {
+	return newCacheAt(filepath.Join(root, ".paim", "thumbs"), gen, concurrency, logger)
+}
+
+// newCacheAt is the shared constructor taking an explicit thumbnail directory.
+func newCacheAt(dir string, gen generator, concurrency int, logger *slog.Logger) *Cache {
 	if logger == nil {
 		logger = slog.Default()
 	}
@@ -99,7 +116,7 @@ func newCache(root string, gen generator, concurrency int, logger *slog.Logger) 
 		concurrency = 1
 	}
 	c := &Cache{
-		dir:     filepath.Join(root, ".paim", "thumbs"),
+		dir:     dir,
 		gen:     gen,
 		quality: defaultQuality,
 		sem:     make(chan struct{}, concurrency),
@@ -107,6 +124,48 @@ func newCache(root string, gen generator, concurrency int, logger *slog.Logger) 
 	}
 	c.sweepFailMarkers()
 	return c
+}
+
+// dirOf returns the current cache directory under the read lock.
+func (c *Cache) dirOf() string {
+	c.dmu.RLock()
+	defer c.dmu.RUnlock()
+	return c.dir
+}
+
+// Dir returns the directory thumbnails are currently written to and served from.
+func (c *Cache) Dir() string { return c.dirOf() }
+
+// Repoint switches the cache to a new directory (e.g. moving between the library
+// and this Mac's local disk). It takes effect immediately for subsequent
+// requests; the old location is left in place (its contents are disposable). New
+// negative markers under the new dir are swept so a fresh location starts clean.
+func (c *Cache) Repoint(dir string) {
+	c.dmu.Lock()
+	if c.dir == dir {
+		c.dmu.Unlock()
+		return
+	}
+	c.dir = dir
+	c.dmu.Unlock()
+	c.sweepFailMarkers()
+	c.log.Info("thumbnail cache re-pointed", "dir", dir)
+}
+
+// Clear removes the contents of the active cache directory. The cache is
+// disposable, so this only forces regeneration on next view. It removes the whole
+// tree and recreates the (empty) directory; callers are responsible for ensuring
+// the dir is a known cache root before invoking it.
+func (c *Cache) Clear() error {
+	dir := c.dirOf()
+	if err := os.RemoveAll(dir); err != nil {
+		return fmt.Errorf("thumbs: clear cache %q: %w", dir, err)
+	}
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return fmt.Errorf("thumbs: recreate cache dir %q: %w", dir, err)
+	}
+	c.log.Info("thumbnail cache cleared", "dir", dir)
+	return nil
 }
 
 // validSize reports whether px is one of the two supported sizes.
@@ -123,12 +182,12 @@ func shard(quickHash string) string {
 
 // thumbPath is the final cache path for a (size, quickHash).
 func (c *Cache) thumbPath(sizePx int, quickHash string) string {
-	return filepath.Join(c.dir, strconv.Itoa(sizePx), shard(quickHash), quickHash+thumbExt)
+	return filepath.Join(c.dirOf(), strconv.Itoa(sizePx), shard(quickHash), quickHash+thumbExt)
 }
 
 // failPath is the negative-marker path for a (size, quickHash).
 func (c *Cache) failPath(sizePx int, quickHash string) string {
-	return filepath.Join(c.dir, strconv.Itoa(sizePx), shard(quickHash), quickHash+failMarkerExt)
+	return filepath.Join(c.dirOf(), strconv.Itoa(sizePx), shard(quickHash), quickHash+failMarkerExt)
 }
 
 // Ensure returns the path to the cached JPEG thumbnail for (srcPath, quickHash)
@@ -225,10 +284,11 @@ func (c *Cache) markFailed(sizePx int, quickHash string) {
 // that failed transiently in a previous run gets one fresh attempt after
 // restart. Runs once at construction; missing cache dir is not an error.
 func (c *Cache) sweepFailMarkers() {
-	if _, err := os.Stat(c.dir); errors.Is(err, fs.ErrNotExist) {
+	dir := c.dirOf()
+	if _, err := os.Stat(dir); errors.Is(err, fs.ErrNotExist) {
 		return
 	}
-	_ = filepath.WalkDir(c.dir, func(path string, d fs.DirEntry, err error) error {
+	_ = filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return nil // keep sweeping despite per-entry errors
 		}

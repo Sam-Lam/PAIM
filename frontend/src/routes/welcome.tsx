@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { ClockIcon, FolderOpenIcon, FolderPlusIcon, ArrowUpTrayIcon } from "@heroicons/react/24/outline";
 import { Button, Card, ConfirmDialog, Spinner } from "../components";
 import {
+  AppService,
   LibraryService,
   WailsEvents,
   type LegacyStatusDTO,
@@ -13,8 +14,6 @@ import {
 import { useLibrary } from "../lib/library";
 import { useWailsEvent } from "../lib/hooks";
 import { useToast } from "../lib/toast";
-
-const APP_VERSION = "0.1.0";
 
 /** A pending lock conflict: the library the user tried to open plus its details. */
 interface Conflict {
@@ -40,6 +39,20 @@ export function WelcomePage() {
   // Live migration/open phase, so a legacy migration or catalog upgrade shows
   // labeled progress and a prominent "don't quit" warning instead of a bare spinner.
   const [phase, setPhase] = useState<LibraryProgress | null>(null);
+  // Build-stamped version string for the subtitle (falls back gracefully).
+  const [version, setVersion] = useState("");
+
+  useEffect(() => {
+    let cancelled = false;
+    AppService.Version()
+      .then((v) => {
+        if (!cancelled) setVersion(v.full);
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useWailsEvent<LibraryProgress>(WailsEvents.LibraryProgress, (p) => {
     setPhase(p.phase === "done" ? null : p);
@@ -142,7 +155,9 @@ export function WelcomePage() {
         </div>
         <div>
           <h1 className="text-lg font-semibold text-zinc-100">Photo Archive Integrity Manager</h1>
-          <p className="text-[13px] text-zinc-500">Choose a library to begin. Version {APP_VERSION}.</p>
+          <p className="text-[13px] text-zinc-500">
+            Choose a library to begin.{version ? ` Version ${version}.` : ""}
+          </p>
         </div>
       </div>
 

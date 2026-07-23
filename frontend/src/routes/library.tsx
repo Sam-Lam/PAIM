@@ -3,6 +3,7 @@ import {
   ArrowPathIcon,
   ArrowsPointingInIcon,
   ArrowsPointingOutIcon,
+  BoltIcon,
   CheckIcon,
   ClipboardDocumentIcon,
   FilmIcon,
@@ -20,13 +21,17 @@ import {
 } from "../components";
 import {
   BrowserService,
+  ThumbnailService,
+  WailsEvents,
   type AssetDetailDTO,
   type AssetRefDTO,
   type BrowseAssetDTO,
   type BrowseFilters,
   type MonthCountDTO,
+  type ThumbsProgress,
+  type WarmupStatusDTO,
 } from "../lib/api";
-import { useAsyncData } from "../lib/hooks";
+import { useAsyncData, useWailsEvent } from "../lib/hooks";
 import { useToast } from "../lib/toast";
 import {
   formatBytes,
@@ -99,6 +104,36 @@ export function LibraryPage() {
 
   const [selectedId, setSelectedId] = useState<string | null>(null);
 
+  // Thumbnail warm-up state, shown compactly in the header while running.
+  const [warm, setWarm] = useState<WarmupStatusDTO | null>(null);
+  const [startingWarm, setStartingWarm] = useState(false);
+  useEffect(() => {
+    let cancelled = false;
+    ThumbnailService.WarmupStatus()
+      .then((w) => {
+        if (!cancelled) setWarm(w);
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+  useWailsEvent<ThumbsProgress>(WailsEvents.ThumbsProgress, (p) => {
+    setWarm({ running: p.running, done: p.done, total: p.total, label: p.label });
+  });
+  const warmAll = async () => {
+    setStartingWarm(true);
+    try {
+      const st = await ThumbnailService.StartWarmupAll();
+      setWarm(st);
+    } catch (e) {
+      toast.fromError(e, "Could not start thumbnail warm-up");
+    } finally {
+      setStartingWarm(false);
+    }
+  };
+  const warmRunning = !!warm?.running;
+
   const months = useAsyncData(() => BrowserService.Months());
 
   const filters = useMemo<BrowseFilters>(
@@ -169,17 +204,29 @@ export function LibraryPage() {
         title="Library"
         description="A read-only view of everything archived — grouped by capture month, with full provenance on tap. Viewing only; nothing here modifies your files."
         actions={
-          <Button
-            icon={ArrowPathIcon}
-            variant="secondary"
-            onClick={() => {
-              void load(1, true);
-              void months.run({ silent: true });
-            }}
-            loading={loading && items.length > 0}
-          >
-            Refresh
-          </Button>
+          <div className="flex items-center gap-2">
+            {warmRunning ? (
+              <span className="flex items-center gap-1.5 rounded-md border border-blue-500/30 bg-blue-500/5 px-2.5 py-1.5 text-[12px] text-zinc-300 tabular-nums">
+                <BoltIcon className="h-3.5 w-3.5 animate-pulse text-blue-400" />
+                Generating thumbnails · {formatNumber(warm?.done ?? 0)} of {formatNumber(warm?.total ?? 0)}
+              </span>
+            ) : (
+              <Button icon={BoltIcon} variant="ghost" onClick={() => void warmAll()} loading={startingWarm}>
+                Pre-generate all thumbnails
+              </Button>
+            )}
+            <Button
+              icon={ArrowPathIcon}
+              variant="secondary"
+              onClick={() => {
+                void load(1, true);
+                void months.run({ silent: true });
+              }}
+              loading={loading && items.length > 0}
+            >
+              Refresh
+            </Button>
+          </div>
         }
       />
 

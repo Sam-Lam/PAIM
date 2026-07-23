@@ -27,6 +27,7 @@ declare module "@wailsio/runtime" {
             "source:evaluated": services$0.SourceEvaluated;
             "source:identified": services$0.SourceIdentified;
             "source:progress": services$0.SourceProgress;
+            "thumbs:progress": services$0.ThumbsProgress;
             "volume:mounted": services$0.VolumeEvent;
             "volume:unmounted": services$0.VolumeEvent;
         }

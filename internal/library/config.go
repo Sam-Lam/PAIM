@@ -20,13 +20,27 @@ type RecentLibrary struct {
 
 // Config is the per-machine PAIM configuration. It is deliberately NOT stored in
 // any library (the library DB stays machine-agnostic); it lives at
-// "~/Library/Application Support/PAIM/config.json" and only records which
-// libraries this machine has opened.
+// "~/Library/Application Support/PAIM/config.json" and records which libraries
+// this machine has opened plus this machine's local preferences (thumbnail cache
+// location, catalog snapshot destination/interval) that must not travel with the
+// portable library.
 type Config struct {
 	// LastLibrary is the root path of the library to try opening on launch.
 	LastLibrary string `json:"lastLibrary"`
 	// RecentLibraries is the MRU list (most recent first).
 	RecentLibraries []RecentLibrary `json:"recentLibraries"`
+
+	// ThumbnailCacheLocation selects where the disposable thumbnail cache lives:
+	// "" / ThumbLocationLibrary keeps it inside the library (<root>/.paim/thumbs);
+	// ThumbLocationLocal keeps it on this Mac's internal disk. Machine-local
+	// because it is a performance preference tied to this machine's disks.
+	ThumbnailCacheLocation string `json:"thumbnailCacheLocation,omitempty"`
+
+	// SnapshotDest is the folder catalog snapshots are copied to. Empty disables
+	// snapshots (the default). SnapshotInterval is one of the SnapshotInterval*
+	// tokens; it only matters when SnapshotDest is set.
+	SnapshotDest     string `json:"snapshotDest,omitempty"`
+	SnapshotInterval string `json:"snapshotInterval,omitempty"`
 }
 
 // ConfigStore reads and writes the per-machine Config with atomic (temp+rename)

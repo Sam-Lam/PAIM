@@ -127,6 +127,11 @@ type CoreDeps struct {
 	Watcher    *volumes.Watcher
 	Logger     *slog.Logger
 
+	// ThumbCacheDir, when non-empty, is the directory the thumbnail cache writes
+	// to (resolved by main.go from the per-machine location preference). Empty
+	// falls back to the in-library "<root>/.paim/thumbs".
+	ThumbCacheDir string
+
 	// OpenedDB, when non-nil, is used instead of opening a library catalog under
 	// Root. It backs the PAIM_DB_PATH dev escape hatch (plain db.Open, absolute
 	// archive paths, no lock/config). Root is left empty in that mode.
@@ -206,10 +211,16 @@ func BuildCore(deps CoreDeps) (*AppCore, error) {
 
 	identifier := source.NewIdentifier(deps.Collector, sources, Hasher{}, mediatype.IsMedia)
 
-	// The thumbnail cache lives under the library root's .paim/thumbs (disposable,
-	// travels with the library). In the dev escape hatch (Root empty) it falls back
-	// to a cwd-relative cache, which is acceptable for that path.
-	thumbCache := thumbs.New(deps.Root, logger)
+	// The thumbnail cache lives under the library root's .paim/thumbs by default
+	// (disposable, travels with the library), or at an explicit ThumbCacheDir when
+	// the per-machine preference moves it to this Mac's local disk. In the dev
+	// escape hatch (Root empty, no dir) it falls back to a cwd-relative cache.
+	var thumbCache *thumbs.Cache
+	if deps.ThumbCacheDir != "" {
+		thumbCache = thumbs.NewInDir(deps.ThumbCacheDir, logger)
+	} else {
+		thumbCache = thumbs.New(deps.Root, logger)
+	}
 
 	return &AppCore{
 		Root:       deps.Root,
