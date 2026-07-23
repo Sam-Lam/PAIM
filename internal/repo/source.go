@@ -122,3 +122,50 @@ func (r *SourceRepo) SetSafeToErase(ctx context.Context, id string, safe bool, r
 	}
 	return nil
 }
+
+// SessionCounts returns, per source ID, the number of non-deleted import
+// sessions linked to it. Sources with no linked sessions are absent from the
+// map. Import counts are derived from sessions (rather than incremented on a
+// stored counter) so they can never drift and retroactive session adoption is
+// reflected immediately.
+func (r *SourceRepo) SessionCounts(ctx context.Context) (map[string]int64, error) {
+	var rows []struct {
+		SourceID string
+		N        int64
+	}
+	err := r.db.WithContext(ctx).
+		Model(&domain.ImportSession{}).
+		Select("source_id, count(*) as n").
+		Where("source_id <> ''").
+		Group("source_id").
+		Scan(&rows).Error
+	if err != nil {
+		return nil, fmt.Errorf("repo: session counts by source: %w", err)
+	}
+	out := make(map[string]int64, len(rows))
+	for _, row := range rows {
+		out[row.SourceID] = row.N
+	}
+	return out, nil
+}
+
+// AdoptOrphanSessions links import sessions that recorded mountPoint as their
+// source root but carry no SourceID (sessions from before source auto-linking)
+// to the given source. Matching is boundary-safe: the recorded root must be
+// exactly mountPoint or a path beneath it, so "/Volumes/Untitled" never adopts
+// sessions from "/Volumes/Untitled 1". Callers should only invoke this after a
+// content-fingerprint-corroborated identification — path equality alone is not
+// identity (mount names recycle across cards).
+func (r *SourceRepo) AdoptOrphanSessions(ctx context.Context, sourceID, mountPoint string) (int64, error) {
+	exact := `%"sourceRoot":"` + escapeLike(mountPoint) + `"%`
+	prefix := `%"sourceRoot":"` + escapeLike(mountPoint) + `/%`
+	res := r.db.WithContext(ctx).
+		Model(&domain.ImportSession{}).
+		Where("source_id = ''").
+		Where("notes LIKE ? ESCAPE '\\' OR notes LIKE ? ESCAPE '\\'", exact, prefix).
+		Update("source_id", sourceID)
+	if res.Error != nil {
+		return 0, fmt.Errorf("repo: adopt orphan sessions for source %q: %w", sourceID, res.Error)
+	}
+	return res.RowsAffected, nil
+}

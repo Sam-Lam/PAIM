@@ -49,6 +49,8 @@ func init() {
 	application.RegisterEvent[services.AnalyzeCompleted](services.EventAnalyzeCompleted)
 	application.RegisterEvent[services.BackupProgress](services.EventBackupProgress)
 	application.RegisterEvent[services.BackupQueueChanged](services.EventBackupQueueChanged)
+	application.RegisterEvent[services.BackupBackfillProgress](services.EventBackupBackfillProgress)
+	application.RegisterEvent[services.BackupBackfillCompleted](services.EventBackupBackfillCompleted)
 	application.RegisterEvent[services.VolumeEvent](services.EventVolumeMounted)
 	application.RegisterEvent[services.VolumeEvent](services.EventVolumeUnmounted)
 	application.RegisterEvent[services.SourceIdentified](services.EventSourceIdentified)
@@ -230,7 +232,7 @@ func run() error {
 	// unattended import/analyze/reorganize/safe-to-erase/cleanup does not stall
 	// when the Mac sleeps. Only the services that run such jobs need it.
 	for _, sa := range []interface{ SetSleepGuard(*services.SleepGuard) }{
-		comp.importSvc, comp.sourcesSvc, comp.cleanupSvc, comp.thumbnailSvc,
+		comp.importSvc, comp.sourcesSvc, comp.cleanupSvc, comp.thumbnailSvc, comp.backupSvc,
 	} {
 		sa.SetSleepGuard(sleep)
 	}

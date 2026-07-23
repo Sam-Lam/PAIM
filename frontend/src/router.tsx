@@ -29,6 +29,14 @@ const libraryRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/library",
   component: LibraryPage,
+  // The dashboard's "Assets over time" chart deep-links here with ?yearMonth=YYYY-MM
+  // to pre-apply the capture-month filter.
+  validateSearch: (search: Record<string, unknown>): { yearMonth?: string } => ({
+    yearMonth:
+      typeof search.yearMonth === "string" && /^\d{4}-\d{2}$/.test(search.yearMonth)
+        ? search.yearMonth
+        : undefined,
+  }),
 });
 
 const importRoute = createRoute({

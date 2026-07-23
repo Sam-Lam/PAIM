@@ -37,6 +37,13 @@ func backendNeedsThrottle(backendType string) bool {
 	return throttledBackends[strings.ToLower(strings.TrimSpace(backendType))]
 }
 
+// backendIsGooglePhotos reports whether a backend type is rclone's Google Photos
+// backend, whose virtual filesystem only accepts uploads under album/<name>/... or
+// upload/... roots (see remotePathFor's gphotos mapping).
+func backendIsGooglePhotos(backendType string) bool {
+	return strings.ToLower(strings.TrimSpace(backendType)) == "googlephotos"
+}
+
 // detectBackendType returns the rclone backend type of a remote (e.g. "drive",
 // "googlephotos", "s3") by parsing `rclone config show <remote>`. It returns an
 // empty type without error when the type line is absent (a best-effort probe:

@@ -828,6 +828,13 @@ func backupSortKey(asset domain.Asset) int64 {
 	return asset.ImportDate.Unix()
 }
 
+// SortKeyForAsset exposes the per-provider upload-order key computation so the
+// services-layer backup backfill stamps a backfilled job with the SAME
+// capture/import-date SortKey the importer's EnqueueForAsset uses. Keeping one
+// helper guarantees backfilled and import-time jobs order identically under a
+// provider's newest-first / oldest-first upload order.
+func SortKeyForAsset(asset domain.Asset) int64 { return backupSortKey(asset) }
+
 // Pause moves a pending job to paused so workers stop claiming it. A job that is
 // already running finishes its current upload (uploads are never aborted
 // mid-flight); pause it once it returns to a pending state to prevent further

@@ -21,6 +21,7 @@ import {
 } from "../components";
 import {
   BackupService,
+  ProviderService,
   WailsEvents,
   type BackupJobDTO,
   type BackupProgress,
@@ -52,6 +53,10 @@ export function BackupQueuePage() {
   const [cancelJob, setCancelJob] = useState<BackupJobDTO | null>(null);
   const [cancelling, setCancelling] = useState(false);
   const [busyAll, setBusyAll] = useState(false);
+  // Whether any enabled destination exists — drives the empty-state hint that
+  // points at the Providers page's "Queue missing backups" when a destination was
+  // added after importing.
+  const [hasProviders, setHasProviders] = useState(false);
 
   const summary = useAsyncData(() => BackupService.QueueSummary());
   const jobs = useAsyncData(() => BackupService.ListJobs(filter, page, PAGE_SIZE));
@@ -66,6 +71,13 @@ export function BackupQueuePage() {
     void jobs.run().catch((e) => toast.fromError(e, "Failed to load backup jobs"));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [filter, page]);
+
+  // Detect whether any enabled destination exists (for the empty-state hint).
+  useEffect(() => {
+    void ProviderService.List()
+      .then((ps) => setHasProviders((ps ?? []).some((p) => p.enabled)))
+      .catch(() => undefined);
+  }, []);
 
   // Initial summary + 10s poll fallback.
   usePoll(() => {
@@ -338,7 +350,10 @@ export function BackupQueuePage() {
           emptyState={{
             icon: CloudArrowUpIcon,
             title: filter ? `No ${filter} jobs` : "No backup jobs",
-            description: "Backup jobs are created automatically when you import photos into your archive.",
+            description:
+              !filter && hasProviders && (s?.total ?? 0) === 0
+                ? "Added a destination after importing? Queue missing backups from the Providers page."
+                : "Backup jobs are created automatically when you import photos into your archive.",
           }}
         />
       </Card>

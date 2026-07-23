@@ -4,12 +4,14 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"sync"
 	"time"
 
 	"github.com/Sam-Lam/PAIM/internal/backup"
 	"github.com/Sam-Lam/PAIM/internal/domain"
 	"github.com/Sam-Lam/PAIM/internal/library"
 	"github.com/Sam-Lam/PAIM/internal/repo"
+	"gorm.io/gorm"
 )
 
 // BackupService inspects and controls the SQLite-persisted backup queue via the
@@ -18,12 +20,27 @@ import (
 // ProgressFn (wired in main.go, see NewBackupProgressEmitter).
 type BackupService struct {
 	gated
+	sleepAware
 	manager *backup.Manager
 	jobs    *repo.BackupRepo
 	assets  *repo.AssetRepo
+	db      *gorm.DB
 	emitter Emitter
 	log     *slog.Logger
 	root    string
+
+	// Backfill single-instance guard and live state. Only one provider backfill
+	// runs at a time (bfRunning); its progress is mirrored here so a re-attaching
+	// UI can read it via BackfillStatus and the quit guard can report it.
+	bfMu       sync.Mutex
+	bfRunning  bool
+	bfCancel   context.CancelFunc
+	bfProvider string
+	bfDone     int
+	bfTotal    int
+	// bfPageSize overrides the keyset page size; 0 means backfillPageSize. Set only
+	// by tests to exercise multi-page paging and mid-run cancellation.
+	bfPageSize int
 }
 
 // Bind wires the BackupService to an open library's catalog in place.
@@ -31,6 +48,7 @@ func (s *BackupService) Bind(core *AppCore) {
 	s.manager = core.Manager
 	s.jobs = core.Backups
 	s.assets = core.Assets
+	s.db = core.DB
 	s.root = core.Root
 }
 
@@ -205,32 +223,49 @@ func (s *BackupService) mutate(ctx context.Context, err error) error {
 	return nil
 }
 
-// activeOps reports the backup jobs currently uploading (transferring bytes) for
-// the quit guard. The pending queue is deliberately not reported: pending jobs
-// resume next launch and must not nag the user at quit. One OperationInfo is
-// emitted per in-flight upload.
+// activeOps reports the backup jobs currently uploading (transferring bytes) plus
+// a running backfill (enqueue of a provider's missing jobs) for the quit guard.
+// The pending queue is deliberately not reported: pending jobs resume next launch
+// and must not nag the user at quit. One OperationInfo is emitted per in-flight
+// upload, and one for an active backfill.
 func (s *BackupService) activeOps() []OperationInfo {
-	if s.manager == nil {
-		return nil
+	var out []OperationInfo
+	if s.manager != nil {
+		for _, j := range s.manager.RunningJobs() {
+			out = append(out, OperationInfo{
+				Kind:       "backup_upload",
+				Label:      "Uploading a backup",
+				BytesDone:  j.BytesDone,
+				BytesTotal: j.BytesTotal,
+			})
+		}
 	}
-	jobs := s.manager.RunningJobs()
-	out := make([]OperationInfo, 0, len(jobs))
-	for _, j := range jobs {
+	s.bfMu.Lock()
+	if s.bfRunning {
 		out = append(out, OperationInfo{
-			Kind:       "backup_upload",
-			Label:      "Uploading a backup",
-			BytesDone:  j.BytesDone,
-			BytesTotal: j.BytesTotal,
+			Kind:       "backup_backfill",
+			Label:      "Queueing missing backups",
+			FilesDone:  s.bfDone,
+			FilesTotal: s.bfTotal,
 		})
 	}
+	s.bfMu.Unlock()
 	return out
 }
 
-// cancelActive is a no-op for backups: uploads are never aborted mid-flight, and
+// cancelActive cancels a running backfill (resumable — a later run enqueues the
+// remainder) but is a no-op for uploads: uploads are never aborted mid-flight, and
 // a job still running at shutdown is reverted to pending by the manager's Stop
-// (and startup recovery), then resumes next launch. The quit guard's bounded
-// grace wait simply proceeds after the deadline.
-func (s *BackupService) cancelActive() {}
+// (and startup recovery), then resumes next launch. The quit guard's bounded grace
+// wait simply proceeds after the deadline.
+func (s *BackupService) cancelActive() {
+	s.bfMu.Lock()
+	cancel := s.bfCancel
+	s.bfMu.Unlock()
+	if cancel != nil {
+		cancel()
+	}
+}
 
 // NewBackupQueueChangedEmitter returns a backup.Options.OnQueueChanged callback
 // that emits a backup:queue-changed event carrying the current queue summary.

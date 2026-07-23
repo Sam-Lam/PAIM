@@ -2,7 +2,10 @@ package services
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
+	"strconv"
+	"time"
 
 	"github.com/Sam-Lam/PAIM/internal/domain"
 	"github.com/Sam-Lam/PAIM/internal/repo"
@@ -47,7 +50,8 @@ type TotalsDTO struct {
 	StorageBytes int64 `json:"storageBytes"`
 }
 
-// MonthCountDTO is one point in the library growth series.
+// MonthCountDTO pairs a capture month ("YYYY-MM") with an asset count. It backs
+// the Library browser's month filter (BrowserService.Months).
 type MonthCountDTO struct {
 	Month string `json:"month"` // YYYY-MM
 	Count int64  `json:"count"`
@@ -68,7 +72,6 @@ type BackupSummaryDTO struct {
 // DashboardStats is the full dashboard payload.
 type DashboardStats struct {
 	Totals             TotalsDTO        `json:"totals"`
-	LibraryGrowth      []MonthCountDTO  `json:"libraryGrowth"`
 	PendingImports     int64            `json:"pendingImports"`
 	BackupQueue        BackupSummaryDTO `json:"backupQueue"`
 	DuplicateCount     int64            `json:"duplicateCount"`
@@ -101,10 +104,6 @@ func (s *DashboardService) GetStats(ctx context.Context) (DashboardStats, error)
 		}
 	}
 	if out.Totals.StorageBytes, err = s.assets.TotalBytes(ctx); err != nil {
-		return DashboardStats{}, err
-	}
-
-	if out.LibraryGrowth, err = s.libraryGrowth(ctx); err != nil {
 		return DashboardStats{}, err
 	}
 
@@ -210,19 +209,183 @@ func (s *DashboardService) backupSummary(ctx context.Context) (BackupSummaryDTO,
 	return out, nil
 }
 
-// libraryGrowth returns per-month asset counts (by import date) for the last 12
-// months, oldest first.
-func (s *DashboardService) libraryGrowth(ctx context.Context) ([]MonthCountDTO, error) {
-	var rows []MonthCountDTO
-	err := s.db.WithContext(ctx).
-		Model(&domain.Asset{}).
-		Select("strftime('%Y-%m', import_date) as month, count(*) as count").
-		Where("import_date >= date('now', '-12 months')").
-		Group("month").
-		Order("month ASC").
-		Scan(&rows).Error
+// AssetsOverTime chart tuning constants.
+const (
+	// dayWindow caps the Day granularity to its most recent N buckets: a 20-year
+	// library at day resolution is ~7,300 bars, so Day always windows.
+	dayWindow = 120
+	// maxBuckets is the hard ceiling on emitted bars. 20 years of months is 240,
+	// so honest zero-filled axes stay well under it; the cap is a safety net that
+	// trims to the most recent buckets (marking the result windowed) rather than
+	// coarsening.
+	maxBuckets = 400
+)
+
+// AssetsOverTimeBucketDTO is one bar of the assets-over-time chart: a labeled
+// effective-capture-time bucket with its photo/video split.
+type AssetsOverTimeBucketDTO struct {
+	Label  string `json:"label"`  // human bucket label ("2026-07", "2020–2024", …)
+	Start  string `json:"start"`  // ISO date (YYYY-MM-DD) at the bucket's start
+	Photos int64  `json:"photos"` // photo + raw_photo + live_photo_pair
+	Videos int64  `json:"videos"`
+}
+
+// AssetsOverTimeDTO is the capture-date distribution shown on the dashboard,
+// bucketed at the resolved granularity. Buckets are keyed on
+// COALESCE(capture_date, import_date), so assets with no capture date land in their
+// import-date bucket — TotalUndatedFallback counts how many, surfaced as a footnote.
+// Windowed is true when Buckets cover only part of [RangeStart, RangeEnd] (the Day
+// view's most-recent-120-days window, or the maxBuckets safety trim); the UI shows
+// the full range so the window is honest.
+type AssetsOverTimeDTO struct {
+	Granularity          string                    `json:"granularity"` // resolved concrete granularity
+	Buckets              []AssetsOverTimeBucketDTO `json:"buckets"`
+	Windowed             bool                      `json:"windowed"`
+	RangeStart           string                    `json:"rangeStart"` // ISO date, "" when empty
+	RangeEnd             string                    `json:"rangeEnd"`
+	TotalUndatedFallback int64                     `json:"totalUndatedFallback"`
+}
+
+// AssetsOverTime returns the library's asset distribution over effective capture
+// time, bucketed at the given granularity ("day"|"month"|"year"|"5year"|"all").
+// "all" (and any unrecognized value) auto-picks from the data span; see
+// resolveGranularity. Gaps between the earliest and latest bucket are zero-filled
+// so the time axis is honest; the Day view windows to its most recent dayWindow
+// buckets. Excludes soft-deleted assets.
+func (s *DashboardService) AssetsOverTime(ctx context.Context, granularity string) (*AssetsOverTimeDTO, error) {
+	if err := s.guard(); err != nil {
+		return nil, err
+	}
+
+	minEff, maxEff, err := s.assets.EffectiveDateRange(ctx)
 	if err != nil {
 		return nil, err
 	}
-	return rows, nil
+	undated, err := s.assets.CountUndatedFallback(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	out := &AssetsOverTimeDTO{
+		Buckets:              []AssetsOverTimeBucketDTO{},
+		TotalUndatedFallback: undated,
+	}
+	if minEff == nil || maxEff == nil {
+		// Empty library: no range, no bars. Still echo a concrete granularity.
+		out.Granularity = resolveGranularity(granularity, 0)
+		return out, nil
+	}
+	out.RangeStart = minEff.Format("2006-01-02")
+	out.RangeEnd = maxEff.Format("2006-01-02")
+
+	gran := resolveGranularity(granularity, maxEff.Sub(*minEff))
+	out.Granularity = gran
+
+	raw, err := s.assets.AssetsByBucket(ctx, gran)
+	if err != nil {
+		return nil, err
+	}
+	counts := make(map[string]repo.BucketCount, len(raw))
+	for _, b := range raw {
+		counts[b.Bucket] = b
+	}
+
+	// Build the zero-filled, ordered bucket axis over [start, end].
+	start, end := *minEff, *maxEff
+	if gran == "day" {
+		if w := end.AddDate(0, 0, -(dayWindow - 1)); w.After(start) {
+			start = w
+			out.Windowed = true
+		}
+	}
+	keys := bucketKeys(gran, start, end)
+	if len(keys) > maxBuckets {
+		keys = keys[len(keys)-maxBuckets:]
+		out.Windowed = true
+	}
+	for _, k := range keys {
+		bc := counts[k.key]
+		out.Buckets = append(out.Buckets, AssetsOverTimeBucketDTO{
+			Label:  k.label,
+			Start:  k.start.Format("2006-01-02"),
+			Photos: bc.Photos,
+			Videos: bc.Videos,
+		})
+	}
+	return out, nil
+}
+
+// resolveGranularity maps a requested granularity to a concrete one. A recognized
+// concrete value passes through; "all" (and anything else) auto-picks from the data
+// span:
+//   - ≤ 3 months  -> day
+//   - ≤ 3 years   -> month
+//   - ≤ 15 years  -> year
+//   - otherwise   -> 5year
+//
+// Thresholds are expressed in days (≈ the calendar spans) so the boundaries are
+// stable and cheap to compare.
+func resolveGranularity(requested string, span time.Duration) string {
+	switch requested {
+	case "day", "month", "year", "5year":
+		return requested
+	}
+	days := span.Hours() / 24
+	switch {
+	case days <= 92: // ~3 months
+		return "day"
+	case days <= 1096: // ~3 years
+		return "month"
+	case days <= 5479: // ~15 years
+		return "year"
+	default:
+		return "5year"
+	}
+}
+
+// bucketKey is one entry on the time axis: its strftime key (matching AssetsByBucket
+// output), a human label, and the bucket's start instant (UTC).
+type bucketKey struct {
+	key   string
+	label string
+	start time.Time
+}
+
+// bucketKeys enumerates every bucket from start to end inclusive at the given
+// granularity, so gaps with no assets become explicit zero bars. Keys are computed
+// in UTC to match the SQLite driver's UTC-normalized datetime text (strftime reads
+// the stored value in UTC), keeping these labels aligned with AssetsByBucket keys.
+func bucketKeys(gran string, start, end time.Time) []bucketKey {
+	start, end = start.UTC(), end.UTC()
+	var keys []bucketKey
+	switch gran {
+	case "day":
+		d := time.Date(start.Year(), start.Month(), start.Day(), 0, 0, 0, 0, time.UTC)
+		last := time.Date(end.Year(), end.Month(), end.Day(), 0, 0, 0, 0, time.UTC)
+		for !d.After(last) {
+			k := d.Format("2006-01-02")
+			keys = append(keys, bucketKey{key: k, label: k, start: d})
+			d = d.AddDate(0, 0, 1)
+		}
+	case "month":
+		d := time.Date(start.Year(), start.Month(), 1, 0, 0, 0, 0, time.UTC)
+		last := time.Date(end.Year(), end.Month(), 1, 0, 0, 0, 0, time.UTC)
+		for !d.After(last) {
+			k := d.Format("2006-01")
+			keys = append(keys, bucketKey{key: k, label: k, start: d})
+			d = d.AddDate(0, 1, 0)
+		}
+	case "year":
+		for y := start.Year(); y <= end.Year(); y++ {
+			d := time.Date(y, 1, 1, 0, 0, 0, 0, time.UTC)
+			k := strconv.Itoa(y)
+			keys = append(keys, bucketKey{key: k, label: k, start: d})
+		}
+	case "5year":
+		for y := (start.Year() / 5) * 5; y <= (end.Year()/5)*5; y += 5 {
+			d := time.Date(y, 1, 1, 0, 0, 0, 0, time.UTC)
+			keys = append(keys, bucketKey{key: strconv.Itoa(y), label: fmt.Sprintf("%d–%d", y, y+4), start: d})
+		}
+	}
+	return keys
 }

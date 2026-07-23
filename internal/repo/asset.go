@@ -383,6 +383,72 @@ func (r *AssetRepo) ArchivedIDs(ctx context.Context) ([]string, error) {
 	return ids, nil
 }
 
+// EligibleForBackupPage returns up to limit non-deleted, verified assets that
+// have an archive copy on disk (CurrentArchivePath <> ''), whose ID sorts after
+// afterID, ordered by ID ascending. It is the stable, resumable keyset page the
+// backup backfill iterates: copy-mode duplicate PLACEHOLDERS (empty archive path)
+// are excluded because there is nothing to back up, while adopt-flagged duplicates
+// (which carry a real path) are INCLUDED — exactly the set the importer enqueues at
+// import time. Pass afterID="" to start from the first page. Because the order is a
+// stable total order over the ID key and Enqueue is idempotent, a cancelled
+// backfill resumes correctly on a fresh from-the-start run (already-enqueued pairs
+// are skipped).
+func (r *AssetRepo) EligibleForBackupPage(ctx context.Context, afterID string, limit int) ([]domain.Asset, error) {
+	if limit <= 0 {
+		limit = 1000
+	}
+	var assets []domain.Asset
+	err := r.db.WithContext(ctx).
+		Where("verification_status = ?", domain.VerificationStatusVerified).
+		Where("current_archive_path <> ''").
+		Where("id > ?", afterID).
+		Order("id ASC").
+		Limit(limit).
+		Find(&assets).Error
+	if err != nil {
+		return nil, fmt.Errorf("repo: eligible-for-backup page (after %q): %w", afterID, err)
+	}
+	return assets, nil
+}
+
+// CountEligibleForBackup counts every non-deleted, verified asset that has an
+// archive copy on disk — the total set a backfill scans (the progress-bar
+// denominator). It is the same eligibility EligibleForBackupPage pages over.
+func (r *AssetRepo) CountEligibleForBackup(ctx context.Context) (int64, error) {
+	var n int64
+	err := r.db.WithContext(ctx).
+		Model(&domain.Asset{}).
+		Where("verification_status = ?", domain.VerificationStatusVerified).
+		Where("current_archive_path <> ''").
+		Count(&n).Error
+	if err != nil {
+		return 0, fmt.Errorf("repo: count eligible for backup: %w", err)
+	}
+	return n, nil
+}
+
+// CountEligibleMissingBackup counts non-deleted, verified assets that have an
+// archive copy but NO pending, running, or completed backup job for the given
+// provider (destination). The status set matches BackupRepo.Enqueue's idempotency
+// exactly, so the result is precisely how many jobs a backfill for this provider
+// would create — the "N assets aren't queued for this destination yet" count the
+// Providers UI shows. It is a single indexed NOT EXISTS scan.
+func (r *AssetRepo) CountEligibleMissingBackup(ctx context.Context, providerID string) (int64, error) {
+	var n int64
+	err := r.db.WithContext(ctx).
+		Model(&domain.Asset{}).
+		Where("verification_status = ?", domain.VerificationStatusVerified).
+		Where("current_archive_path <> ''").
+		Where("NOT EXISTS (SELECT 1 FROM backup_jobs j WHERE j.asset_id = assets.id AND j.destination = ? AND j.deleted_at IS NULL AND j.status IN ?)",
+			providerID,
+			[]domain.JobStatus{domain.JobStatusPending, domain.JobStatusRunning, domain.JobStatusCompleted}).
+		Count(&n).Error
+	if err != nil {
+		return 0, fmt.Errorf("repo: count eligible missing backup (provider %q): %w", providerID, err)
+	}
+	return n, nil
+}
+
 // IDsForSession returns the IDs of non-deleted assets imported under sessionID
 // that have an archive copy on disk, ordered oldest-import-first. Used to warm
 // thumbnails for exactly the assets a just-completed import added.
@@ -637,6 +703,105 @@ func (r *AssetRepo) List(ctx context.Context, q AssetQuery) ([]domain.Asset, int
 		return nil, 0, fmt.Errorf("repo: list assets: %w", err)
 	}
 	return assets, total, nil
+}
+
+// effectiveDateExpr is COALESCE(capture_date, import_date): a row's capture time,
+// falling back to its import time when no capture date was extracted. import_date
+// is always set, so the expression is never NULL. It is the honest "when did this
+// happen" axis the dashboard's assets-over-time rollup groups on.
+const effectiveDateExpr = "COALESCE(capture_date, import_date)"
+
+// photoMediaIn is the SQL IN-list of the media types the dashboard counts as
+// "photos" (everything that is not a video). Built from the domain enum constants,
+// never from caller input, so it is safe to interpolate.
+var photoMediaIn = "'" + string(domain.MediaTypePhoto) + "','" +
+	string(domain.MediaTypeRawPhoto) + "','" + string(domain.MediaTypeLivePhotoPair) + "'"
+
+// bucketExpr returns the SQLite strftime expression mapping effectiveDateExpr to a
+// bucket key for the given concrete granularity ("day"|"month"|"year"|"5year").
+// The expression is a fixed, caller-independent string (never user text), so it is
+// injection-safe. 5year floors the year to a multiple of five (2017 -> "2015").
+func bucketExpr(gran string) (string, error) {
+	switch gran {
+	case "day":
+		return "strftime('%Y-%m-%d', " + effectiveDateExpr + ")", nil
+	case "month":
+		return "strftime('%Y-%m', " + effectiveDateExpr + ")", nil
+	case "year":
+		return "strftime('%Y', " + effectiveDateExpr + ")", nil
+	case "5year":
+		return "CAST((CAST(strftime('%Y', " + effectiveDateExpr + ") AS INTEGER) / 5) * 5 AS TEXT)", nil
+	default:
+		return "", fmt.Errorf("repo: unknown granularity %q", gran)
+	}
+}
+
+// BucketCount is one raw effective-capture-time bucket from AssetsByBucket: the
+// strftime bucket key and the photo/video split within it.
+type BucketCount struct {
+	Bucket string `json:"bucket"`
+	Photos int64  `json:"photos"`
+	Videos int64  `json:"videos"`
+}
+
+// AssetsByBucket groups non-deleted assets into effective-capture-time buckets at
+// the given granularity, returning the photo/video split per bucket ordered by key
+// ascending. Photos are photo + raw_photo + live_photo_pair; videos are video.
+// Buckets are keyed on COALESCE(capture_date, import_date), so an asset with no
+// capture date lands in its import-date bucket. Only buckets that actually contain
+// rows are returned — the caller zero-fills the gaps for an honest time axis.
+func (r *AssetRepo) AssetsByBucket(ctx context.Context, gran string) ([]BucketCount, error) {
+	expr, err := bucketExpr(gran)
+	if err != nil {
+		return nil, err
+	}
+	sel := expr + " AS bucket, " +
+		"SUM(CASE WHEN media_type = '" + string(domain.MediaTypeVideo) + "' THEN 1 ELSE 0 END) AS videos, " +
+		"SUM(CASE WHEN media_type IN (" + photoMediaIn + ") THEN 1 ELSE 0 END) AS photos"
+	var rows []BucketCount
+	err = r.db.WithContext(ctx).
+		Model(&domain.Asset{}).
+		Select(sel).
+		Group("bucket").
+		Order("bucket ASC").
+		Scan(&rows).Error
+	if err != nil {
+		return nil, fmt.Errorf("repo: assets by bucket (%s): %w", gran, err)
+	}
+	return rows, nil
+}
+
+// EffectiveDateRange returns the earliest and latest effective capture time
+// (COALESCE(capture_date, import_date)) across non-deleted assets. Both are nil
+// when the library holds no live assets.
+func (r *AssetRepo) EffectiveDateRange(ctx context.Context) (minEff, maxEff *time.Time, err error) {
+	var row struct {
+		MinEff string
+		MaxEff string
+	}
+	err = r.db.WithContext(ctx).
+		Model(&domain.Asset{}).
+		Select("min(" + effectiveDateExpr + ") AS min_eff, max(" + effectiveDateExpr + ") AS max_eff").
+		Scan(&row).Error
+	if err != nil {
+		return nil, nil, fmt.Errorf("repo: effective date range: %w", err)
+	}
+	return parseSQLiteTime(row.MinEff), parseSQLiteTime(row.MaxEff), nil
+}
+
+// CountUndatedFallback counts non-deleted assets that have NO capture date and so
+// fall back to their import date in the effective-capture-time rollups. It is the
+// honest "these bars are placed by import date, not capture date" footnote count.
+func (r *AssetRepo) CountUndatedFallback(ctx context.Context) (int64, error) {
+	var n int64
+	err := r.db.WithContext(ctx).
+		Model(&domain.Asset{}).
+		Where("capture_date IS NULL").
+		Count(&n).Error
+	if err != nil {
+		return 0, fmt.Errorf("repo: count undated fallback: %w", err)
+	}
+	return n, nil
 }
 
 // CaptureMonth pairs a capture month ("2006-01") with the number of non-deleted

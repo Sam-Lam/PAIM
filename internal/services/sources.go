@@ -228,6 +228,19 @@ func (s *SourcesService) IdentifyVolume(ctx context.Context, mountPoint string) 
 		}
 	}
 
+	// A content-fingerprint match proves this volume's contents were imported
+	// before, so sessions that recorded this mount as their root but predate
+	// source auto-linking can safely be attributed to this source. Path match
+	// alone is NOT identity (mount names like "Untitled" recycle) — the
+	// fingerprint corroboration is what makes the adoption sound.
+	if match.ContentsPreviouslyImported && rec.ID != "" {
+		if adopted, err := s.sources.AdoptOrphanSessions(ctx, rec.ID, mountPoint); err != nil {
+			s.log.Warn("adopt orphan sessions", "sourceId", rec.ID, "error", err.Error())
+		} else if adopted > 0 {
+			s.log.Info("adopted orphan import sessions", "sourceId", rec.ID, "count", adopted, "mount", mountPoint)
+		}
+	}
+
 	emitSafe(s.emitter, EventSourceIdentified, SourceIdentified{
 		MountPoint: mountPoint,
 		SourceID:   rec.ID,
@@ -235,9 +248,13 @@ func (s *SourcesService) IdentifyVolume(ctx context.Context, mountPoint string) 
 		IsKnown:    match.IsKnown,
 	})
 
+	dto := toSourceDTO(*rec)
+	if counts, err := s.sources.SessionCounts(ctx); err == nil {
+		dto.ImportCount = int(counts[rec.ID])
+	}
 	return MatchDTO{
 		SourceID:                   rec.ID,
-		Source:                     toSourceDTO(*rec),
+		Source:                     dto,
 		Confidence:                 match.Confidence,
 		Reasons:                    match.Reasons,
 		IsKnown:                    match.IsKnown,
@@ -254,9 +271,17 @@ func (s *SourcesService) ListKnownSources(ctx context.Context) ([]SourceDTO, err
 	if err != nil {
 		return nil, err
 	}
+	counts, err := s.sources.SessionCounts(ctx)
+	if err != nil {
+		s.log.Warn("session counts by source", "error", err.Error())
+		counts = map[string]int64{}
+	}
 	out := make([]SourceDTO, 0, len(rows))
 	for _, r := range rows {
-		out = append(out, toSourceDTO(r))
+		dto := toSourceDTO(r)
+		// Import counts are derived from linked sessions, never a stored counter.
+		dto.ImportCount = int(counts[r.ID])
+		out = append(out, dto)
 	}
 	return out, nil
 }

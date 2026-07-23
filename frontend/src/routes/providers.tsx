@@ -3,6 +3,7 @@ import {
   ArrowPathIcon,
   CheckCircleIcon,
   CircleStackIcon,
+  CloudArrowUpIcon,
   ExclamationTriangleIcon,
   FolderOpenIcon,
   InformationCircleIcon,
@@ -10,18 +11,22 @@ import {
   ServerStackIcon,
   TrashIcon,
 } from "@heroicons/react/24/outline";
-import { Button, Card, EmptyState, LoadingBlock, PageHeader, StatusBadge } from "../components";
+import { Button, Card, EmptyState, LoadingBlock, PageHeader, ProgressBar, StatusBadge } from "../components";
 import {
+  BackupService,
   CleanupService,
   ProviderService,
+  WailsEvents,
+  type BackupBackfillCompleted,
+  type BackupBackfillProgress,
   type PluginDTO,
   type ProviderDTO,
   type RcloneRemoteInfoDTO,
   type RcloneRemotesDTO,
 } from "../lib/api";
-import { useAsyncData } from "../lib/hooks";
+import { useAsyncData, useWailsEvent } from "../lib/hooks";
 import { useToast } from "../lib/toast";
-import { formatBytes } from "../lib/format";
+import { formatBytes, formatNumber } from "../lib/format";
 
 const ORDER_OPTIONS: { value: string; label: string }[] = [
   { value: "oldest_first", label: "Oldest first (FIFO)" },
@@ -34,20 +39,50 @@ export function ProvidersPage() {
   const providers = useAsyncData(() => ProviderService.List());
   const plugins = useAsyncData(() => ProviderService.AvailablePlugins());
   const [adding, setAdding] = useState(false);
+  // The single in-flight backfill (only one runs at a time), keyed by providerId.
+  const [backfill, setBackfill] = useState<BackupBackfillProgress | null>(null);
+
+  const refresh = () => providers.run({ silent: true });
 
   useEffect(() => {
     void providers.run().catch((e) => toast.fromError(e, "Failed to load providers"));
     void plugins.run().catch(() => undefined);
+    // Re-attach to a backfill already running (e.g. after a route change).
+    void BackupService.BackfillStatus()
+      .then((st) => {
+        if (st.running) setBackfill({ providerId: st.providerId, done: st.done, total: st.total, running: true });
+      })
+      .catch(() => undefined);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  useWailsEvent<BackupBackfillProgress>(WailsEvents.BackupBackfillProgress, (d) => {
+    setBackfill(d.running ? d : null);
+  });
+  useWailsEvent<BackupBackfillCompleted>(WailsEvents.BackupBackfillCompleted, (d) => {
+    setBackfill(null);
+    if (!d.cancelled) {
+      const extra = d.skipped > 0 ? ` (${formatNumber(d.skipped)} already queued)` : "";
+      toast.success(`Queued ${formatNumber(d.enqueued)} backup${d.enqueued === 1 ? "" : "s"}${extra}`);
+    }
+    void refresh();
+  });
+
+  const startBackfill = (providerId: string) =>
+    void (async () => {
+      try {
+        const st = await BackupService.StartBackfill(providerId);
+        setBackfill({ providerId, done: st.done, total: st.total, running: true });
+      } catch (e) {
+        toast.fromError(e, "Could not queue backups");
+      }
+    })();
 
   const pluginByName = useMemo(() => {
     const m = new Map<string, PluginDTO>();
     (plugins.data ?? []).forEach((p) => m.set(p.name, p));
     return m;
   }, [plugins.data]);
-
-  const refresh = () => providers.run({ silent: true });
 
   return (
     <div>
@@ -88,7 +123,15 @@ export function ProvidersPage() {
             </Card>
           ) : (
             (providers.data ?? []).map((p) => (
-              <ProviderCard key={p.id} provider={p} plugin={pluginByName.get(p.pluginName)} onChanged={refresh} />
+              <ProviderCard
+                key={p.id}
+                provider={p}
+                plugin={pluginByName.get(p.pluginName)}
+                onChanged={refresh}
+                backfill={backfill?.providerId === p.id ? backfill : null}
+                backfillBusy={!!backfill}
+                onQueueBackfill={() => startBackfill(p.id)}
+              />
             ))
           )}
 
@@ -116,14 +159,21 @@ function ProviderCard({
   provider,
   plugin,
   onChanged,
+  backfill,
+  backfillBusy,
+  onQueueBackfill,
 }: {
   provider: ProviderDTO;
   plugin: PluginDTO | undefined;
   onChanged: () => void;
+  backfill: BackupBackfillProgress | null;
+  backfillBusy: boolean;
+  onQueueBackfill: () => void;
 }) {
   const toast = useToast();
   const [saving, setSaving] = useState(false);
   const summary = configSummary(provider.configJson);
+  const missing = provider.missingBackupCount ?? 0;
 
   const save = async (patch: { enabled?: boolean; uploadOrder?: string }) => {
     setSaving(true);
@@ -199,6 +249,41 @@ function ProviderCard({
               </select>
             </label>
           </div>
+
+          {backfill ? (
+            <div className="mt-3 rounded-md border border-blue-500/30 bg-blue-500/5 p-3">
+              <div className="flex items-center gap-2 text-[12px] text-blue-200/90">
+                <CloudArrowUpIcon className="h-4 w-4 flex-none" />
+                <span>
+                  Queueing missing backups… {formatNumber(backfill.done)}
+                  {backfill.total > 0 ? ` / ${formatNumber(backfill.total)}` : ""}
+                </span>
+              </div>
+              <ProgressBar
+                percent={backfill.total > 0 ? (backfill.done / backfill.total) * 100 : null}
+                size="sm"
+                className="mt-2"
+              />
+            </div>
+          ) : provider.enabled && missing > 0 ? (
+            <div className="mt-3 flex flex-wrap items-center gap-3 rounded-md border border-blue-500/30 bg-blue-500/5 p-3">
+              <div className="min-w-0 flex-1 text-[12px] text-blue-200/90">
+                <span className="font-medium text-blue-100">Back up your existing library?</span>{" "}
+                <span>
+                  {formatNumber(missing)} asset{missing === 1 ? "" : "s"} aren’t queued for this destination yet.
+                </span>
+              </div>
+              <Button
+                size="sm"
+                variant="primary"
+                icon={CloudArrowUpIcon}
+                disabled={backfillBusy}
+                onClick={onQueueBackfill}
+              >
+                Queue {formatNumber(missing)} backup{missing === 1 ? "" : "s"}
+              </Button>
+            </div>
+          ) : null}
         </div>
         <div className="flex-none">
           <Button
@@ -359,6 +444,9 @@ function AddDestination({
 
   const rcloneReady = isRclone && rclone?.installed === true;
   const noChecksum = isRclone && remoteInfo != null && !remoteInfo.supportsChecksum;
+  // Google Photos' rclone backend maps date folders to (nested) albums, so the
+  // destination-path field is an album-name prefix rather than a plain folder.
+  const isGooglePhotos = isRclone && remoteInfo?.backendType === "googlephotos";
 
   return (
     <Card title="Add destination" subtitle="Validated against the plugin before it is saved.">
@@ -410,6 +498,7 @@ function AddDestination({
             onPath={setRclonePath}
             onRetry={() => void loadRemotes()}
             remoteInfo={remoteInfo}
+            isGooglePhotos={isGooglePhotos}
           />
         ) : (
           <label className="block">
@@ -506,6 +595,7 @@ function RcloneConfig({
   onPath,
   onRetry,
   remoteInfo,
+  isGooglePhotos,
 }: {
   status: RcloneRemotesDTO | null;
   loading: boolean;
@@ -518,6 +608,7 @@ function RcloneConfig({
   onPath: (v: string) => void;
   onRetry: () => void;
   remoteInfo: RcloneRemoteInfoDTO | null;
+  isGooglePhotos: boolean;
 }) {
   if (loading || status === null) {
     return <LoadingBlock label="Checking rclone…" />;
@@ -589,7 +680,9 @@ function RcloneConfig({
       )}
 
       <label className="block">
-        <span className="text-xs font-medium text-zinc-400">Destination path</span>
+        <span className="text-xs font-medium text-zinc-400">
+          {isGooglePhotos ? "Album name prefix" : "Destination path"}
+        </span>
         <input
           value={path}
           onChange={(e) => onPath(e.target.value)}
@@ -597,7 +690,9 @@ function RcloneConfig({
           className="mt-1.5 w-full rounded-md border border-zinc-700 bg-zinc-950 px-3 py-1.5 font-mono text-[12px] text-zinc-200 outline-none focus:border-blue-500"
         />
         <span className="mt-1 block text-[11px] text-zinc-500">
-          Folder within each remote where the archive tree is mirrored.
+          {isGooglePhotos
+            ? "Your date folders become albums (e.g. PAIM-Backup/2019/2019-06-12 Trip) — one album per event, sidestepping Google Photos' per-album item cap."
+            : "Folder within each remote where the archive tree is mirrored."}
         </span>
       </label>
     </div>

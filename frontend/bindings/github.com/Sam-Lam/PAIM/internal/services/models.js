@@ -1128,6 +1128,306 @@ export class AssetRefDTO {
 }
 
 /**
+ * AssetsOverTimeBucketDTO is one bar of the assets-over-time chart: a labeled
+ * effective-capture-time bucket with its photo/video split.
+ */
+export class AssetsOverTimeBucketDTO {
+    /**
+     * Creates a new AssetsOverTimeBucketDTO instance.
+     * @param {Partial<AssetsOverTimeBucketDTO>} [$$source = {}] - The source object to create the AssetsOverTimeBucketDTO.
+     */
+    constructor($$source = {}) {
+        if (!("label" in $$source)) {
+            /**
+             * human bucket label ("2026-07", "2020–2024", …)
+             * @member
+             * @type {string}
+             */
+            this["label"] = "";
+        }
+        if (!("start" in $$source)) {
+            /**
+             * ISO date (YYYY-MM-DD) at the bucket's start
+             * @member
+             * @type {string}
+             */
+            this["start"] = "";
+        }
+        if (!("photos" in $$source)) {
+            /**
+             * photo + raw_photo + live_photo_pair
+             * @member
+             * @type {number}
+             */
+            this["photos"] = 0;
+        }
+        if (!("videos" in $$source)) {
+            /**
+             * @member
+             * @type {number}
+             */
+            this["videos"] = 0;
+        }
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new AssetsOverTimeBucketDTO instance from a string or object.
+     * @param {any} [$$source = {}]
+     * @returns {AssetsOverTimeBucketDTO}
+     */
+    static createFrom($$source = {}) {
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        return new AssetsOverTimeBucketDTO(/** @type {Partial<AssetsOverTimeBucketDTO>} */($$parsedSource));
+    }
+}
+
+/**
+ * AssetsOverTimeDTO is the capture-date distribution shown on the dashboard,
+ * bucketed at the resolved granularity. Buckets are keyed on
+ * COALESCE(capture_date, import_date), so assets with no capture date land in their
+ * import-date bucket — TotalUndatedFallback counts how many, surfaced as a footnote.
+ * Windowed is true when Buckets cover only part of [RangeStart, RangeEnd] (the Day
+ * view's most-recent-120-days window, or the maxBuckets safety trim); the UI shows
+ * the full range so the window is honest.
+ */
+export class AssetsOverTimeDTO {
+    /**
+     * Creates a new AssetsOverTimeDTO instance.
+     * @param {Partial<AssetsOverTimeDTO>} [$$source = {}] - The source object to create the AssetsOverTimeDTO.
+     */
+    constructor($$source = {}) {
+        if (!("granularity" in $$source)) {
+            /**
+             * resolved concrete granularity
+             * @member
+             * @type {string}
+             */
+            this["granularity"] = "";
+        }
+        if (!("buckets" in $$source)) {
+            /**
+             * @member
+             * @type {AssetsOverTimeBucketDTO[]}
+             */
+            this["buckets"] = [];
+        }
+        if (!("windowed" in $$source)) {
+            /**
+             * @member
+             * @type {boolean}
+             */
+            this["windowed"] = false;
+        }
+        if (!("rangeStart" in $$source)) {
+            /**
+             * ISO date, "" when empty
+             * @member
+             * @type {string}
+             */
+            this["rangeStart"] = "";
+        }
+        if (!("rangeEnd" in $$source)) {
+            /**
+             * @member
+             * @type {string}
+             */
+            this["rangeEnd"] = "";
+        }
+        if (!("totalUndatedFallback" in $$source)) {
+            /**
+             * @member
+             * @type {number}
+             */
+            this["totalUndatedFallback"] = 0;
+        }
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new AssetsOverTimeDTO instance from a string or object.
+     * @param {any} [$$source = {}]
+     * @returns {AssetsOverTimeDTO}
+     */
+    static createFrom($$source = {}) {
+        const $$createField1_0 = $$createType49;
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        if ("buckets" in $$parsedSource) {
+            $$parsedSource["buckets"] = $$createField1_0($$parsedSource["buckets"]);
+        }
+        return new AssetsOverTimeDTO(/** @type {Partial<AssetsOverTimeDTO>} */($$parsedSource));
+    }
+}
+
+/**
+ * BackfillStatusDTO is the re-attachment snapshot of the current provider backfill
+ * (or the initial status returned by StartBackfill). Done/Total count eligible
+ * assets scanned; ProviderID names the destination being filled.
+ */
+export class BackfillStatusDTO {
+    /**
+     * Creates a new BackfillStatusDTO instance.
+     * @param {Partial<BackfillStatusDTO>} [$$source = {}] - The source object to create the BackfillStatusDTO.
+     */
+    constructor($$source = {}) {
+        if (!("running" in $$source)) {
+            /**
+             * @member
+             * @type {boolean}
+             */
+            this["running"] = false;
+        }
+        if (!("providerId" in $$source)) {
+            /**
+             * @member
+             * @type {string}
+             */
+            this["providerId"] = "";
+        }
+        if (!("done" in $$source)) {
+            /**
+             * @member
+             * @type {number}
+             */
+            this["done"] = 0;
+        }
+        if (!("total" in $$source)) {
+            /**
+             * @member
+             * @type {number}
+             */
+            this["total"] = 0;
+        }
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new BackfillStatusDTO instance from a string or object.
+     * @param {any} [$$source = {}]
+     * @returns {BackfillStatusDTO}
+     */
+    static createFrom($$source = {}) {
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        return new BackfillStatusDTO(/** @type {Partial<BackfillStatusDTO>} */($$parsedSource));
+    }
+}
+
+/**
+ * BackupBackfillCompleted is the payload for backup:backfill-completed, emitted
+ * once when a provider backfill finishes (or is cancelled). Enqueued is how many
+ * new backup jobs it created; Skipped is how many eligible assets already had a
+ * job for the provider (idempotent no-ops). Cancelled is true when the run was
+ * stopped early — a later run resumes and enqueues the remainder.
+ */
+export class BackupBackfillCompleted {
+    /**
+     * Creates a new BackupBackfillCompleted instance.
+     * @param {Partial<BackupBackfillCompleted>} [$$source = {}] - The source object to create the BackupBackfillCompleted.
+     */
+    constructor($$source = {}) {
+        if (!("providerId" in $$source)) {
+            /**
+             * @member
+             * @type {string}
+             */
+            this["providerId"] = "";
+        }
+        if (!("enqueued" in $$source)) {
+            /**
+             * @member
+             * @type {number}
+             */
+            this["enqueued"] = 0;
+        }
+        if (!("skipped" in $$source)) {
+            /**
+             * @member
+             * @type {number}
+             */
+            this["skipped"] = 0;
+        }
+        if (!("cancelled" in $$source)) {
+            /**
+             * @member
+             * @type {boolean}
+             */
+            this["cancelled"] = false;
+        }
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new BackupBackfillCompleted instance from a string or object.
+     * @param {any} [$$source = {}]
+     * @returns {BackupBackfillCompleted}
+     */
+    static createFrom($$source = {}) {
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        return new BackupBackfillCompleted(/** @type {Partial<BackupBackfillCompleted>} */($$parsedSource));
+    }
+}
+
+/**
+ * BackupBackfillProgress is the payload for backup:backfill-progress, emitted
+ * (throttled) while a provider backfill enqueues jobs for a library's existing
+ * assets. ProviderID names the destination being filled; Done/Total count
+ * eligible assets scanned. Running is false only on the terminal tick (paired
+ * with a backup:backfill-completed event carrying the final counts).
+ */
+export class BackupBackfillProgress {
+    /**
+     * Creates a new BackupBackfillProgress instance.
+     * @param {Partial<BackupBackfillProgress>} [$$source = {}] - The source object to create the BackupBackfillProgress.
+     */
+    constructor($$source = {}) {
+        if (!("providerId" in $$source)) {
+            /**
+             * @member
+             * @type {string}
+             */
+            this["providerId"] = "";
+        }
+        if (!("done" in $$source)) {
+            /**
+             * @member
+             * @type {number}
+             */
+            this["done"] = 0;
+        }
+        if (!("total" in $$source)) {
+            /**
+             * @member
+             * @type {number}
+             */
+            this["total"] = 0;
+        }
+        if (!("running" in $$source)) {
+            /**
+             * @member
+             * @type {boolean}
+             */
+            this["running"] = false;
+        }
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new BackupBackfillProgress instance from a string or object.
+     * @param {any} [$$source = {}]
+     * @returns {BackupBackfillProgress}
+     */
+    static createFrom($$source = {}) {
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        return new BackupBackfillProgress(/** @type {Partial<BackupBackfillProgress>} */($$parsedSource));
+    }
+}
+
+/**
  * BackupJobDTO is the JSON-friendly projection of a BackupJob joined with its
  * asset's display filename and archive path.
  */
@@ -1354,7 +1654,7 @@ export class BackupQueueChanged {
      * @returns {BackupQueueChanged}
      */
     static createFrom($$source = {}) {
-        const $$createField0_0 = $$createType48;
+        const $$createField0_0 = $$createType50;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("summary" in $$parsedSource) {
             $$parsedSource["summary"] = $$createField0_0($$parsedSource["summary"]);
@@ -1656,7 +1956,7 @@ export class ClassStatDTO {
      * @returns {ClassStatDTO}
      */
     static createFrom($$source = {}) {
-        const $$createField3_0 = $$createType49;
+        const $$createField3_0 = $$createType51;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("files" in $$parsedSource) {
             $$parsedSource["files"] = $$createField3_0($$parsedSource["files"]);
@@ -1861,8 +2161,8 @@ export class CleanupReportDTO {
      * @returns {CleanupReportDTO}
      */
     static createFrom($$source = {}) {
-        const $$createField1_0 = $$createType51;
-        const $$createField9_0 = $$createType52;
+        const $$createField1_0 = $$createType53;
+        const $$createField9_0 = $$createType54;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("classes" in $$parsedSource) {
             $$parsedSource["classes"] = $$createField1_0($$parsedSource["classes"]);
@@ -2074,13 +2374,6 @@ export class DashboardStats {
              */
             this["totals"] = (new TotalsDTO());
         }
-        if (!("libraryGrowth" in $$source)) {
-            /**
-             * @member
-             * @type {MonthCountDTO[]}
-             */
-            this["libraryGrowth"] = [];
-        }
         if (!("pendingImports" in $$source)) {
             /**
              * @member
@@ -2133,30 +2426,26 @@ export class DashboardStats {
      * @returns {DashboardStats}
      */
     static createFrom($$source = {}) {
-        const $$createField0_0 = $$createType53;
-        const $$createField1_0 = $$createType55;
-        const $$createField3_0 = $$createType56;
+        const $$createField0_0 = $$createType55;
+        const $$createField2_0 = $$createType56;
+        const $$createField4_0 = $$createType58;
         const $$createField5_0 = $$createType58;
-        const $$createField6_0 = $$createType58;
-        const $$createField7_0 = $$createType60;
+        const $$createField6_0 = $$createType60;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("totals" in $$parsedSource) {
             $$parsedSource["totals"] = $$createField0_0($$parsedSource["totals"]);
         }
-        if ("libraryGrowth" in $$parsedSource) {
-            $$parsedSource["libraryGrowth"] = $$createField1_0($$parsedSource["libraryGrowth"]);
-        }
         if ("backupQueue" in $$parsedSource) {
-            $$parsedSource["backupQueue"] = $$createField3_0($$parsedSource["backupQueue"]);
+            $$parsedSource["backupQueue"] = $$createField2_0($$parsedSource["backupQueue"]);
         }
         if ("recentSources" in $$parsedSource) {
-            $$parsedSource["recentSources"] = $$createField5_0($$parsedSource["recentSources"]);
+            $$parsedSource["recentSources"] = $$createField4_0($$parsedSource["recentSources"]);
         }
         if ("safeToEraseSources" in $$parsedSource) {
-            $$parsedSource["safeToEraseSources"] = $$createField6_0($$parsedSource["safeToEraseSources"]);
+            $$parsedSource["safeToEraseSources"] = $$createField5_0($$parsedSource["safeToEraseSources"]);
         }
         if ("recentActivity" in $$parsedSource) {
-            $$parsedSource["recentActivity"] = $$createField7_0($$parsedSource["recentActivity"]);
+            $$parsedSource["recentActivity"] = $$createField6_0($$parsedSource["recentActivity"]);
         }
         return new DashboardStats(/** @type {Partial<DashboardStats>} */($$parsedSource));
     }
@@ -3117,7 +3406,7 @@ export class MatchDTO {
      */
     static createFrom($$source = {}) {
         const $$createField1_0 = $$createType57;
-        const $$createField3_0 = $$createType49;
+        const $$createField3_0 = $$createType51;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("source" in $$parsedSource) {
             $$parsedSource["source"] = $$createField1_0($$parsedSource["source"]);
@@ -3130,7 +3419,8 @@ export class MatchDTO {
 }
 
 /**
- * MonthCountDTO is one point in the library growth series.
+ * MonthCountDTO pairs a capture month ("YYYY-MM") with an asset count. It backs
+ * the Library browser's month filter (BrowserService.Months).
  */
 export class MonthCountDTO {
     /**
@@ -3515,6 +3805,17 @@ export class ProviderDTO {
              */
             this["uploadOrder"] = "";
         }
+        if (!("missingBackupCount" in $$source)) {
+            /**
+             * MissingBackupCount is how many eligible library assets have NO backup job for
+             * this destination yet — the count that powers the "Queue N backups" auto-offer
+             * and the per-card badge. It is populated only for ENABLED providers (backfill
+             * is refused for disabled ones); 0 otherwise or when the catalog is unbound.
+             * @member
+             * @type {number}
+             */
+            this["missingBackupCount"] = 0;
+        }
 
         Object.assign(this, $$source);
     }
@@ -3761,7 +4062,7 @@ export class RcloneRemotesDTO {
      * @returns {RcloneRemotesDTO}
      */
     static createFrom($$source = {}) {
-        const $$createField2_0 = $$createType49;
+        const $$createField2_0 = $$createType51;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("remotes" in $$parsedSource) {
             $$parsedSource["remotes"] = $$createField2_0($$parsedSource["remotes"]);
@@ -3862,7 +4163,7 @@ export class RecommendationDTO {
      * @returns {RecommendationDTO}
      */
     static createFrom($$source = {}) {
-        const $$createField3_0 = $$createType49;
+        const $$createField3_0 = $$createType51;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("reasons" in $$parsedSource) {
             $$parsedSource["reasons"] = $$createField3_0($$parsedSource["reasons"]);
@@ -5699,7 +6000,7 @@ export class VolumeDTO {
      * @returns {VolumeDTO}
      */
     static createFrom($$source = {}) {
-        const $$createField16_0 = $$createType49;
+        const $$createField16_0 = $$createType51;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("warnings" in $$parsedSource) {
             $$parsedSource["warnings"] = $$createField16_0($$parsedSource["warnings"]);
@@ -5846,14 +6147,14 @@ const $$createType44 = $Create.Array($$createType43);
 const $$createType45 = AssetRefDTO.createFrom;
 const $$createType46 = $Create.Nullable($$createType45);
 const $$createType47 = $Create.Array($$createType45);
-const $$createType48 = QueueSummaryDTO.createFrom;
-const $$createType49 = $Create.Array($Create.Any);
-const $$createType50 = ClassStatDTO.createFrom;
-const $$createType51 = $Create.Array($$createType50);
-const $$createType52 = RecommendationDTO.createFrom;
-const $$createType53 = TotalsDTO.createFrom;
-const $$createType54 = MonthCountDTO.createFrom;
-const $$createType55 = $Create.Array($$createType54);
+const $$createType48 = AssetsOverTimeBucketDTO.createFrom;
+const $$createType49 = $Create.Array($$createType48);
+const $$createType50 = QueueSummaryDTO.createFrom;
+const $$createType51 = $Create.Array($Create.Any);
+const $$createType52 = ClassStatDTO.createFrom;
+const $$createType53 = $Create.Array($$createType52);
+const $$createType54 = RecommendationDTO.createFrom;
+const $$createType55 = TotalsDTO.createFrom;
 const $$createType56 = BackupSummaryDTO.createFrom;
 const $$createType57 = SourceDTO.createFrom;
 const $$createType58 = $Create.Array($$createType57);

@@ -14,44 +14,48 @@ function configure() {
     Object.freeze(Object.assign($Create.Events, {
         "analyze:completed": $$createType0,
         "app:quit-requested": $$createType1,
-        "backup:progress": $$createType2,
-        "backup:queue-changed": $$createType3,
-        "cleanup:completed": $$createType4,
-        "cleanup:progress": $$createType5,
-        "duplicate:progress": $$createType6,
-        "import:completed": $$createType7,
-        "import:progress": $$createType8,
-        "library:progress": $$createType9,
-        "log:export-progress": $$createType10,
-        "reorganize:plan-progress": $$createType11,
-        "source:cleared": $$createType12,
-        "source:evaluated": $$createType13,
-        "source:identified": $$createType14,
-        "source:progress": $$createType15,
-        "thumbs:progress": $$createType16,
-        "volume:mounted": $$createType17,
-        "volume:unmounted": $$createType17,
+        "backup:backfill-completed": $$createType2,
+        "backup:backfill-progress": $$createType3,
+        "backup:progress": $$createType4,
+        "backup:queue-changed": $$createType5,
+        "cleanup:completed": $$createType6,
+        "cleanup:progress": $$createType7,
+        "duplicate:progress": $$createType8,
+        "import:completed": $$createType9,
+        "import:progress": $$createType10,
+        "library:progress": $$createType11,
+        "log:export-progress": $$createType12,
+        "reorganize:plan-progress": $$createType13,
+        "source:cleared": $$createType14,
+        "source:evaluated": $$createType15,
+        "source:identified": $$createType16,
+        "source:progress": $$createType17,
+        "thumbs:progress": $$createType18,
+        "volume:mounted": $$createType19,
+        "volume:unmounted": $$createType19,
     }));
 }
 
 // Private type creation functions
 const $$createType0 = services$0.AnalyzeCompleted.createFrom;
 const $$createType1 = services$0.QuitRequested.createFrom;
-const $$createType2 = services$0.BackupProgress.createFrom;
-const $$createType3 = services$0.BackupQueueChanged.createFrom;
-const $$createType4 = services$0.CleanupCompleted.createFrom;
-const $$createType5 = services$0.CleanupProgress.createFrom;
-const $$createType6 = services$0.DuplicateProgress.createFrom;
-const $$createType7 = services$0.ImportCompleted.createFrom;
-const $$createType8 = services$0.ImportProgress.createFrom;
-const $$createType9 = services$0.LibraryProgress.createFrom;
-const $$createType10 = services$0.LogExportProgress.createFrom;
-const $$createType11 = services$0.ReorganizePlanProgress.createFrom;
-const $$createType12 = services$0.SourceCleared.createFrom;
-const $$createType13 = services$0.SourceEvaluated.createFrom;
-const $$createType14 = services$0.SourceIdentified.createFrom;
-const $$createType15 = services$0.SourceProgress.createFrom;
-const $$createType16 = services$0.ThumbsProgress.createFrom;
-const $$createType17 = services$0.VolumeEvent.createFrom;
+const $$createType2 = services$0.BackupBackfillCompleted.createFrom;
+const $$createType3 = services$0.BackupBackfillProgress.createFrom;
+const $$createType4 = services$0.BackupProgress.createFrom;
+const $$createType5 = services$0.BackupQueueChanged.createFrom;
+const $$createType6 = services$0.CleanupCompleted.createFrom;
+const $$createType7 = services$0.CleanupProgress.createFrom;
+const $$createType8 = services$0.DuplicateProgress.createFrom;
+const $$createType9 = services$0.ImportCompleted.createFrom;
+const $$createType10 = services$0.ImportProgress.createFrom;
+const $$createType11 = services$0.LibraryProgress.createFrom;
+const $$createType12 = services$0.LogExportProgress.createFrom;
+const $$createType13 = services$0.ReorganizePlanProgress.createFrom;
+const $$createType14 = services$0.SourceCleared.createFrom;
+const $$createType15 = services$0.SourceEvaluated.createFrom;
+const $$createType16 = services$0.SourceIdentified.createFrom;
+const $$createType17 = services$0.SourceProgress.createFrom;
+const $$createType18 = services$0.ThumbsProgress.createFrom;
+const $$createType19 = services$0.VolumeEvent.createFrom;
 
 configure();

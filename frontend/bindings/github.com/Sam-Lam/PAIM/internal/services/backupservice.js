@@ -19,6 +19,17 @@ import { Call as $Call, CancellablePromise as $CancellablePromise, Create as $Cr
 import * as $models from "./models.js";
 
 /**
+ * BackfillStatus returns the current backfill state so a re-attaching UI can
+ * resume showing inline progress.
+ * @returns {$CancellablePromise<$models.BackfillStatusDTO>}
+ */
+export function BackfillStatus() {
+    return $Call.ByID(44538794).then(/** @type {($result: any) => any} */(($result) => {
+        return $$createType0($result);
+    }));
+}
+
+/**
  * Bind wires the BackupService to an open library's catalog in place.
  * @param {$models.AppCore | null} core
  * @returns {$CancellablePromise<void>}
@@ -37,6 +48,16 @@ export function Cancel(jobID) {
 }
 
 /**
+ * CancelBackfill cancels the active backfill (if any). It is a no-op when nothing
+ * is running. The partially-enqueued jobs are kept (they are valid work); a later
+ * StartBackfill enqueues the remainder.
+ * @returns {$CancellablePromise<void>}
+ */
+export function CancelBackfill() {
+    return $Call.ByID(4186152798);
+}
+
+/**
  * ListJobs returns a page of backup jobs (optionally filtered by status), joined
  * with each job's asset filename and archive path. An empty statusFilter lists
  * all statuses.
@@ -47,7 +68,7 @@ export function Cancel(jobID) {
  */
 export function ListJobs(statusFilter, page, pageSize) {
     return $Call.ByID(1737606034, statusFilter, page, pageSize).then(/** @type {($result: any) => any} */(($result) => {
-        return $$createType1($result);
+        return $$createType2($result);
     }));
 }
 
@@ -74,7 +95,7 @@ export function PauseAll() {
  */
 export function QueueSummary() {
     return $Call.ByID(3240464335).then(/** @type {($result: any) => any} */(($result) => {
-        return $$createType2($result);
+        return $$createType3($result);
     }));
 }
 
@@ -113,7 +134,7 @@ export function Retry(jobID) {
  */
 export function SessionBackupStatus(sessionID) {
     return $Call.ByID(3411884294, sessionID).then(/** @type {($result: any) => any} */(($result) => {
-        return $$createType3($result);
+        return $$createType4($result);
     }));
 }
 
@@ -127,8 +148,43 @@ export function SetGate(gate) {
     return $Call.ByID(2196210049, gate);
 }
 
+/**
+ * SetSleepGuard injects the shared sleep guard. Called once by main.go after
+ * construction; left unset (no-op) in unit tests.
+ * @param {$models.SleepGuard | null} g
+ * @returns {$CancellablePromise<void>}
+ */
+export function SetSleepGuard(g) {
+    return $Call.ByID(3763771882, g);
+}
+
+/**
+ * StartBackfill enqueues a backup job for every eligible asset that does not yet
+ * have one for the given (enabled) provider — closing the gap left when a provider
+ * is added AFTER a library is already populated (import-time enqueue only covers
+ * assets imported while the provider existed). It runs in the background: activity-
+ * tracked (quit-guard aware), sleep-guarded, cancellable, and resumable — a
+ * cancelled run re-scans from the start next time and skips what it already
+ * enqueued (Enqueue is idempotent). Only one backfill runs at a time
+ * (ErrBackfillInProgress otherwise).
+ * 
+ * Eligibility mirrors the importer exactly: non-deleted, verified assets with an
+ * archive copy (CurrentArchivePath <> ''). Copy-mode duplicate placeholders (empty
+ * path) are excluded; adopt-flagged duplicates (which carry a path) are included.
+ * Each backfilled job is stamped with the same capture/import-date SortKey the
+ * importer uses (backup.SortKeyForAsset) so it honors the provider's upload order.
+ * @param {string} providerID
+ * @returns {$CancellablePromise<$models.BackfillStatusDTO>}
+ */
+export function StartBackfill(providerID) {
+    return $Call.ByID(618161832, providerID).then(/** @type {($result: any) => any} */(($result) => {
+        return $$createType0($result);
+    }));
+}
+
 // Private type creation functions
-const $$createType0 = $models.BackupJobDTO.createFrom;
-const $$createType1 = $models.PageResult.createFrom($$createType0);
-const $$createType2 = $models.QueueSummaryDTO.createFrom;
-const $$createType3 = $models.SessionBackupStatusDTO.createFrom;
+const $$createType0 = $models.BackfillStatusDTO.createFrom;
+const $$createType1 = $models.BackupJobDTO.createFrom;
+const $$createType2 = $models.PageResult.createFrom($$createType1);
+const $$createType3 = $models.QueueSummaryDTO.createFrom;
+const $$createType4 = $models.SessionBackupStatusDTO.createFrom;

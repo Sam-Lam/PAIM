@@ -19,6 +19,22 @@ import { Call as $Call, CancellablePromise as $CancellablePromise, Create as $Cr
 import * as $models from "./models.js";
 
 /**
+ * AssetsOverTime returns the library's asset distribution over effective capture
+ * time, bucketed at the given granularity ("day"|"month"|"year"|"5year"|"all").
+ * "all" (and any unrecognized value) auto-picks from the data span; see
+ * resolveGranularity. Gaps between the earliest and latest bucket are zero-filled
+ * so the time axis is honest; the Day view windows to its most recent dayWindow
+ * buckets. Excludes soft-deleted assets.
+ * @param {string} granularity
+ * @returns {$CancellablePromise<$models.AssetsOverTimeDTO | null>}
+ */
+export function AssetsOverTime(granularity) {
+    return $Call.ByID(4145156572, granularity).then(/** @type {($result: any) => any} */(($result) => {
+        return $$createType1($result);
+    }));
+}
+
+/**
  * Bind wires the DashboardService to an open library's catalog in place.
  * @param {$models.AppCore | null} core
  * @returns {$CancellablePromise<void>}
@@ -33,7 +49,7 @@ export function Bind(core) {
  */
 export function GetStats() {
     return $Call.ByID(3217767757).then(/** @type {($result: any) => any} */(($result) => {
-        return $$createType0($result);
+        return $$createType2($result);
     }));
 }
 
@@ -48,4 +64,6 @@ export function SetGate(gate) {
 }
 
 // Private type creation functions
-const $$createType0 = $models.DashboardStats.createFrom;
+const $$createType0 = $models.AssetsOverTimeDTO.createFrom;
+const $$createType1 = $Create.Nullable($$createType0);
+const $$createType2 = $models.DashboardStats.createFrom;

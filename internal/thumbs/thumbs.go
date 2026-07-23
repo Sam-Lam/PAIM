@@ -109,7 +109,7 @@ func New(root string, concurrency int, logger *slog.Logger) *Cache {
 // per-machine "Thumbnail generation parallelism" setting to a concurrency, and
 // hands both here.
 func NewInDir(dir string, concurrency int, logger *slog.Logger) *Cache {
-	return newCacheAt(dir, qlGenerator{}, concurrency, logger)
+	return newCacheAt(dir, newQLGenerator(), concurrency, logger)
 }
 
 // newCache is the injectable constructor used by tests to supply a fake

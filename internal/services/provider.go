@@ -11,6 +11,7 @@ import (
 	"github.com/Sam-Lam/PAIM/internal/backup"
 	"github.com/Sam-Lam/PAIM/internal/backup/plugins/rclone"
 	"github.com/Sam-Lam/PAIM/internal/domain"
+	"github.com/Sam-Lam/PAIM/internal/repo"
 	"gorm.io/gorm"
 )
 
@@ -22,6 +23,7 @@ import (
 type ProviderService struct {
 	gated
 	db       *gorm.DB
+	assets   *repo.AssetRepo
 	registry *backup.Registry
 	log      *slog.Logger
 }
@@ -29,6 +31,7 @@ type ProviderService struct {
 // Bind wires the ProviderService to an open library's catalog in place.
 func (s *ProviderService) Bind(core *AppCore) {
 	s.db = core.DB
+	s.assets = core.Assets
 }
 
 // NewProviderService constructs a ProviderService.
@@ -47,6 +50,11 @@ type ProviderDTO struct {
 	Enabled     bool   `json:"enabled"`
 	Mirror      bool   `json:"mirror"`
 	UploadOrder string `json:"uploadOrder"`
+	// MissingBackupCount is how many eligible library assets have NO backup job for
+	// this destination yet — the count that powers the "Queue N backups" auto-offer
+	// and the per-card badge. It is populated only for ENABLED providers (backfill
+	// is refused for disabled ones); 0 otherwise or when the catalog is unbound.
+	MissingBackupCount int64 `json:"missingBackupCount"`
 }
 
 func toProviderDTO(p domain.BackupProvider) ProviderDTO {
@@ -62,6 +70,22 @@ func toProviderDTO(p domain.BackupProvider) ProviderDTO {
 		Mirror:      p.Mirror,
 		UploadOrder: order,
 	}
+}
+
+// withMissingCount fills a DTO's MissingBackupCount for an enabled provider (the
+// cheap NOT EXISTS count of eligible assets lacking a job for it). A disabled
+// provider, an unbound catalog, or a count error leaves the field at 0 — the field
+// is a UI convenience, never load-bearing, so a failure degrades silently.
+func (s *ProviderService) withMissingCount(ctx context.Context, dto ProviderDTO) ProviderDTO {
+	if !dto.Enabled || s.assets == nil {
+		return dto
+	}
+	if n, err := s.assets.CountEligibleMissingBackup(ctx, dto.ID); err == nil {
+		dto.MissingBackupCount = n
+	} else {
+		s.log.Warn("provider missing-backup count failed", "provider", dto.ID, "error", err.Error())
+	}
+	return dto
 }
 
 // normalizeUploadOrder maps a requested order string to a valid UploadOrder,
@@ -113,7 +137,7 @@ func (s *ProviderService) List(ctx context.Context) ([]ProviderDTO, error) {
 	}
 	out := make([]ProviderDTO, 0, len(rows))
 	for _, r := range rows {
-		out = append(out, toProviderDTO(r))
+		out = append(out, s.withMissingCount(ctx, toProviderDTO(r)))
 	}
 	return out, nil
 }
@@ -142,7 +166,9 @@ func (s *ProviderService) Add(ctx context.Context, pluginName, configJSON string
 		return ProviderDTO{}, fmt.Errorf("services: create provider: %w", err)
 	}
 	s.log.Info("backup provider added", "id", p.ID, "plugin", pluginName, "mirror", mirror, "uploadOrder", p.UploadOrder)
-	return toProviderDTO(*p), nil
+	// A brand-new provider has no jobs yet, so MissingBackupCount is the full
+	// eligible set — the UI reads it to auto-offer "Back up your existing library?".
+	return s.withMissingCount(ctx, toProviderDTO(*p)), nil
 }
 
 // Update revalidates configJSON against the provider's plugin and persists the
@@ -174,7 +200,9 @@ func (s *ProviderService) Update(ctx context.Context, id, configJSON string, ena
 	p.Mirror = mirror
 	p.UploadOrder = order
 	s.log.Info("backup provider updated", "id", id, "enabled", enabled, "mirror", mirror, "uploadOrder", order)
-	return toProviderDTO(p), nil
+	// The returned DTO carries the current missing-job count so the UI can offer to
+	// queue them after an enable (a disabled→enabled flip surfaces the whole gap).
+	return s.withMissingCount(ctx, toProviderDTO(p)), nil
 }
 
 // RcloneRemotesDTO reports rclone's install status and the remotes it has

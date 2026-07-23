@@ -14,6 +14,8 @@ declare module "@wailsio/runtime" {
         interface CustomEvents {
             "analyze:completed": services$0.AnalyzeCompleted;
             "app:quit-requested": services$0.QuitRequested;
+            "backup:backfill-completed": services$0.BackupBackfillCompleted;
+            "backup:backfill-progress": services$0.BackupBackfillProgress;
             "backup:progress": services$0.BackupProgress;
             "backup:queue-changed": services$0.BackupQueueChanged;
             "cleanup:completed": services$0.CleanupCompleted;

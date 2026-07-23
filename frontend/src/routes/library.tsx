@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useSearch } from "@tanstack/react-router";
 import {
   ArrowPathIcon,
   ArrowsPointingInIcon,
@@ -90,6 +91,9 @@ const SELECT_CLASS =
  */
 export function LibraryPage() {
   const toast = useToast();
+  // Deep-link: the dashboard's "Assets over time" chart navigates here with
+  // ?yearMonth=YYYY-MM to pre-apply the capture-month filter.
+  const search = useSearch({ strict: false }) as { yearMonth?: string };
 
   // Filters. The text query is debounced (300ms) into `query`; the rest apply
   // immediately.
@@ -98,7 +102,7 @@ export function LibraryPage() {
   const [mediaType, setMediaType] = useState("");
   const [verification, setVerification] = useState("");
   const [backup, setBackup] = useState("");
-  const [month, setMonth] = useState("");
+  const [month, setMonth] = useState(() => search.yearMonth ?? "");
   // Tile rendering: crop to square (cover) or fit within it (contain). Persisted per machine.
   const [fitTiles, setFitTiles] = useState(() => localStorage.getItem("paim.library.fit") === "1");
   const toggleFit = () => {
@@ -115,6 +119,17 @@ export function LibraryPage() {
     localStorage.setItem("paim.library.view", v);
     setView(v);
   };
+
+  // Follow a ?yearMonth deep-link that arrives (or changes) while mounted: apply
+  // the month filter and switch to the grid view where that filter lives.
+  useEffect(() => {
+    const ym = search.yearMonth;
+    if (ym) {
+      setMonth(ym);
+      setView("grid");
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [search.yearMonth]);
 
   // Accumulated grid state ("Load more" pagination).
   const [items, setItems] = useState<BrowseAssetDTO[]>([]);
@@ -1649,11 +1664,20 @@ function FolderView({ fit }: { fit: boolean }) {
   );
 }
 
-/** Small cover thumbnail for a folder row (falls back to nothing on error). */
+/**
+ * Small cover thumbnail for a folder row. Shows a PhotoIcon placeholder (matching
+ * the grid tile treatment) when there is no cover or the thumbnail fails to render
+ * — e.g. a RAW cover whose thumbnail could not be generated — rather than a blank
+ * box, so the row never looks empty.
+ */
 function FolderCover({ coverId }: { coverId: string }) {
   const [errored, setErrored] = useState(false);
   if (!coverId || errored) {
-    return <div className="h-9 w-9 flex-none rounded bg-zinc-900" />;
+    return (
+      <div className="flex h-9 w-9 flex-none items-center justify-center rounded bg-zinc-900">
+        <PhotoIcon className="h-4 w-4 text-zinc-700" />
+      </div>
+    );
   }
   return (
     <img

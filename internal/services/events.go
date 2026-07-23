@@ -23,8 +23,10 @@ const (
 	EventImportProgress     = "import:progress"
 	EventImportCompleted    = "import:completed"
 	EventAnalyzeCompleted   = "analyze:completed"
-	EventBackupProgress     = "backup:progress"
-	EventBackupQueueChanged = "backup:queue-changed"
+	EventBackupProgress          = "backup:progress"
+	EventBackupQueueChanged      = "backup:queue-changed"
+	EventBackupBackfillProgress  = "backup:backfill-progress"
+	EventBackupBackfillCompleted = "backup:backfill-completed"
 	EventVolumeMounted      = "volume:mounted"
 	EventVolumeUnmounted    = "volume:unmounted"
 	EventSourceIdentified   = "source:identified"
@@ -113,6 +115,30 @@ type BackupProgress struct {
 // queue state transition so the frontend can refresh counts.
 type BackupQueueChanged struct {
 	Summary QueueSummaryDTO `json:"summary"`
+}
+
+// BackupBackfillProgress is the payload for backup:backfill-progress, emitted
+// (throttled) while a provider backfill enqueues jobs for a library's existing
+// assets. ProviderID names the destination being filled; Done/Total count
+// eligible assets scanned. Running is false only on the terminal tick (paired
+// with a backup:backfill-completed event carrying the final counts).
+type BackupBackfillProgress struct {
+	ProviderID string `json:"providerId"`
+	Done       int    `json:"done"`
+	Total      int    `json:"total"`
+	Running    bool   `json:"running"`
+}
+
+// BackupBackfillCompleted is the payload for backup:backfill-completed, emitted
+// once when a provider backfill finishes (or is cancelled). Enqueued is how many
+// new backup jobs it created; Skipped is how many eligible assets already had a
+// job for the provider (idempotent no-ops). Cancelled is true when the run was
+// stopped early — a later run resumes and enqueues the remainder.
+type BackupBackfillCompleted struct {
+	ProviderID string `json:"providerId"`
+	Enqueued   int    `json:"enqueued"`
+	Skipped    int    `json:"skipped"`
+	Cancelled  bool   `json:"cancelled"`
 }
 
 // VolumeEvent is the payload for volume:mounted and volume:unmounted.

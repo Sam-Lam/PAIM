@@ -151,6 +151,11 @@ type Plugin struct {
 	// (e.g. Google Photos). Keyed by normalized remote.
 	throttled map[string]bool
 
+	// gphotos marks pool remotes whose backend is Google Photos, whose upload paths
+	// must be mapped into the album/ virtual root (see remotePathFor). Keyed by
+	// normalized remote.
+	gphotos map[string]bool
+
 	// cooldownMu guards remoteCooldowns: the per-remote quota cooldown map that
 	// drives pool failover. It lives on the plugin instance, and the Manager caches
 	// one plugin instance per provider, so the cooldown state persists across a
@@ -172,6 +177,7 @@ func New() backup.Plugin {
 		runner:          execRunner{},
 		log:             slog.Default(),
 		throttled:       make(map[string]bool),
+		gphotos:         make(map[string]bool),
 		remoteCooldowns: make(map[string]time.Time),
 		now:             time.Now,
 		lookPath:        exec.LookPath,
@@ -231,15 +237,22 @@ func (p *Plugin) Initialize(ctx context.Context, configJSON string) error {
 		return fmt.Errorf("rclone: list remotes: %w", err)
 	}
 	throttled := make(map[string]bool, len(pool))
+	gphotos := make(map[string]bool, len(pool))
 	for _, remote := range pool {
 		if !containsRemote(known, remote) {
 			return fmt.Errorf("rclone: remote %q is not configured (run `rclone config`); known remotes: %s",
 				remote, strings.Join(known, ", "))
 		}
 		// Best-effort backend-type probe: failure to detect just means no
-		// conservative flags (the upload still works), so it is not fatal.
-		if bt, berr := detectBackendType(ctx, p.runner, binary, remote); berr == nil && backendNeedsThrottle(bt) {
-			throttled[remote] = true
+		// conservative flags and no album/ mapping (the upload path is used verbatim),
+		// so it is not fatal.
+		if bt, berr := detectBackendType(ctx, p.runner, binary, remote); berr == nil {
+			if backendNeedsThrottle(bt) {
+				throttled[remote] = true
+			}
+			if backendIsGooglePhotos(bt) {
+				gphotos[remote] = true
+			}
 		}
 	}
 
@@ -253,6 +266,7 @@ func (p *Plugin) Initialize(ctx context.Context, configJSON string) error {
 	p.path = path
 	p.mirror = cfg.Mirror
 	p.throttled = throttled
+	p.gphotos = gphotos
 	return nil
 }
 
@@ -579,17 +593,58 @@ func (p *Plugin) Delete(ctx context.Context, remoteRelPath string) error {
 }
 
 // remotePathFor joins one remote + the configured path with the object's relative
-// path into an rclone "remote:folder/rel" argument (always forward-slashed).
+// path into an rclone "remote:folder/rel" argument (always forward-slashed). Upload,
+// Verify, and Delete all resolve their destination through here, so the mapping is
+// consistent across the three.
+//
+// GOOGLE PHOTOS MAPPING: rclone's gphotos backend is a virtual filesystem — it only
+// accepts writes under two roots, `album/<album name>/...` and `upload/...`. A plain
+// "PAIM-Backup/2019/…/IMG.jpg" targets a nonexistent root and errors. For a Google
+// Photos remote we therefore map the object under `album/`, using the object's
+// DIRECTORY path as the (nested) album name and the basename as the media item:
+//
+//	path "PAIM-Backup" + rel "2019/2019-06-12 Yosemite/DSCF0001.JPG"
+//	  -> remote:album/PAIM-Backup/2019/2019-06-12 Yosemite/DSCF0001.JPG
+//	  (album name "PAIM-Backup/2019/2019-06-12 Yosemite", item "DSCF0001.JPG")
+//
+// Slashes are legal inside a Photos album name, and gphotos treats the whole nested
+// path under album/ as one album — so each date folder becomes its own album. That
+// yields per-EVENT albums, which also sidesteps Google Photos' ~20,000-item-per-album
+// cap (a single flat album would overflow on a large library). A configured path that
+// already starts with `album/` or `upload` is respected verbatim (power users who
+// know the gphotos root layout).
 func (p *Plugin) remotePathFor(remote, remoteRelPath string) string {
+	effectivePath := p.path
+	if p.gphotos[remote] {
+		effectivePath = gphotosPath(p.path)
+	}
 	parts := make([]string, 0, 2)
-	if p.path != "" {
-		parts = append(parts, p.path)
+	if effectivePath != "" {
+		parts = append(parts, effectivePath)
 	}
 	rel := strings.TrimLeft(filepath.ToSlash(remoteRelPath), "/")
 	if rel != "" {
 		parts = append(parts, rel)
 	}
 	return remote + strings.Join(parts, "/")
+}
+
+// gphotosPath maps a configured destination path into a Google Photos virtual root.
+// A path already rooted at album/ or upload/ is respected verbatim; anything else is
+// prefixed with "album/" so its date subfolders become nested album names (see
+// remotePathFor). The path has already been trimmed of surrounding slashes by
+// Initialize.
+func gphotosPath(configured string) string {
+	c := strings.Trim(configured, "/")
+	lower := strings.ToLower(c)
+	if lower == "upload" || strings.HasPrefix(lower, "upload/") ||
+		lower == "album" || strings.HasPrefix(lower, "album/") {
+		return c
+	}
+	if c == "" {
+		return "album"
+	}
+	return "album/" + c
 }
 
 // ListRemotes returns the rclone remotes configured for the given binary (empty
