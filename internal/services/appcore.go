@@ -142,6 +142,13 @@ type CoreDeps struct {
 	// DefaultThumbnailParallelism.
 	ThumbParallelism int
 
+	// ForegroundGate, when set, is passed to the backup Manager as its
+	// Options.ForegroundGate: while it reports true the manager stops claiming new
+	// upload jobs (in-flight uploads finish). main.go builds it from the activity
+	// tracker filtered to foreground kinds plus the live PauseBackupsDuringForeground
+	// preference (see ForegroundYield). Nil disables yielding.
+	ForegroundGate func() bool
+
 	// OpenedDB, when non-nil, is used instead of opening a library catalog under
 	// Root. It backs the PAIM_DB_PATH dev escape hatch (plain db.Open, absolute
 	// archive paths, no lock/config). Root is left empty in that mode.
@@ -202,15 +209,18 @@ func BuildCore(deps CoreDeps) (*AppCore, error) {
 	// (assigned just below) breaks the cycle — the closure only runs at emit time.
 	var manager *backup.Manager
 	manager = backup.NewManager(jobQueue, assets, providerStore, deps.Registry, logger, backup.Options{
-		Workers:     cfg.BackupWorkers,
-		MaxRetries:  cfg.MaxRetries,
-		LibraryRoot: deps.Root,
-		ProgressFn:  NewBackupProgressEmitter(deps.Emitter),
+		Workers:        cfg.BackupWorkers,
+		MaxRetries:     cfg.MaxRetries,
+		LibraryRoot:    deps.Root,
+		ProgressFn:     NewBackupProgressEmitter(deps.Emitter),
+		ForegroundGate: deps.ForegroundGate,
 		OnQueueChanged: NewBackupQueueChangedEmitter(deps.Emitter, backups, func() []ProviderCooldownDTO {
 			if manager == nil {
 				return nil
 			}
 			return cooldownDTOs(manager.Cooldowns())
+		}, func() bool {
+			return manager != nil && manager.Yielding()
 		}),
 	})
 

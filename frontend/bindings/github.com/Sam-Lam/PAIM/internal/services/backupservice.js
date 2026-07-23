@@ -90,6 +90,16 @@ export function PauseAll() {
 }
 
 /**
+ * PauseBackupsDuringForeground reports the per-machine "Pause backups while
+ * imports run" preference (default true). Read from the live gate so it reflects
+ * any in-session toggle immediately.
+ * @returns {$CancellablePromise<boolean>}
+ */
+export function PauseBackupsDuringForeground() {
+    return $Call.ByID(563609707);
+}
+
+/**
  * QueueSummary returns the count of jobs in each status.
  * @returns {$CancellablePromise<$models.QueueSummaryDTO>}
  */
@@ -146,6 +156,18 @@ export function SessionBackupStatus(sessionID) {
  */
 export function SetGate(gate) {
     return $Call.ByID(2196210049, gate);
+}
+
+/**
+ * SetPauseBackupsDuringForeground persists the per-machine preference to
+ * library.Config and applies it to the live backup yield gate immediately
+ * (mirroring how thumbnail parallelism is live-applied). It returns the stored
+ * value.
+ * @param {boolean} on
+ * @returns {$CancellablePromise<boolean>}
+ */
+export function SetPauseBackupsDuringForeground(on) {
+    return $Call.ByID(389188675, on);
 }
 
 /**

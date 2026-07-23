@@ -372,7 +372,7 @@ func (s *ImportService) StartAnalyze(ctx context.Context, opts ImportOptions) (S
 		return StartAnalyzeResult{}, ErrImportInProgress
 	}
 	s.active = true
-	s.opKind = "analyze"
+	s.opKind = OpKindAnalyze
 	runCtx, cancel := context.WithCancel(context.Background())
 	s.cancel = cancel
 	s.sessionID = ""
@@ -657,7 +657,7 @@ func (s *ImportService) ResumeSession(ctx context.Context, sessionID string) (St
 		return StartImportResult{}, ErrImportInProgress
 	}
 	s.active = true
-	s.opKind = "import"
+	s.opKind = OpKindImport
 	runCtx, cancel := context.WithCancel(context.Background())
 	s.cancel = cancel
 	s.sessionID = session.ID
@@ -685,7 +685,7 @@ func (s *ImportService) launch(ctx context.Context, state resumeState, precomput
 	// Reserve the active slot before the (fast) session insert so no second start
 	// slips in; release it if creation fails.
 	s.active = true
-	s.opKind = "import"
+	s.opKind = OpKindImport
 	s.mu.Unlock()
 
 	session, err := s.newSession(ctx, state)
@@ -820,21 +820,21 @@ func (s *ImportService) activeOps() []OperationInfo {
 	}
 	info := OperationInfo{Kind: s.opKind}
 	switch s.opKind {
-	case "analyze":
+	case OpKindAnalyze:
 		info.Label = "Analyzing a source"
 		if s.analyze != nil && s.analyze.progress != nil {
 			p := s.analyze.progress
 			info.FilesDone, info.FilesTotal = p.FilesDone, p.FilesTotal
 			info.BytesDone, info.BytesTotal = p.BytesDone, p.BytesTotal
 		}
-	case "reorganize":
+	case OpKindReorganize:
 		info.Label = "Reorganizing the library"
 		if s.current != nil {
 			info.FilesDone, info.FilesTotal = s.current.FilesDone, s.current.FilesTotal
 			info.BytesDone, info.BytesTotal = s.current.BytesDone, s.current.BytesTotal
 		}
 	default:
-		info.Kind = "import"
+		info.Kind = OpKindImport
 		info.Label = "Importing files"
 		if s.current != nil {
 			info.FilesDone, info.FilesTotal = s.current.FilesDone, s.current.FilesTotal

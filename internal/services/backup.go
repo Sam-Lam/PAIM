@@ -29,6 +29,13 @@ type BackupService struct {
 	log     *slog.Logger
 	root    string
 
+	// config and yield back the per-machine "Pause backups while imports run"
+	// preference: config persists it (library.Config), yield is the live gate the
+	// backup Manager consults. Both are library-independent, injected once at
+	// construction (not per-library Bind).
+	config *library.ConfigStore
+	yield  *ForegroundYield
+
 	// Backfill single-instance guard and live state. Only one provider backfill
 	// runs at a time (bfRunning); its progress is mirrored here so a re-attaching
 	// UI can read it via BackfillStatus and the quit guard can report it.
@@ -52,12 +59,14 @@ func (s *BackupService) Bind(core *AppCore) {
 	s.root = core.Root
 }
 
-// NewBackupService constructs a BackupService.
-func NewBackupService(manager *backup.Manager, jobs *repo.BackupRepo, assets *repo.AssetRepo, emitter Emitter, logger *slog.Logger) *BackupService {
+// NewBackupService constructs a BackupService. config and yield back the
+// per-machine "Pause backups while imports run" preference (both may be nil in
+// tests that do not exercise it).
+func NewBackupService(manager *backup.Manager, jobs *repo.BackupRepo, assets *repo.AssetRepo, config *library.ConfigStore, yield *ForegroundYield, emitter Emitter, logger *slog.Logger) *BackupService {
 	if logger == nil {
 		logger = slog.Default()
 	}
-	return &BackupService{manager: manager, jobs: jobs, assets: assets, emitter: emitter, log: logger.With(slog.String("subsystem", "backup"))}
+	return &BackupService{manager: manager, jobs: jobs, assets: assets, config: config, yield: yield, emitter: emitter, log: logger.With(slog.String("subsystem", "backup"))}
 }
 
 // QueueSummary returns the count of jobs in each status.
@@ -82,8 +91,60 @@ func (s *BackupService) queueSummary(ctx context.Context) (QueueSummaryDTO, erro
 	summary := summaryFromCounts(statuses, values)
 	if s.manager != nil {
 		summary.Cooldowns = cooldownDTOs(s.manager.Cooldowns())
+		summary.Yielding = s.manager.Yielding()
 	}
 	return summary, nil
+}
+
+// PauseBackupsDuringForeground reports the per-machine "Pause backups while
+// imports run" preference (default true). Read from the live gate so it reflects
+// any in-session toggle immediately.
+func (s *BackupService) PauseBackupsDuringForeground(ctx context.Context) (bool, error) {
+	if err := s.guard(); err != nil {
+		return false, err
+	}
+	if s.yield != nil {
+		return s.yield.Enabled(), nil
+	}
+	if s.config == nil {
+		return true, nil
+	}
+	cfg, err := s.config.Load()
+	if err != nil {
+		return false, err
+	}
+	return cfg.PauseBackupsDuringForegroundEnabled(), nil
+}
+
+// SetPauseBackupsDuringForeground persists the per-machine preference to
+// library.Config and applies it to the live backup yield gate immediately
+// (mirroring how thumbnail parallelism is live-applied). It returns the stored
+// value.
+func (s *BackupService) SetPauseBackupsDuringForeground(ctx context.Context, on bool) (bool, error) {
+	if err := s.guard(); err != nil {
+		return false, err
+	}
+	if s.config != nil {
+		cfg, err := s.config.Load()
+		if err != nil {
+			return false, err
+		}
+		v := on
+		cfg.PauseBackupsDuringForeground = &v
+		if err := s.config.Save(cfg); err != nil {
+			return false, err
+		}
+	}
+	s.yield.SetEnabled(on) // nil-safe
+	s.log.Info("pause backups during foreground changed", "enabled", on)
+	// Nudge the Backup Queue UI so its yield banner reflects the new setting
+	// without waiting for the next poll.
+	if s.jobs != nil {
+		if summary, sErr := s.queueSummary(ctx); sErr == nil {
+			emitSafe(s.emitter, EventBackupQueueChanged, BackupQueueChanged{Summary: summary})
+		}
+	}
+	return on, nil
 }
 
 // SessionBackupStatusDTO is the live per-session backup progress the import
@@ -233,7 +294,7 @@ func (s *BackupService) activeOps() []OperationInfo {
 	if s.manager != nil {
 		for _, j := range s.manager.RunningJobs() {
 			out = append(out, OperationInfo{
-				Kind:       "backup_upload",
+				Kind:       OpKindBackupUpload,
 				Label:      "Uploading a backup",
 				BytesDone:  j.BytesDone,
 				BytesTotal: j.BytesTotal,
@@ -243,7 +304,7 @@ func (s *BackupService) activeOps() []OperationInfo {
 	s.bfMu.Lock()
 	if s.bfRunning {
 		out = append(out, OperationInfo{
-			Kind:       "backup_backfill",
+			Kind:       OpKindBackupBackfill,
 			Label:      "Queueing missing backups",
 			FilesDone:  s.bfDone,
 			FilesTotal: s.bfTotal,
@@ -275,9 +336,10 @@ func (s *BackupService) cancelActive() {
 // summary query plus emit is acceptable. The payload matches BackupService.mutate
 // so the frontend handles both identically.
 // cooldownsFn, when non-nil, supplies the current provider cooldowns so the
-// emitted summary carries them; it is wired in main.go/appcore after the Manager
-// exists (the Manager owns the cooldown state and invokes this emitter).
-func NewBackupQueueChangedEmitter(emitter Emitter, jobs *repo.BackupRepo, cooldownsFn func() []ProviderCooldownDTO) func() {
+// emitted summary carries them; yieldingFn, when non-nil, supplies the current
+// foreground-yield state. Both are wired in main.go/appcore after the Manager
+// exists (the Manager owns that state and invokes this emitter).
+func NewBackupQueueChangedEmitter(emitter Emitter, jobs *repo.BackupRepo, cooldownsFn func() []ProviderCooldownDTO, yieldingFn func() bool) func() {
 	return func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
@@ -294,6 +356,9 @@ func NewBackupQueueChangedEmitter(emitter Emitter, jobs *repo.BackupRepo, cooldo
 		summary := summaryFromCounts(statuses, values)
 		if cooldownsFn != nil {
 			summary.Cooldowns = cooldownsFn()
+		}
+		if yieldingFn != nil {
+			summary.Yielding = yieldingFn()
 		}
 		emitSafe(emitter, EventBackupQueueChanged, BackupQueueChanged{Summary: summary})
 	}

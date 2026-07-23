@@ -515,6 +515,131 @@ func TestManager_OnQueueChangedFiresOnCompletion(t *testing.T) {
 	})
 }
 
+// TestManager_ForegroundGateBlocksThenResumes verifies the yield gate: while the
+// gate reports foreground activity the manager claims nothing (the job stays
+// pending, no upload happens), and once the gate clears the job is claimed and
+// completes promptly.
+func TestManager_ForegroundGateBlocksThenResumes(t *testing.T) {
+	h := newHarness(t)
+	fake := okPlugin("localfs")
+	h.registry.Register("localfs", func() backup.Plugin { return fake })
+	prov := h.addProvider(t, "localfs")
+	asset := h.addAsset(t)
+
+	ctx := context.Background()
+	job, _, err := h.jobs.Enqueue(ctx, asset.ID, prov.PluginName, prov.ID, 0)
+	if err != nil {
+		t.Fatalf("enqueue: %v", err)
+	}
+
+	var gate atomic.Bool
+	gate.Store(true) // start yielding: a foreground op is "running"
+	opts := fastOptions()
+	opts.ForegroundGate = func() bool { return gate.Load() }
+
+	m := backup.NewManager(h.jobs, h.assets, h.providers, h.registry, nil, opts)
+	if err := m.Start(ctx); err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	defer m.Stop()
+
+	// While the gate yields, the job must stay pending and never upload.
+	time.Sleep(50 * time.Millisecond)
+	if got := h.jobByID(t, job.ID).Status; got != domain.JobStatusPending {
+		t.Fatalf("job status while yielding = %q, want pending (should not be claimed)", got)
+	}
+	if fake.uploadCount() != 0 {
+		t.Fatalf("no upload should occur while yielding, uploads=%d", fake.uploadCount())
+	}
+	if !m.Yielding() {
+		t.Fatalf("Yielding() = false while gate reports foreground activity, want true")
+	}
+
+	// Clear the gate: claiming resumes and the job completes promptly.
+	gate.Store(false)
+	eventually(t, 2*time.Second, "job completes after gate clears", func() bool {
+		return h.jobByID(t, job.ID).Status == domain.JobStatusCompleted
+	})
+	if m.Yielding() {
+		t.Fatalf("Yielding() = true after gate cleared, want false")
+	}
+}
+
+// TestManager_RunningUploadCompletesDespiteGate verifies that a job already
+// uploading when the gate turns on still finishes normally — the yield gate only
+// gates NEW claims, never aborts an in-flight upload.
+func TestManager_RunningUploadCompletesDespiteGate(t *testing.T) {
+	h := newHarness(t)
+	fake := okPlugin("localfs")
+	fake.uploadDelay = 200 * time.Millisecond // keep the upload in flight to flip the gate mid-transfer
+	h.registry.Register("localfs", func() backup.Plugin { return fake })
+	prov := h.addProvider(t, "localfs")
+	asset := h.addAsset(t)
+
+	ctx := context.Background()
+	job, _, err := h.jobs.Enqueue(ctx, asset.ID, prov.PluginName, prov.ID, 0)
+	if err != nil {
+		t.Fatalf("enqueue: %v", err)
+	}
+
+	var gate atomic.Bool // starts false: the job is free to be claimed
+	opts := fastOptions()
+	opts.ForegroundGate = func() bool { return gate.Load() }
+
+	m := backup.NewManager(h.jobs, h.assets, h.providers, h.registry, nil, opts)
+	if err := m.Start(ctx); err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	defer m.Stop()
+
+	// Wait until the upload is actually in flight, then turn the gate on.
+	eventually(t, 2*time.Second, "upload in flight", func() bool {
+		return len(m.RunningJobs()) == 1
+	})
+	gate.Store(true)
+
+	// The in-flight upload must still complete despite the gate now yielding.
+	eventually(t, 3*time.Second, "in-flight job completes despite gate on", func() bool {
+		return h.jobByID(t, job.ID).Status == domain.JobStatusCompleted
+	})
+	if fake.uploadCount() != 1 {
+		t.Fatalf("uploads = %d, want 1", fake.uploadCount())
+	}
+}
+
+// TestManager_YieldEdgeEmitsQueueChanged verifies the yield/resume transition
+// emits a queue-changed notification (via the same hook cooldowns use) so the UI
+// banner appears promptly.
+func TestManager_YieldEdgeEmitsQueueChanged(t *testing.T) {
+	h := newHarness(t)
+	fake := okPlugin("localfs")
+	h.registry.Register("localfs", func() backup.Plugin { return fake })
+	prov := h.addProvider(t, "localfs")
+	asset := h.addAsset(t)
+
+	ctx := context.Background()
+	if _, _, err := h.jobs.Enqueue(ctx, asset.ID, prov.PluginName, prov.ID, 0); err != nil {
+		t.Fatalf("enqueue: %v", err)
+	}
+
+	var gate atomic.Bool
+	gate.Store(true) // start yielding so the first claim observes the false->true edge
+	var notes int32
+	opts := fastOptions()
+	opts.ForegroundGate = func() bool { return gate.Load() }
+	opts.OnQueueChanged = func() { atomic.AddInt32(&notes, 1) }
+
+	m := backup.NewManager(h.jobs, h.assets, h.providers, h.registry, nil, opts)
+	if err := m.Start(ctx); err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	defer m.Stop()
+
+	eventually(t, 2*time.Second, "yield edge emitted queue-changed", func() bool {
+		return atomic.LoadInt32(&notes) > 0
+	})
+}
+
 func TestAggregateBackupStatus(t *testing.T) {
 	mk := func(statuses ...domain.JobStatus) []domain.BackupJob {
 		jobs := make([]domain.BackupJob, len(statuses))

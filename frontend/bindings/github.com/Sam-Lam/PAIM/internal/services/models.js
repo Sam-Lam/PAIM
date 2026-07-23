@@ -3518,11 +3518,11 @@ export class OpenResultDTO {
 
 /**
  * OperationInfo is one running long operation reported to the quit guard. Kind is
- * a stable machine token (import | analyze | reorganize | safe_to_erase | cleanup
- * | backup_upload); Label is a human phrase. FilesDone/FilesTotal and
- * BytesDone/BytesTotal are the latest progress snapshot (a zero total means the
- * count is indeterminate). It is JSON-serializable so it can ride the
- * app:quit-requested event payload and the AppService.ActiveOperations binding.
+ * a stable machine token (one of the OpKind* constants); Label is a human phrase.
+ * FilesDone/FilesTotal and BytesDone/BytesTotal are the latest progress snapshot
+ * (a zero total means the count is indeterminate). It is JSON-serializable so it
+ * can ride the app:quit-requested event payload and the
+ * AppService.ActiveOperations binding.
  */
 export class OperationInfo {
     /**
@@ -3897,6 +3897,18 @@ export class QueueSummaryDTO {
              * @type {ProviderCooldownDTO[]}
              */
             this["cooldowns"] = [];
+        }
+        if (!("yielding" in $$source)) {
+            /**
+             * Yielding is true when the backup manager is currently withholding new job
+             * claims because a foreground operation (import/analyze/reorganize/…) is
+             * running; in-flight uploads still finish and pending jobs resume
+             * automatically when the foreground work ends. Drives the Backup Queue's
+             * "paused while an import runs" banner.
+             * @member
+             * @type {boolean}
+             */
+            this["yielding"] = false;
         }
 
         Object.assign(this, $$source);

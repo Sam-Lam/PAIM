@@ -108,6 +108,15 @@ type Options struct {
 	// Now, when set, is the clock the Manager uses for provider cooldown
 	// bookkeeping. It defaults to time.Now; tests inject a controllable clock.
 	Now func() time.Time
+	// ForegroundGate, when set, is consulted before each claim: while it reports
+	// true (a foreground operation — import/analyze/reorganize/safe-to-erase/
+	// cleanup/clear-source — is running), workers stop claiming NEW jobs and
+	// idle-wait exactly as when the queue is empty, leaving everything pending.
+	// Any in-flight upload always finishes normally (uploads are never aborted).
+	// Claiming resumes automatically once the gate reports false. A nil gate never
+	// yields. This global yield gate composes with the per-provider cooldown gate:
+	// cooldown excludes one provider, the yield gate pauses every provider.
+	ForegroundGate func() bool
 }
 
 func (o Options) withDefaults() Options {
@@ -168,6 +177,10 @@ type Manager struct {
 	// claimRotation rotates the starting provider each claim so no single provider
 	// starves the others (round-robin fairness across providers).
 	claimRotation int
+	// yielding is the last-observed state of the ForegroundGate, used to detect
+	// the yield/resume edge so the transition is logged and a queue-changed
+	// notification is emitted exactly once per edge (not every poll).
+	yielding bool
 
 	// uploadsMu guards uploads. It is separate from mu because per-job upload
 	// progress fires frequently and must not contend with the queue-change /
@@ -334,6 +347,15 @@ func (m *Manager) worker(ctx context.Context) {
 // cooldown exclusion compose with per-provider ordering: a cooling provider is
 // simply not offered a turn until it clears.
 func (m *Manager) claimNext(ctx context.Context) (*domain.BackupJob, error) {
+	// Global yield gate: while a foreground operation runs, claim nothing and let
+	// the worker idle-wait exactly as for an empty queue, leaving jobs pending.
+	// In-flight uploads (already past claiming) are unaffected. This composes with
+	// the per-provider cooldown gate below — cooldown skips one provider, the yield
+	// gate skips every provider.
+	if m.shouldYield() {
+		return nil, nil
+	}
+
 	providers, err := m.providers.ListEnabled(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("backup: list providers to claim: %w", err)
@@ -374,6 +396,42 @@ func (m *Manager) claimNext(ctx context.Context) (*domain.BackupJob, error) {
 		}
 	}
 	return nil, nil
+}
+
+// shouldYield reports whether the manager should currently refrain from claiming
+// new jobs because a foreground operation is running (per ForegroundGate). It
+// also detects the yield/resume edge: on a transition it logs and emits a
+// queue-changed notification (reusing the throttled hook cooldowns use) so the UI
+// banner appears or clears promptly. It returns false when no gate is configured.
+func (m *Manager) shouldYield() bool {
+	if m.opts.ForegroundGate == nil {
+		return false
+	}
+	yield := m.opts.ForegroundGate()
+	m.mu.Lock()
+	changed := yield != m.yielding
+	m.yielding = yield
+	m.mu.Unlock()
+	if changed {
+		if yield {
+			m.log.Info("backup: yielding to foreground activity; pausing new claims")
+		} else {
+			m.log.Info("backup: foreground activity cleared; resuming claims")
+		}
+		m.notifyQueueChanged()
+	}
+	return yield
+}
+
+// Yielding reports whether the manager is currently withholding claims because a
+// foreground operation is running. It evaluates the gate live (mirroring how
+// Cooldowns computes on demand) so the queue summary always reflects the true
+// state. A nil gate always reports false.
+func (m *Manager) Yielding() bool {
+	if m.opts.ForegroundGate == nil {
+		return false
+	}
+	return m.opts.ForegroundGate()
 }
 
 // setCooldown records that a provider is cooling until the given time and emits a

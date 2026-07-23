@@ -17,6 +17,7 @@ import {
 import { Button, Card, ConfirmDialog, LoadingBlock, PageHeader, ProgressBar, StatusBadge } from "../components";
 import {
   AppService,
+  BackupService,
   ImportService,
   LibraryService,
   SettingsService,
@@ -62,6 +63,10 @@ export function SettingsPage() {
   const [recent, setRecent] = useState<RecentLibraryDTO[]>([]);
   const [switching, setSwitching] = useState(false);
   const [versionFull, setVersionFull] = useState<string>("");
+  // Per-machine "Pause backups while imports run" preference. It is applied live
+  // (not part of the Save-changes form) so its own toggle persists immediately.
+  const [pauseBackups, setPauseBackups] = useState<boolean | null>(null);
+  const [savingPauseBackups, setSavingPauseBackups] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -89,6 +94,36 @@ export function SettingsPage() {
       cancelled = true;
     };
   }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const on = await BackupService.PauseBackupsDuringForeground();
+        if (!cancelled) setPauseBackups(on);
+      } catch {
+        /* per-machine backup preference is non-critical */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const togglePauseBackups = async (on: boolean) => {
+    setSavingPauseBackups(true);
+    setPauseBackups(on); // optimistic
+    try {
+      const applied = await BackupService.SetPauseBackupsDuringForeground(on);
+      setPauseBackups(applied);
+      toast.success(applied ? "Backups will pause during imports" : "Backups no longer pause during imports");
+    } catch (e) {
+      setPauseBackups(!on); // revert
+      toast.fromError(e, "Could not change the setting");
+    } finally {
+      setSavingPauseBackups(false);
+    }
+  };
 
   const switchLibrary = async (path: string) => {
     setSwitching(true);
@@ -346,6 +381,22 @@ export function SettingsPage() {
             <InformationCircleIcon className="mt-0.5 h-3.5 w-3.5 flex-none" />
             Worker and retry counts are read at startup — restart PAIM for changes to take effect.
           </p>
+
+          <label className="mt-4 flex items-start gap-2.5 border-t border-zinc-800 pt-4">
+            <input
+              type="checkbox"
+              checked={pauseBackups ?? true}
+              disabled={pauseBackups == null || savingPauseBackups}
+              onChange={(e) => void togglePauseBackups(e.target.checked)}
+              className="mt-0.5 h-4 w-4 flex-none rounded border-zinc-600 bg-zinc-950 text-blue-500 focus:ring-blue-500 disabled:opacity-60"
+            />
+            <span>
+              <span className="text-[13px] text-zinc-200">Pause backups while imports run</span>
+              <span className="mt-0.5 block text-[11px] text-zinc-500">
+                Recommended for libraries on hard drives — backups resume automatically when the import finishes.
+              </span>
+            </span>
+          </label>
         </Card>
 
         <Card title="About">

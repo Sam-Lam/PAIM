@@ -512,14 +512,14 @@ func (s *SourcesService) activeOps() []OperationInfo {
 	defer s.mu.Unlock()
 	var ops []OperationInfo
 	if s.active && s.run != nil {
-		info := OperationInfo{Kind: "safe_to_erase", Label: "Checking whether a card is safe to erase"}
+		info := OperationInfo{Kind: OpKindSafeToErase, Label: "Checking whether a card is safe to erase"}
 		if s.run.progress != nil {
 			info.FilesDone, info.FilesTotal = s.run.progress.FilesDone, s.run.progress.FilesTotal
 		}
 		ops = append(ops, info)
 	}
 	if s.clearing && s.clearRun != nil {
-		info := OperationInfo{Kind: "clear_source", Label: "Clearing an imported source"}
+		info := OperationInfo{Kind: OpKindClearSource, Label: "Clearing an imported source"}
 		if s.clearRun.progress != nil {
 			info.FilesDone, info.FilesTotal = s.clearRun.progress.FilesDone, s.clearRun.progress.FilesTotal
 		}

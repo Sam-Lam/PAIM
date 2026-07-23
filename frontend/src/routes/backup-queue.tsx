@@ -4,6 +4,7 @@ import {
   ArrowUturnLeftIcon,
   ClockIcon,
   CloudArrowUpIcon,
+  PauseCircleIcon,
   PauseIcon,
   PlayIcon,
   XMarkIcon,
@@ -295,6 +296,15 @@ export function BackupQueuePage() {
           </>
         }
       />
+
+      {s?.yielding ? (
+        <div className="mb-4">
+          <div className="flex items-start gap-2 rounded-md border border-amber-500/30 bg-amber-500/5 p-3 text-[12px] text-amber-200/90">
+            <PauseCircleIcon className="mt-0.5 h-4 w-4 flex-none" />
+            <span>Backups paused while an import runs — they resume automatically when the import finishes.</span>
+          </div>
+        </div>
+      ) : null}
 
       {(s?.cooldowns ?? []).length > 0 ? (
         <div className="mb-4 space-y-2">

@@ -287,7 +287,7 @@ func TestSessionBackupStatus(t *testing.T) {
 	archiveFile(t, assets, "s1", filepath.Join(root, "b.jpg"), "b", true, true)
 	archiveFile(t, assets, "s1", filepath.Join(root, "c.jpg"), "c", true, false)
 
-	bs := NewBackupService(nil, nil, assets, nil, nil)
+	bs := NewBackupService(nil, nil, assets, nil, nil, nil, nil)
 	status, err := bs.SessionBackupStatus(context.Background(), "s1")
 	if err != nil {
 		t.Fatalf("SessionBackupStatus: %v", err)

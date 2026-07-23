@@ -329,7 +329,7 @@ func (s *CleanupService) activeOps() []OperationInfo {
 	if !s.active || s.run == nil {
 		return nil
 	}
-	info := OperationInfo{Kind: "cleanup", Label: "Analyzing a folder for cleanup"}
+	info := OperationInfo{Kind: OpKindCleanup, Label: "Analyzing a folder for cleanup"}
 	if s.run.progress != nil {
 		info.FilesDone, info.FilesTotal = s.run.progress.FilesDone, s.run.progress.FilesTotal
 	}

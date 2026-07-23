@@ -43,6 +43,18 @@ type Config struct {
 	// higher value suits an SSD. 0/absent means the default (2).
 	ThumbnailParallelism int `json:"thumbnailParallelism,omitempty"`
 
+	// PauseBackupsDuringForeground, when true (the default when nil/absent), makes
+	// the backup manager stop claiming NEW upload jobs while a foreground
+	// operation (import, analyze, reorganize, safe-to-erase, cleanup,
+	// clear-source) runs; any in-flight upload always finishes, and claiming
+	// resumes automatically once the foreground work ends. On spinning media a
+	// backup upload's reads seek-compete with the foreground work on the same
+	// drive, degrading both, so backups yield as patient background work.
+	// Machine-local because whether it helps depends on THIS Mac's drive (a
+	// spinning HDD benefits; an SSD does not need it). A pointer so an absent
+	// value defaults to true, distinct from an explicit false.
+	PauseBackupsDuringForeground *bool `json:"pauseBackupsDuringForeground,omitempty"`
+
 	// SnapshotDest is the folder catalog snapshots are copied to. Empty disables
 	// snapshots (the default). SnapshotInterval is one of the SnapshotInterval*
 	// tokens; it only matters when SnapshotDest is set.
@@ -75,6 +87,13 @@ func NewConfigStore(path string) (*ConfigStore, error) {
 		}
 	}
 	return &ConfigStore{path: path}, nil
+}
+
+// PauseBackupsDuringForegroundEnabled resolves the tri-state
+// PauseBackupsDuringForeground preference to a concrete bool, defaulting to true
+// when the value is unset (nil/absent).
+func (c Config) PauseBackupsDuringForegroundEnabled() bool {
+	return c.PauseBackupsDuringForeground == nil || *c.PauseBackupsDuringForeground
 }
 
 // Path returns the config file path this store reads and writes.

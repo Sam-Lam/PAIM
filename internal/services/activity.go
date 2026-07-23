@@ -1,13 +1,67 @@
 package services
 
-import "sync"
+import (
+	"sync"
+	"sync/atomic"
+)
+
+// Operation kinds: the stable machine tokens used in OperationInfo.Kind. Every
+// long operation reported to the quit guard uses exactly one of these. They are
+// defined here, in one place, so the foreground-yield set (foregroundKinds) can
+// be kept exhaustive against them: a test enumerates AllOperationKinds and fails
+// if a new kind is added without deciding whether it should pause background
+// backups. When adding a new kind, add its constant here, list it in
+// AllOperationKinds, and categorize it in foregroundKinds (or deliberately leave
+// it out).
+const (
+	OpKindImport          = "import"
+	OpKindAnalyze         = "analyze"
+	OpKindReorganize      = "reorganize"
+	OpKindSafeToErase     = "safe_to_erase"
+	OpKindCleanup         = "cleanup"
+	OpKindClearSource     = "clear_source"
+	OpKindBackupUpload    = "backup_upload"
+	OpKindBackupBackfill  = "backup_backfill"
+	OpKindThumbnailWarmup = "thumbnail_warmup"
+)
+
+// AllOperationKinds enumerates every defined OperationInfo.Kind. It is held
+// exhaustive by TestForegroundKindsPartitionAllKinds, which asserts each entry
+// is classified as either foreground (yield-triggering) or background.
+var AllOperationKinds = []string{
+	OpKindImport, OpKindAnalyze, OpKindReorganize, OpKindSafeToErase,
+	OpKindCleanup, OpKindClearSource,
+	OpKindBackupUpload, OpKindBackupBackfill, OpKindThumbnailWarmup,
+}
+
+// foregroundKinds are the operation kinds whose activity makes the backup
+// manager yield — stop claiming NEW upload jobs — until they finish. On spinning
+// media a backup upload's reads seek-compete with these operations' reads/writes
+// on the same drive, degrading both; backups are patient background work.
+//
+// Backup's own kinds (backup_upload, backup_backfill) are deliberately excluded:
+// yielding on them would make backups pause themselves. The disposable thumbnail
+// warm-up is excluded too — it is a trivial cache job, not a data movement worth
+// pausing custody work for.
+var foregroundKinds = map[string]bool{
+	OpKindImport:      true,
+	OpKindAnalyze:     true,
+	OpKindReorganize:  true,
+	OpKindSafeToErase: true,
+	OpKindCleanup:     true,
+	OpKindClearSource: true,
+}
+
+// IsForegroundKind reports whether an operation kind should trigger backup
+// yielding (see foregroundKinds).
+func IsForegroundKind(kind string) bool { return foregroundKinds[kind] }
 
 // OperationInfo is one running long operation reported to the quit guard. Kind is
-// a stable machine token (import | analyze | reorganize | safe_to_erase | cleanup
-// | backup_upload); Label is a human phrase. FilesDone/FilesTotal and
-// BytesDone/BytesTotal are the latest progress snapshot (a zero total means the
-// count is indeterminate). It is JSON-serializable so it can ride the
-// app:quit-requested event payload and the AppService.ActiveOperations binding.
+// a stable machine token (one of the OpKind* constants); Label is a human phrase.
+// FilesDone/FilesTotal and BytesDone/BytesTotal are the latest progress snapshot
+// (a zero total means the count is indeterminate). It is JSON-serializable so it
+// can ride the app:quit-requested event payload and the
+// AppService.ActiveOperations binding.
 type OperationInfo struct {
 	Kind       string `json:"kind"`
 	Label      string `json:"label"`
@@ -75,4 +129,56 @@ func (t *ActivityTracker) CancelAll() {
 	for _, s := range srcs {
 		s.cancelActive()
 	}
+}
+
+// ForegroundYield decides whether the backup manager should yield — stop
+// claiming NEW upload jobs — because a foreground operation is running. It is the
+// backup.Options.ForegroundGate: main.go passes its Gate method to the Manager,
+// and the Backup service flips its enabled flag live when the user toggles the
+// per-machine "Pause backups while imports run" preference.
+//
+// Gate composes two conditions:
+//   - the PauseBackupsDuringForeground preference is on (enabled), AND
+//   - the activity tracker currently reports at least one foreground-kind op.
+//
+// When the preference is off, Gate always returns false (never yield). The
+// enabled flag is an atomic so the settings toggle applies live without
+// restarting the manager, mirroring how thumbnail parallelism is live-applied.
+type ForegroundYield struct {
+	tracker *ActivityTracker
+	enabled atomic.Bool
+}
+
+// NewForegroundYield constructs a yield gate over the tracker with the initial
+// preference value (from library.Config at startup).
+func NewForegroundYield(tracker *ActivityTracker, enabled bool) *ForegroundYield {
+	y := &ForegroundYield{tracker: tracker}
+	y.enabled.Store(enabled)
+	return y
+}
+
+// SetEnabled updates the live preference. The caller persists it to
+// library.Config separately; this only flips the in-memory gate.
+func (y *ForegroundYield) SetEnabled(on bool) {
+	if y == nil {
+		return
+	}
+	y.enabled.Store(on)
+}
+
+// Enabled reports the current preference.
+func (y *ForegroundYield) Enabled() bool { return y != nil && y.enabled.Load() }
+
+// Gate reports whether the backup manager should yield right now: the preference
+// is on and a foreground-kind operation is in flight. A nil gate never yields.
+func (y *ForegroundYield) Gate() bool {
+	if y == nil || y.tracker == nil || !y.enabled.Load() {
+		return false
+	}
+	for _, op := range y.tracker.Snapshot() {
+		if IsForegroundKind(op.Kind) {
+			return true
+		}
+	}
+	return false
 }

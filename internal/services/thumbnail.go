@@ -382,7 +382,7 @@ func (s *ThumbnailService) activeOps() []OperationInfo {
 		return nil
 	}
 	return []OperationInfo{{
-		Kind:       "thumbnail_warmup",
+		Kind:       OpKindThumbnailWarmup,
 		Label:      "Generating thumbnails",
 		FilesDone:  s.done,
 		FilesTotal: s.total,

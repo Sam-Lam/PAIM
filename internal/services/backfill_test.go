@@ -26,7 +26,7 @@ func newBackfillHarness(t *testing.T) (svc *BackupService, gdb *gorm.DB, assets 
 	}
 	assets = repo.NewAssetRepo(gdb)
 	jobs = repo.NewBackupRepo(gdb)
-	svc = NewBackupService(nil, jobs, assets, nil, nil)
+	svc = NewBackupService(nil, jobs, assets, nil, nil, nil, nil)
 	svc.db = gdb
 
 	p := &domain.BackupProvider{PluginName: "localfs", ConfigJSON: "{}", Enabled: true}

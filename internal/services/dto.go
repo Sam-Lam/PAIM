@@ -258,6 +258,13 @@ type QueueSummaryDTO struct {
 	Total     int64 `json:"total"`
 
 	Cooldowns []ProviderCooldownDTO `json:"cooldowns"`
+
+	// Yielding is true when the backup manager is currently withholding new job
+	// claims because a foreground operation (import/analyze/reorganize/…) is
+	// running; in-flight uploads still finish and pending jobs resume
+	// automatically when the foreground work ends. Drives the Backup Queue's
+	// "paused while an import runs" banner.
+	Yielding bool `json:"yielding"`
 }
 
 // ProviderCooldownDTO describes one provider's active quota cooldown.

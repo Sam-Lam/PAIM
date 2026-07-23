@@ -124,6 +124,7 @@ type composition struct {
 	gate       *services.LibraryGate
 	sleep      *services.SleepGuard
 	tracker    *services.ActivityTracker
+	yield      *services.ForegroundYield
 	config     *library.ConfigStore
 	appVersion string
 	rootCtx    context.Context
@@ -184,6 +185,16 @@ func run() error {
 	sleep := services.NewSleepGuard(logger)
 	tracker := services.NewActivityTracker()
 
+	// Foreground-yield gate: while a foreground operation (import/analyze/…) runs,
+	// the backup manager stops claiming new upload jobs so its reads don't
+	// seek-compete on spinning media. Seed the live enabled flag from the
+	// per-machine PauseBackupsDuringForeground preference (default true).
+	pausePref := true
+	if cfg, cerr := configStore.Load(); cerr == nil {
+		pausePref = cfg.PauseBackupsDuringForegroundEnabled()
+	}
+	yield := services.NewForegroundYield(tracker, pausePref)
+
 	rootCtx, rootCancel := context.WithCancel(context.Background())
 
 	comp := &composition{
@@ -197,6 +208,7 @@ func run() error {
 		gate:       gate,
 		sleep:      sleep,
 		tracker:    tracker,
+		yield:      yield,
 		config:     configStore,
 		appVersion: appVersion,
 		rootCtx:    rootCtx,
@@ -211,7 +223,7 @@ func run() error {
 	comp.historySvc = services.NewHistoryService(nil, nil, logger)
 	comp.dupSvc = services.NewDuplicateService(nil, nil, nil, emitter, logger)
 	comp.cleanupSvc = services.NewCleanupService(nil, dialoger, emitter, logger)
-	comp.backupSvc = services.NewBackupService(nil, nil, nil, emitter, logger)
+	comp.backupSvc = services.NewBackupService(nil, nil, nil, configStore, yield, emitter, logger)
 	comp.providerSvc = services.NewProviderService(nil, registry, logger)
 	comp.logSvc = services.NewLogService(nil, nil, dialoger, emitter, logger)
 	comp.settingsSvc = services.NewSettingsService(nil, extractor.Available())
@@ -437,6 +449,7 @@ func (c *composition) Open(ctx context.Context, root string, force, migrateLegac
 		Logger:           c.logger,
 		ThumbCacheDir:    thumbDir,
 		ThumbParallelism: thumbParallelism,
+		ForegroundGate:   c.yield.Gate,
 	})
 	if err != nil {
 		_ = lock.Release()
@@ -508,12 +521,13 @@ func (c *composition) openDev(dbPath string) error {
 		return err
 	}
 	core, err := services.BuildCore(services.CoreDeps{
-		OpenedDB:  gdb,
-		Emitter:   c.emitter,
-		Registry:  c.registry,
-		Extractor: c.extractor,
-		Collector: c.collector,
-		Logger:    c.logger,
+		OpenedDB:       gdb,
+		Emitter:        c.emitter,
+		Registry:       c.registry,
+		Extractor:      c.extractor,
+		Collector:      c.collector,
+		Logger:         c.logger,
+		ForegroundGate: c.yield.Gate,
 	})
 	if err != nil {
 		return err
