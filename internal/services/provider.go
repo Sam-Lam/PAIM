@@ -55,6 +55,21 @@ type ProviderDTO struct {
 	// and the per-card badge. It is populated only for ENABLED providers (backfill
 	// is refused for disabled ones); 0 otherwise or when the catalog is unbound.
 	MissingBackupCount int64 `json:"missingBackupCount"`
+
+	// LastError is this destination's most recent still-failing job (its error
+	// message and when it was recorded), or nil when it has no currently-failed
+	// job. LastSuccessAt is when its most recent job completed, or nil if none has.
+	// The card shows a "Failing — <error>" amber state (in place of the green
+	// Enabled dot) when LastError is set and is more recent than LastSuccessAt.
+	LastError     *ProviderErrorDTO `json:"lastError"`
+	LastSuccessAt *time.Time        `json:"lastSuccessAt"`
+}
+
+// ProviderErrorDTO is a destination's most recent failure: the job's error
+// message and the time it was recorded (the failed job's UpdatedAt).
+type ProviderErrorDTO struct {
+	Message string    `json:"message"`
+	At      time.Time `json:"at"`
 }
 
 func toProviderDTO(p domain.BackupProvider) ProviderDTO {
@@ -84,6 +99,37 @@ func (s *ProviderService) withMissingCount(ctx context.Context, dto ProviderDTO)
 		dto.MissingBackupCount = n
 	} else {
 		s.log.Warn("provider missing-backup count failed", "provider", dto.ID, "error", err.Error())
+	}
+	return dto
+}
+
+// withHealth derives a provider's recent-outcome health from its jobs: the most
+// recent still-failed job (LastError) and the most recent completed job
+// (LastSuccessAt), both keyed by destination = provider ID over indexed columns.
+// The catalog being unbound or a query error leaves the fields nil — health is a
+// UI convenience, never load-bearing.
+func (s *ProviderService) withHealth(ctx context.Context, dto ProviderDTO) ProviderDTO {
+	if s.db == nil {
+		return dto
+	}
+	var failed domain.BackupJob
+	err := s.db.WithContext(ctx).
+		Where("destination = ? AND status = ?", dto.ID, domain.JobStatusFailed).
+		Order("updated_at DESC").Limit(1).First(&failed).Error
+	if err == nil {
+		dto.LastError = &ProviderErrorDTO{Message: failed.ErrorMessage, At: failed.UpdatedAt}
+	} else if !errors.Is(err, gorm.ErrRecordNotFound) {
+		s.log.Warn("provider last-error lookup failed", "provider", dto.ID, "error", err.Error())
+	}
+
+	var completed domain.BackupJob
+	err = s.db.WithContext(ctx).
+		Where("destination = ? AND status = ? AND completed_at IS NOT NULL", dto.ID, domain.JobStatusCompleted).
+		Order("completed_at DESC").Limit(1).First(&completed).Error
+	if err == nil {
+		dto.LastSuccessAt = completed.CompletedAt
+	} else if !errors.Is(err, gorm.ErrRecordNotFound) {
+		s.log.Warn("provider last-success lookup failed", "provider", dto.ID, "error", err.Error())
 	}
 	return dto
 }
@@ -137,7 +183,7 @@ func (s *ProviderService) List(ctx context.Context) ([]ProviderDTO, error) {
 	}
 	out := make([]ProviderDTO, 0, len(rows))
 	for _, r := range rows {
-		out = append(out, s.withMissingCount(ctx, toProviderDTO(r)))
+		out = append(out, s.withHealth(ctx, s.withMissingCount(ctx, toProviderDTO(r))))
 	}
 	return out, nil
 }

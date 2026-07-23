@@ -10,6 +10,7 @@ export {
 export { ConfirmDialog, type ConfirmDialogProps } from "./ConfirmDialog";
 export { ClearSourceControl } from "./ClearSource";
 export { QuitGuardDialog } from "./QuitGuardDialog";
+export { GlobalNotifications } from "./GlobalNotifications";
 export { Card, type CardProps } from "./Card";
 export { Stat, type StatProps } from "./Stat";
 export { EmptyState, type EmptyStateProps } from "./EmptyState";

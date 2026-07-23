@@ -209,11 +209,12 @@ func BuildCore(deps CoreDeps) (*AppCore, error) {
 	// (assigned just below) breaks the cycle — the closure only runs at emit time.
 	var manager *backup.Manager
 	manager = backup.NewManager(jobQueue, assets, providerStore, deps.Registry, logger, backup.Options{
-		Workers:        cfg.BackupWorkers,
-		MaxRetries:     cfg.MaxRetries,
-		LibraryRoot:    deps.Root,
-		ProgressFn:     NewBackupProgressEmitter(deps.Emitter),
-		ForegroundGate: deps.ForegroundGate,
+		Workers:           cfg.BackupWorkers,
+		MaxRetries:        cfg.MaxRetries,
+		LibraryRoot:       deps.Root,
+		ProgressFn:        NewBackupProgressEmitter(deps.Emitter),
+		ForegroundGate:    deps.ForegroundGate,
+		OnProviderFailing: NewProviderFailingEmitter(deps.Emitter, gdb),
 		OnQueueChanged: NewBackupQueueChangedEmitter(deps.Emitter, backups, func() []ProviderCooldownDTO {
 			if manager == nil {
 				return nil

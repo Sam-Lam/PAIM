@@ -27,6 +27,7 @@ const (
 	EventBackupQueueChanged      = "backup:queue-changed"
 	EventBackupBackfillProgress  = "backup:backfill-progress"
 	EventBackupBackfillCompleted = "backup:backfill-completed"
+	EventBackupProviderFailing   = "backup:provider-failing"
 	EventVolumeMounted      = "volume:mounted"
 	EventVolumeUnmounted    = "volume:unmounted"
 	EventSourceIdentified   = "source:identified"
@@ -141,9 +142,29 @@ type BackupBackfillCompleted struct {
 	Cancelled  bool   `json:"cancelled"`
 }
 
-// VolumeEvent is the payload for volume:mounted and volume:unmounted.
+// BackupProviderFailing is the payload for backup:provider-failing, emitted once
+// (throttled per provider in the Manager) when a destination crosses the failing
+// edge. It drives a single low-frequency toast ("Backups to <name> are failing").
+// ProviderName is a best-effort human label (rclone remote / localfs root / plugin
+// name), falling back to ProviderID.
+type BackupProviderFailing struct {
+	ProviderID   string `json:"providerId"`
+	ProviderName string `json:"providerName"`
+}
+
+// VolumeEvent is the payload for volume:mounted and volume:unmounted. For
+// volume:mounted it is enriched server-side (a lightweight diskutil describe) so
+// the frontend can decide whether to offer an "Import?" toast without a follow-up
+// fetch: VolumeName is the display label; Removable/Ejectable mark a physically
+// removable card/drive (the only kind worth prompting to import); IsLibraryVolume
+// is true when the open library lives on this volume (never prompt for it). The
+// enrichment fields are best-effort and left zero for volume:unmounted.
 type VolumeEvent struct {
-	MountPoint string `json:"mountPoint"`
+	MountPoint      string `json:"mountPoint"`
+	VolumeName      string `json:"volumeName"`
+	Removable       bool   `json:"removable"`
+	Ejectable       bool   `json:"ejectable"`
+	IsLibraryVolume bool   `json:"isLibraryVolume"`
 }
 
 // SourceIdentified is the payload for source:identified, emitted after a volume

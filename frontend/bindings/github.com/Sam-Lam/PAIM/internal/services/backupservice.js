@@ -136,6 +136,17 @@ export function Retry(jobID) {
 }
 
 /**
+ * RetryAllFailed requeues every failed backup job to pending in one transition
+ * and returns the number requeued. It emits backup:queue-changed on success. It
+ * composes with provider cooldowns and the foreground yield gate naturally (those
+ * gate claiming, not status): requeued jobs wait pending until claiming resumes.
+ * @returns {$CancellablePromise<number>}
+ */
+export function RetryAllFailed() {
+    return $Call.ByID(4113057650);
+}
+
+/**
  * SessionBackupStatus reports how many of a session's backup-eligible assets are
  * fully backed up, so the import completion panel can show live progress and
  * enable evaluation once backups drain.

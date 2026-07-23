@@ -506,7 +506,7 @@ func TestFullScenario(t *testing.T) {
 		// source.EvaluateSafeToErase treats duplicate CONTENT as archived (it maps
 		// each file to a verified, backed-up asset regardless of intra-folder
 		// duplication), so the source volume IS safe to erase.
-		safe, err := s.identifier.EvaluateSafeToErase(ctx, "test-source", s.srcRoot, srcLookup{s.assets}, mediatype.IsMedia, nil)
+		safe, err := s.identifier.EvaluateSafeToErase(ctx, "test-source", s.srcRoot, true, srcLookup{s.assets}, mediatype.IsMedia, nil)
 		if err != nil {
 			t.Fatalf("evaluate safe-to-erase: %v", err)
 		}

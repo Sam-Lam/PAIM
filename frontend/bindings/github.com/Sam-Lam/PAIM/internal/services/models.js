@@ -1628,6 +1628,48 @@ export class BackupProgress {
 }
 
 /**
+ * BackupProviderFailing is the payload for backup:provider-failing, emitted once
+ * (throttled per provider in the Manager) when a destination crosses the failing
+ * edge. It drives a single low-frequency toast ("Backups to <name> are failing").
+ * ProviderName is a best-effort human label (rclone remote / localfs root / plugin
+ * name), falling back to ProviderID.
+ */
+export class BackupProviderFailing {
+    /**
+     * Creates a new BackupProviderFailing instance.
+     * @param {Partial<BackupProviderFailing>} [$$source = {}] - The source object to create the BackupProviderFailing.
+     */
+    constructor($$source = {}) {
+        if (!("providerId" in $$source)) {
+            /**
+             * @member
+             * @type {string}
+             */
+            this["providerId"] = "";
+        }
+        if (!("providerName" in $$source)) {
+            /**
+             * @member
+             * @type {string}
+             */
+            this["providerName"] = "";
+        }
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new BackupProviderFailing instance from a string or object.
+     * @param {any} [$$source = {}]
+     * @returns {BackupProviderFailing}
+     */
+    static createFrom($$source = {}) {
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        return new BackupProviderFailing(/** @type {Partial<BackupProviderFailing>} */($$parsedSource));
+    }
+}
+
+/**
  * BackupQueueChanged is the payload for backup:queue-changed, emitted after any
  * queue state transition so the frontend can refresh counts.
  */
@@ -2388,6 +2430,17 @@ export class DashboardStats {
              */
             this["backupQueue"] = (new BackupSummaryDTO());
         }
+        if (!("enabledRequiredProviders" in $$source)) {
+            /**
+             * EnabledRequiredProviders is the number of enabled, non-mirror (required)
+             * backup destinations configured. Zero while assets exist means the archive is
+             * the only copy — the dashboard renders a prominent "no backup destination"
+             * warning. Mirrors are excluded: a mirror-only setup still has no custody copy.
+             * @member
+             * @type {number}
+             */
+            this["enabledRequiredProviders"] = 0;
+        }
         if (!("duplicateCount" in $$source)) {
             /**
              * @member
@@ -2428,9 +2481,9 @@ export class DashboardStats {
     static createFrom($$source = {}) {
         const $$createField0_0 = $$createType55;
         const $$createField2_0 = $$createType56;
-        const $$createField4_0 = $$createType58;
         const $$createField5_0 = $$createType58;
-        const $$createField6_0 = $$createType60;
+        const $$createField6_0 = $$createType58;
+        const $$createField7_0 = $$createType60;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("totals" in $$parsedSource) {
             $$parsedSource["totals"] = $$createField0_0($$parsedSource["totals"]);
@@ -2439,13 +2492,13 @@ export class DashboardStats {
             $$parsedSource["backupQueue"] = $$createField2_0($$parsedSource["backupQueue"]);
         }
         if ("recentSources" in $$parsedSource) {
-            $$parsedSource["recentSources"] = $$createField4_0($$parsedSource["recentSources"]);
+            $$parsedSource["recentSources"] = $$createField5_0($$parsedSource["recentSources"]);
         }
         if ("safeToEraseSources" in $$parsedSource) {
-            $$parsedSource["safeToEraseSources"] = $$createField5_0($$parsedSource["safeToEraseSources"]);
+            $$parsedSource["safeToEraseSources"] = $$createField6_0($$parsedSource["safeToEraseSources"]);
         }
         if ("recentActivity" in $$parsedSource) {
-            $$parsedSource["recentActivity"] = $$createField6_0($$parsedSource["recentActivity"]);
+            $$parsedSource["recentActivity"] = $$createField7_0($$parsedSource["recentActivity"]);
         }
         return new DashboardStats(/** @type {Partial<DashboardStats>} */($$parsedSource));
     }
@@ -3816,6 +3869,25 @@ export class ProviderDTO {
              */
             this["missingBackupCount"] = 0;
         }
+        if (!("lastError" in $$source)) {
+            /**
+             * LastError is this destination's most recent still-failing job (its error
+             * message and when it was recorded), or nil when it has no currently-failed
+             * job. LastSuccessAt is when its most recent job completed, or nil if none has.
+             * The card shows a "Failing — <error>" amber state (in place of the green
+             * Enabled dot) when LastError is set and is more recent than LastSuccessAt.
+             * @member
+             * @type {ProviderErrorDTO | null}
+             */
+            this["lastError"] = null;
+        }
+        if (!("lastSuccessAt" in $$source)) {
+            /**
+             * @member
+             * @type {string | null}
+             */
+            this["lastSuccessAt"] = null;
+        }
 
         Object.assign(this, $$source);
     }
@@ -3826,8 +3898,51 @@ export class ProviderDTO {
      * @returns {ProviderDTO}
      */
     static createFrom($$source = {}) {
+        const $$createField7_0 = $$createType72;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        if ("lastError" in $$parsedSource) {
+            $$parsedSource["lastError"] = $$createField7_0($$parsedSource["lastError"]);
+        }
         return new ProviderDTO(/** @type {Partial<ProviderDTO>} */($$parsedSource));
+    }
+}
+
+/**
+ * ProviderErrorDTO is a destination's most recent failure: the job's error
+ * message and the time it was recorded (the failed job's UpdatedAt).
+ */
+export class ProviderErrorDTO {
+    /**
+     * Creates a new ProviderErrorDTO instance.
+     * @param {Partial<ProviderErrorDTO>} [$$source = {}] - The source object to create the ProviderErrorDTO.
+     */
+    constructor($$source = {}) {
+        if (!("message" in $$source)) {
+            /**
+             * @member
+             * @type {string}
+             */
+            this["message"] = "";
+        }
+        if (!("at" in $$source)) {
+            /**
+             * @member
+             * @type {string}
+             */
+            this["at"] = "0001-01-01T00:00:00.000Z";
+        }
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new ProviderErrorDTO instance from a string or object.
+     * @param {any} [$$source = {}]
+     * @returns {ProviderErrorDTO}
+     */
+    static createFrom($$source = {}) {
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        return new ProviderErrorDTO(/** @type {Partial<ProviderErrorDTO>} */($$parsedSource));
     }
 }
 
@@ -3920,7 +4035,7 @@ export class QueueSummaryDTO {
      * @returns {QueueSummaryDTO}
      */
     static createFrom($$source = {}) {
-        const $$createField7_0 = $$createType72;
+        const $$createField7_0 = $$createType74;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("cooldowns" in $$parsedSource) {
             $$parsedSource["cooldowns"] = $$createField7_0($$parsedSource["cooldowns"]);
@@ -3958,7 +4073,7 @@ export class QuitRequested {
      * @returns {QuitRequested}
      */
     static createFrom($$source = {}) {
-        const $$createField0_0 = $$createType74;
+        const $$createField0_0 = $$createType76;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("operations" in $$parsedSource) {
             $$parsedSource["operations"] = $$createField0_0($$parsedSource["operations"]);
@@ -4313,8 +4428,8 @@ export class ReorganizePlanDTO {
      * @returns {ReorganizePlanDTO}
      */
     static createFrom($$source = {}) {
-        const $$createField6_0 = $$createType76;
-        const $$createField7_0 = $$createType78;
+        const $$createField6_0 = $$createType78;
+        const $$createField7_0 = $$createType80;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("movesSample" in $$parsedSource) {
             $$parsedSource["movesSample"] = $$createField6_0($$parsedSource["movesSample"]);
@@ -4450,6 +4565,17 @@ export class SafeToEraseDTO {
              * @type {string}
              */
             this["reason"] = "";
+        }
+        if (!("noBackupDestination" in $$source)) {
+            /**
+             * NoBackupDestination is true when the not-safe verdict is solely because no
+             * backup destination is configured (every file is archived and verified but
+             * the archive is the only copy). The UI renders this amber, distinct from the
+             * red not-archived cases.
+             * @member
+             * @type {boolean}
+             */
+            this["noBackupDestination"] = false;
         }
         if (!("totalMedia" in $$source)) {
             /**
@@ -4837,7 +4963,7 @@ export class SessionDetail {
      * @returns {SessionDetail}
      */
     static createFrom($$source = {}) {
-        const $$createField0_0 = $$createType79;
+        const $$createField0_0 = $$createType81;
         const $$createField1_0 = $$createType60;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("session" in $$parsedSource) {
@@ -6022,7 +6148,13 @@ export class VolumeDTO {
 }
 
 /**
- * VolumeEvent is the payload for volume:mounted and volume:unmounted.
+ * VolumeEvent is the payload for volume:mounted and volume:unmounted. For
+ * volume:mounted it is enriched server-side (a lightweight diskutil describe) so
+ * the frontend can decide whether to offer an "Import?" toast without a follow-up
+ * fetch: VolumeName is the display label; Removable/Ejectable mark a physically
+ * removable card/drive (the only kind worth prompting to import); IsLibraryVolume
+ * is true when the open library lives on this volume (never prompt for it). The
+ * enrichment fields are best-effort and left zero for volume:unmounted.
  */
 export class VolumeEvent {
     /**
@@ -6036,6 +6168,34 @@ export class VolumeEvent {
              * @type {string}
              */
             this["mountPoint"] = "";
+        }
+        if (!("volumeName" in $$source)) {
+            /**
+             * @member
+             * @type {string}
+             */
+            this["volumeName"] = "";
+        }
+        if (!("removable" in $$source)) {
+            /**
+             * @member
+             * @type {boolean}
+             */
+            this["removable"] = false;
+        }
+        if (!("ejectable" in $$source)) {
+            /**
+             * @member
+             * @type {boolean}
+             */
+            this["ejectable"] = false;
+        }
+        if (!("isLibraryVolume" in $$source)) {
+            /**
+             * @member
+             * @type {boolean}
+             */
+            this["isLibraryVolume"] = false;
         }
 
         Object.assign(this, $$source);
@@ -6182,12 +6342,14 @@ const $$createType67 = $Create.Nullable($$createType66);
 const $$createType68 = LockConflictDTO.createFrom;
 const $$createType69 = $Create.Nullable($$createType68);
 const $$createType70 = /** @type {(...args: any[]) => any} */(($$createParamT) => $Create.Array($$createParamT));
-const $$createType71 = ProviderCooldownDTO.createFrom;
-const $$createType72 = $Create.Array($$createType71);
-const $$createType73 = OperationInfo.createFrom;
+const $$createType71 = ProviderErrorDTO.createFrom;
+const $$createType72 = $Create.Nullable($$createType71);
+const $$createType73 = ProviderCooldownDTO.createFrom;
 const $$createType74 = $Create.Array($$createType73);
-const $$createType75 = ReorganizeMoveDTO.createFrom;
+const $$createType75 = OperationInfo.createFrom;
 const $$createType76 = $Create.Array($$createType75);
-const $$createType77 = ReorganizeSkipDTO.createFrom;
+const $$createType77 = ReorganizeMoveDTO.createFrom;
 const $$createType78 = $Create.Array($$createType77);
-const $$createType79 = SessionDTO.createFrom;
+const $$createType79 = ReorganizeSkipDTO.createFrom;
+const $$createType80 = $Create.Array($$createType79);
+const $$createType81 = SessionDTO.createFrom;

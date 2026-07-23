@@ -71,6 +71,14 @@ type SafeToEraseReport struct {
 	Safe     bool   `json:"safe"`
 	Reason   string `json:"reason"`
 
+	// NoBackupDestination is true when the verdict is not-safe SPECIFICALLY
+	// because every file is archived and verified but no backup destination is
+	// configured (zero enabled required, non-mirror providers) — the archive is
+	// the only copy. It is a distinct, non-alarming state (the UI renders it amber,
+	// not the red reserved for genuinely not-archived New/Unverified files). It is
+	// never set alongside New/Unverified problems.
+	NoBackupDestination bool `json:"noBackupDestination"`
+
 	// TotalMedia is the number of media files examined on the volume.
 	TotalMedia int `json:"totalMedia"`
 	// Archived counts files mapping to a verified, fully backed-up asset.
@@ -145,12 +153,19 @@ const (
 // hashing every file; only the compute path differs. FastPath/Hashed counts
 // record how many files took each path.
 //
+// hasBackupDestination reports whether at least one enabled required (non-mirror)
+// backup provider is configured. When false, the archive is the only copy of an
+// asset, so the volume can NEVER be classified safe to erase — regardless of each
+// asset's stored aggregate BackupStatus (which can be stale "complete" after a
+// destination is removed). See finalizeReport.
+//
 // lookup and isMedia are injected (rather than being constructor dependencies of
 // the Identifier) because they are only needed for this evaluation.
 func (id *Identifier) EvaluateSafeToErase(
 	ctx context.Context,
 	sourceID string,
 	root string,
+	hasBackupDestination bool,
 	lookup AssetLookup,
 	isMedia func(ext string) bool,
 	progressFn SafeToEraseProgress,
@@ -243,7 +258,7 @@ func (id *Identifier) EvaluateSafeToErase(
 		progressFn(total, total, "")
 	}
 
-	finalizeReport(report)
+	finalizeReport(report, hasBackupDestination)
 	return report, nil
 }
 
@@ -349,12 +364,34 @@ func resolveAsset(fullHasher FullHasher, path string, candidates []ArchivedAsset
 }
 
 // finalizeReport sets Safe and a human-readable Reason from the tallied counts.
-func finalizeReport(r *SafeToEraseReport) {
+// hasBackupDestination is whether any enabled required (non-mirror) backup
+// provider exists; when false the archive is the only copy, so a would-be-safe
+// verdict is downgraded to the distinct NoBackupDestination state.
+func finalizeReport(r *SafeToEraseReport, hasBackupDestination bool) {
 	if r.TotalMedia == 0 {
 		r.Safe = true
 		r.Reason = "No media files found on the volume — nothing would be lost by erasing it."
 		return
 	}
+
+	// No backup destination configured: with zero enabled required (non-mirror)
+	// providers the archive is the sole copy, so erasing sources can never be safe
+	// even when every file is archived and verified. This supersedes the all-clear
+	// branch below (which would otherwise pass for assets left carrying a stale
+	// "complete" BackupStatus after their only destination was removed) and folds
+	// the backup-pending files in — with no destination, "backup pending" and
+	// "backed up" are indistinguishable. It applies only when there are no
+	// genuinely-not-archived files (New/Unverified); those keep the alarming
+	// wording below because adding a destination would not make them safe.
+	if r.New == 0 && r.Unverified == 0 && !hasBackupDestination {
+		r.Safe = false
+		r.NoBackupDestination = true
+		r.Reason = fmt.Sprintf(
+			"All %d files are archived and verified, but no backup destination is configured — the archive is the only copy. Add a backup destination before erasing sources.",
+			r.TotalMedia)
+		return
+	}
+
 	if r.New == 0 && r.Unverified == 0 && r.BackupIncomplete == 0 {
 		r.Safe = true
 		r.Reason = fmt.Sprintf(

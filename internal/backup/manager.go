@@ -32,6 +32,11 @@ const (
 	// queueChangeInterval throttles OnQueueChanged notifications so a burst of job
 	// transitions cannot flood the UI with refresh signals.
 	queueChangeInterval = 500 * time.Millisecond
+
+	// failingNotifyInterval throttles the per-provider OnProviderFailing edge
+	// notification so a flapping provider cannot spam the "backups are failing"
+	// toast more than once per hour.
+	failingNotifyInterval = time.Hour
 )
 
 // notifyQueueChanged invokes the OnQueueChanged callback (if configured) at most
@@ -117,6 +122,14 @@ type Options struct {
 	// yields. This global yield gate composes with the per-provider cooldown gate:
 	// cooldown excludes one provider, the yield gate pauses every provider.
 	ForegroundGate func() bool
+	// OnProviderFailing, when set, is invoked (on a detached goroutine) when a
+	// provider crosses the failing EDGE — a job of its permanently fails while the
+	// provider was not already in a failing state — and no such notification has
+	// fired for it within the last failingNotifyInterval. A subsequent completed
+	// job clears the failing state, so the next permanent failure is a fresh edge.
+	// It drives the single, low-frequency "backups to X are failing" toast; it must
+	// not block (a manager goroutine calls it via `go`).
+	OnProviderFailing func(providerID string)
 }
 
 func (o Options) withDefaults() Options {
@@ -181,6 +194,13 @@ type Manager struct {
 	// the yield/resume edge so the transition is logged and a queue-changed
 	// notification is emitted exactly once per edge (not every poll).
 	yielding bool
+	// providerFailing tracks which providers are currently in a failing state (a
+	// job of theirs permanently failed with no intervening completion), so
+	// OnProviderFailing fires only on the non-failing→failing EDGE. A completed job
+	// clears the entry. lastFailingNotify records the last edge-notification time
+	// per provider so the notification is throttled to failingNotifyInterval.
+	providerFailing   map[string]bool
+	lastFailingNotify map[string]time.Time
 
 	// uploadsMu guards uploads. It is separate from mu because per-job upload
 	// progress fires frequently and must not contend with the queue-change /
@@ -214,17 +234,19 @@ func NewManager(jobs JobQueue, assets AssetStore, providers ProviderStore, regis
 		logger = slog.Default()
 	}
 	return &Manager{
-		jobs:            jobs,
-		assets:          assets,
-		providers:       providers,
-		registry:        registry,
-		log:             logger,
-		opts:            opts.withDefaults(),
-		pluginCache:     make(map[string]Plugin),
-		backoff:         make(map[string]time.Time),
-		cooldowns:       make(map[string]time.Time),
-		cooldownReasons: make(map[string]string),
-		uploads:         make(map[string]*JobInfo),
+		jobs:              jobs,
+		assets:            assets,
+		providers:         providers,
+		registry:          registry,
+		log:               logger,
+		opts:              opts.withDefaults(),
+		pluginCache:       make(map[string]Plugin),
+		backoff:           make(map[string]time.Time),
+		cooldowns:         make(map[string]time.Time),
+		cooldownReasons:   make(map[string]string),
+		uploads:           make(map[string]*JobInfo),
+		providerFailing:   make(map[string]bool),
+		lastFailingNotify: make(map[string]time.Time),
 	}
 }
 
@@ -537,6 +559,7 @@ func (m *Manager) handle(ctx context.Context, job *domain.BackupJob) {
 		m.log.Warn("backup: job permanently failed",
 			"job", job.ID, "asset", job.AssetID, "retries", newRetries, "terminal", terminal, "error", msg)
 		m.recomputeAsset(recCtx, job.AssetID)
+		m.notePermanentFailure(job.Destination)
 		return
 	}
 	m.log.Warn("backup: job failed, scheduling retry",
@@ -648,9 +671,66 @@ func (m *Manager) process(ctx context.Context, job *domain.BackupJob) (terminal 
 		return false, fmt.Errorf("mark job %q completed: %w", job.ID, markErr)
 	}
 	m.recomputeAsset(recCtx, job.AssetID)
+	m.clearProviderFailing(job.Destination)
 	m.notifyQueueChanged()
 	m.log.Info("backup: job completed", "job", job.ID, "asset", job.AssetID, "plugin", plugin.Name(), "note", completedNote)
 	return false, nil
+}
+
+// notePermanentFailure records that a provider's job permanently failed and, on
+// the non-failing→failing EDGE (and no more than once per failingNotifyInterval),
+// fires OnProviderFailing. Repeated permanent failures with no intervening
+// completion do not re-fire (not an edge); a completed job (clearProviderFailing)
+// resets the state so a later failure is a fresh edge. This keeps the "backups to
+// X are failing" toast to a single, low-frequency signal per provider.
+func (m *Manager) notePermanentFailure(providerID string) {
+	if m.opts.OnProviderFailing == nil || providerID == "" {
+		return
+	}
+	m.mu.Lock()
+	wasFailing := m.providerFailing[providerID]
+	m.providerFailing[providerID] = true
+	last := m.lastFailingNotify[providerID]
+	now := m.opts.Now()
+	emit := !wasFailing && (last.IsZero() || now.Sub(last) >= failingNotifyInterval)
+	if emit {
+		m.lastFailingNotify[providerID] = now
+	}
+	m.mu.Unlock()
+	if emit {
+		go m.opts.OnProviderFailing(providerID)
+	}
+}
+
+// clearProviderFailing marks a provider healthy again after a completed job so
+// the next permanent failure is treated as a fresh failing edge.
+func (m *Manager) clearProviderFailing(providerID string) {
+	if providerID == "" {
+		return
+	}
+	m.mu.Lock()
+	delete(m.providerFailing, providerID)
+	m.mu.Unlock()
+}
+
+// RetryAllFailed requeues every failed job to pending in a single UPDATE and
+// clears all pending in-memory backoff timers (so the scheduler does not also
+// requeue them). It returns the number of jobs requeued and emits a queue-changed
+// notification when any moved. It composes with the per-provider cooldown and the
+// foreground yield gate naturally: those gate CLAIMING, not status, so requeued
+// jobs simply wait pending until claiming resumes.
+func (m *Manager) RetryAllFailed(ctx context.Context) (int, error) {
+	m.mu.Lock()
+	m.backoff = make(map[string]time.Time)
+	m.mu.Unlock()
+	n, err := m.jobs.RequeueAllFailed(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("backup: retry all failed: %w", err)
+	}
+	if n > 0 {
+		m.notifyQueueChanged()
+	}
+	return int(n), nil
 }
 
 // isCooldown reports whether err is (or wraps) an ErrProviderCooldown.

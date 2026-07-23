@@ -206,6 +206,25 @@ func (r *BackupRepo) Requeue(ctx context.Context, id string) error {
 	})
 }
 
+// RequeueAllFailed transitions every failed job back to pending in a single
+// UPDATE (clearing StartedAt/CompletedAt) and returns the number requeued. It is
+// the bulk form of Requeue used by "Retry all failed"; the status guard in the
+// WHERE clause keeps it a valid failed→pending transition for every row.
+func (r *BackupRepo) RequeueAllFailed(ctx context.Context) (int64, error) {
+	res := r.db.WithContext(ctx).
+		Model(&domain.BackupJob{}).
+		Where("status = ?", domain.JobStatusFailed).
+		Updates(map[string]any{
+			"status":       domain.JobStatusPending,
+			"started_at":   nil,
+			"completed_at": nil,
+		})
+	if res.Error != nil {
+		return 0, fmt.Errorf("repo: requeue all failed backup jobs: %w", res.Error)
+	}
+	return res.RowsAffected, nil
+}
+
 // Pause transitions a pending job to paused.
 func (r *BackupRepo) Pause(ctx context.Context, id string) error {
 	return r.transition(ctx, id, []domain.JobStatus{domain.JobStatusPending}, domain.JobStatusPaused, nil)

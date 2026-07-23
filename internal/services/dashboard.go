@@ -71,13 +71,18 @@ type BackupSummaryDTO struct {
 
 // DashboardStats is the full dashboard payload.
 type DashboardStats struct {
-	Totals             TotalsDTO        `json:"totals"`
-	PendingImports     int64            `json:"pendingImports"`
-	BackupQueue        BackupSummaryDTO `json:"backupQueue"`
-	DuplicateCount     int64            `json:"duplicateCount"`
-	RecentSources      []SourceDTO      `json:"recentSources"`
-	SafeToEraseSources []SourceDTO      `json:"safeToEraseSources"`
-	RecentActivity     []LogEntryDTO    `json:"recentActivity"`
+	Totals         TotalsDTO        `json:"totals"`
+	PendingImports int64            `json:"pendingImports"`
+	BackupQueue    BackupSummaryDTO `json:"backupQueue"`
+	// EnabledRequiredProviders is the number of enabled, non-mirror (required)
+	// backup destinations configured. Zero while assets exist means the archive is
+	// the only copy — the dashboard renders a prominent "no backup destination"
+	// warning. Mirrors are excluded: a mirror-only setup still has no custody copy.
+	EnabledRequiredProviders int64         `json:"enabledRequiredProviders"`
+	DuplicateCount           int64         `json:"duplicateCount"`
+	RecentSources            []SourceDTO   `json:"recentSources"`
+	SafeToEraseSources       []SourceDTO   `json:"safeToEraseSources"`
+	RecentActivity           []LogEntryDTO `json:"recentActivity"`
 }
 
 // GetStats computes the dashboard metrics.
@@ -118,6 +123,14 @@ func (s *DashboardService) GetStats(ctx context.Context) (DashboardStats, error)
 	// inflate the headline pending/failed numbers. Mirror jobs are counted
 	// separately as a soft indicator.
 	if out.BackupQueue, err = s.backupSummary(ctx); err != nil {
+		return DashboardStats{}, err
+	}
+
+	// Enabled required (non-mirror) backup destinations. Zero with assets present
+	// means the archive has only one copy — the dashboard warns prominently.
+	if err := s.db.WithContext(ctx).Model(&domain.BackupProvider{}).
+		Where("enabled = ? AND mirror = ?", true, false).
+		Count(&out.EnabledRequiredProviders).Error; err != nil {
 		return DashboardStats{}, err
 	}
 

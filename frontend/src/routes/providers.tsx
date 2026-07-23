@@ -175,6 +175,18 @@ function ProviderCard({
   const summary = configSummary(provider.configJson);
   const missing = provider.missingBackupCount ?? 0;
 
+  // Health: the destination is "failing" when its most recent outcome is a failure
+  // (a currently-failed job newer than any success). It stays functionally enabled;
+  // only the badge styling changes (amber, replacing the green Enabled dot).
+  const lastError = provider.lastError ?? null;
+  const lastSuccessAt = provider.lastSuccessAt ?? null;
+  const isFailing =
+    provider.enabled &&
+    !!lastError &&
+    (!lastSuccessAt || new Date(lastError.at).getTime() > new Date(lastSuccessAt).getTime());
+  // rclone surfaces expired credentials with a reconnect command; surface the hint.
+  const reconnectRemote = lastError ? /rclone config reconnect (\S+)/.exec(lastError.message)?.[1] : undefined;
+
   const save = async (patch: { enabled?: boolean; uploadOrder?: string }) => {
     setSaving(true);
     try {
@@ -202,12 +214,18 @@ function ProviderCard({
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
             <h3 className="text-sm font-semibold text-zinc-100">{provider.pluginName}</h3>
-            <StatusBadge
-              status={provider.enabled ? "enabled" : "disabled"}
-              tone={provider.enabled ? "success" : "muted"}
-              label={provider.enabled ? "Enabled" : "Disabled"}
-              dot
-            />
+            {provider.enabled && isFailing ? (
+              <span title={lastError?.message}>
+                <StatusBadge status="failing" tone="warn" label="Failing" dot />
+              </span>
+            ) : (
+              <StatusBadge
+                status={provider.enabled ? "enabled" : "disabled"}
+                tone={provider.enabled ? "success" : "muted"}
+                label={provider.enabled ? "Enabled" : "Disabled"}
+                dot
+              />
+            )}
             {provider.mirror ? (
               <span className="rounded-full bg-amber-500/15 px-2 py-0.5 text-[10px] font-semibold tracking-wide text-amber-300 uppercase ring-1 ring-amber-500/30 ring-inset">
                 Mirror
@@ -222,6 +240,19 @@ function ProviderCard({
             <p className="mt-1 text-[11px] text-amber-300/80">
               Quality-of-life mirror — excluded from safe-to-erase, cleanup, and the dashboard's headline backup counts.
             </p>
+          ) : null}
+
+          {provider.enabled && isFailing && lastError ? (
+            <div className="mt-1.5 rounded-md border border-amber-500/30 bg-amber-500/10 px-2 py-1.5">
+              <p className="text-[11px] text-amber-300" title={lastError.message}>
+                Failing — <span className="selectable break-words">{firstLine(lastError.message)}</span>
+              </p>
+              {reconnectRemote ? (
+                <p className="selectable mt-1 font-mono text-[10px] text-amber-200/90">
+                  Fix: rclone config reconnect {reconnectRemote}
+                </p>
+              ) : null}
+            </div>
           ) : null}
 
           <div className="mt-2 flex flex-wrap items-center gap-3">
@@ -760,6 +791,13 @@ function RclonePool({
 }
 
 /** Parse a provider's ConfigJSON defensively for display. */
+// firstLine returns the first line of an error message, trimmed and capped so the
+// failing-state summary stays compact (the full text is in the tooltip).
+function firstLine(msg: string): string {
+  const line = (msg ?? "").split("\n")[0].trim();
+  return line.length > 120 ? `${line.slice(0, 117)}…` : line;
+}
+
 function configSummary(configJson: string): string {
   if (!configJson) return "No configuration";
   try {

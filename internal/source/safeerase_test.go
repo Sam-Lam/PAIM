@@ -79,7 +79,7 @@ func TestEvaluateSafeToErase_AllArchivedSafe(t *testing.T) {
 	}}
 
 	id := newIdentifierForErase()
-	rep, err := id.EvaluateSafeToErase(context.Background(), "src-1", root, lookup, isMediaTest, nil)
+	rep, err := id.EvaluateSafeToErase(context.Background(), "src-1", root, true, lookup, isMediaTest, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -104,7 +104,7 @@ func TestEvaluateSafeToErase_NewFileUnsafe(t *testing.T) {
 	}}
 
 	id := newIdentifierForErase()
-	rep, err := id.EvaluateSafeToErase(context.Background(), "src-1", root, lookup, isMediaTest, nil)
+	rep, err := id.EvaluateSafeToErase(context.Background(), "src-1", root, true, lookup, isMediaTest, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -128,7 +128,7 @@ func TestEvaluateSafeToErase_UnverifiedUnsafe(t *testing.T) {
 	}}
 
 	id := newIdentifierForErase()
-	rep, err := id.EvaluateSafeToErase(context.Background(), "src-1", root, lookup, isMediaTest, nil)
+	rep, err := id.EvaluateSafeToErase(context.Background(), "src-1", root, true, lookup, isMediaTest, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -152,7 +152,7 @@ func TestEvaluateSafeToErase_BackupIncompleteUnsafe(t *testing.T) {
 	}}
 
 	id := newIdentifierForErase()
-	rep, err := id.EvaluateSafeToErase(context.Background(), "src-1", root, lookup, isMediaTest, nil)
+	rep, err := id.EvaluateSafeToErase(context.Background(), "src-1", root, true, lookup, isMediaTest, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -188,7 +188,7 @@ func TestEvaluateSafeToErase_QuickHashCollisionResolvedByFullHash(t *testing.T) 
 	}}
 
 	id := NewIdentifier(nil, nil, h, nil)
-	rep, err := id.EvaluateSafeToErase(context.Background(), "src-1", root, lookup, isMediaTest, nil)
+	rep, err := id.EvaluateSafeToErase(context.Background(), "src-1", root, true, lookup, isMediaTest, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -216,7 +216,7 @@ func TestEvaluateSafeToErase_BackupsOnlyReassuringWording(t *testing.T) {
 	}}
 
 	id := newIdentifierForErase()
-	rep, err := id.EvaluateSafeToErase(context.Background(), "src-1", root, lookup, isMediaTest, nil)
+	rep, err := id.EvaluateSafeToErase(context.Background(), "src-1", root, true, lookup, isMediaTest, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -248,7 +248,7 @@ func TestEvaluateSafeToErase_NewStillAlarming(t *testing.T) {
 	}}
 
 	id := newIdentifierForErase()
-	rep, err := id.EvaluateSafeToErase(context.Background(), "src-1", root, lookup, isMediaTest, nil)
+	rep, err := id.EvaluateSafeToErase(context.Background(), "src-1", root, true, lookup, isMediaTest, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -260,11 +260,130 @@ func TestEvaluateSafeToErase_NewStillAlarming(t *testing.T) {
 	}
 }
 
+// TestEvaluateSafeToErase_NoDestinationNeverSafe_HashPath covers the no-backup-
+// destination rule on the HASHING classification path. PRE-FIX BEHAVIOR (for the
+// record): EvaluateSafeToErase classified purely from each asset's stored
+// BackupComplete flag and never consulted provider configuration, so an asset
+// whose aggregate BackupStatus was "complete" (e.g. a destination existed, its
+// jobs completed, then it was disabled/removed) classified as Archived and the
+// verdict came back vacuously SAFE even though no backup destination existed.
+// Post-fix: with hasBackupDestination=false the verdict is never safe; it is the
+// distinct NoBackupDestination state.
+func TestEvaluateSafeToErase_NoDestinationNeverSafe_HashPath(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "a.jpg"), "one")
+	writeFile(t, filepath.Join(root, "b.cr3"), "two")
+
+	// Assets carry a stale "complete" (BackupComplete=true): pre-fix this made the
+	// volume vacuously safe. With no destination it must not.
+	lookup := fakeLookup{byQuick: map[string][]ArchivedAsset{
+		quickOf("one"): {{ID: "a", QuickHash: quickOf("one"), Verified: true, BackupComplete: true}},
+		quickOf("two"): {{ID: "b", QuickHash: quickOf("two"), Verified: true, BackupComplete: true}},
+	}}
+
+	id := newIdentifierForErase()
+	rep, err := id.EvaluateSafeToErase(context.Background(), "src-1", root, false, lookup, isMediaTest, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rep.Safe {
+		t.Error("Safe = true, want false (no backup destination configured)")
+	}
+	if !rep.NoBackupDestination {
+		t.Error("NoBackupDestination = false, want true")
+	}
+	want := "All 2 files are archived and verified, but no backup destination is configured — the archive is the only copy. Add a backup destination before erasing sources."
+	if rep.Reason != want {
+		t.Errorf("reason = %q, want %q", rep.Reason, want)
+	}
+	if contains(rep.Reason, "NOT recommended") || contains(rep.Reason, "safe to erase") {
+		t.Errorf("no-destination reason should be its own amber wording: %q", rep.Reason)
+	}
+}
+
+// TestEvaluateSafeToErase_NoDestinationNeverSafe_FastPath covers the same rule on
+// the catalog fast path (no hashing). It also folds the common fresh case where
+// assets are archived+verified but not backed up (BackupComplete=false).
+func TestEvaluateSafeToErase_NoDestinationNeverSafe_FastPath(t *testing.T) {
+	root := t.TempDir()
+	pa := filepath.Join(root, "a.jpg")
+	pb := filepath.Join(root, "b.cr3")
+	writeFile(t, pa, "one")
+	writeFile(t, pb, "two")
+	sa, ma := statOf(t, pa)
+	sb, mb := statOf(t, pb)
+
+	// Fast-path assets: archived + verified, backups NOT complete (the fresh
+	// zero/mirror-only import case) — pre-fix this reported "backups still pending";
+	// post-fix, with no destination, it is the NoBackupDestination state.
+	lookup := fakeLookup{byPath: map[string][]ArchivedAsset{
+		pa: {{ID: "a", OriginalFullPath: pa, FileSize: sa, ImportDate: ma.Add(time.Hour), HasArchiveCopy: true, Verified: true, BackupComplete: false}},
+		pb: {{ID: "b", OriginalFullPath: pb, FileSize: sb, ImportDate: mb.Add(time.Hour), HasArchiveCopy: true, Verified: true, BackupComplete: false}},
+	}}
+
+	h := &countingHasher{}
+	id := NewIdentifier(nil, nil, h, nil)
+	rep, err := id.EvaluateSafeToErase(context.Background(), "src-1", root, false, lookup, isMediaTest, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if h.quick != 0 || h.full != 0 {
+		t.Errorf("fast path hashed: quick=%d full=%d, want 0/0", h.quick, h.full)
+	}
+	if rep.Safe || !rep.NoBackupDestination {
+		t.Errorf("Safe=%v NoBackupDestination=%v, want false/true", rep.Safe, rep.NoBackupDestination)
+	}
+}
+
+// TestEvaluateSafeToErase_NoDestinationWithNewStaysAlarming confirms that when
+// there ARE genuinely-not-archived files, the no-destination downgrade does not
+// apply: the alarming NOT-recommended wording is kept (a destination would not
+// make those files safe) and NoBackupDestination is not set.
+func TestEvaluateSafeToErase_NoDestinationWithNewStaysAlarming(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "a.jpg"), "one")
+	writeFile(t, filepath.Join(root, "new.jpg"), "brand-new")
+
+	lookup := fakeLookup{byQuick: map[string][]ArchivedAsset{
+		quickOf("one"): {{ID: "a", Verified: true, BackupComplete: false}},
+	}}
+
+	id := newIdentifierForErase()
+	rep, err := id.EvaluateSafeToErase(context.Background(), "src-1", root, false, lookup, isMediaTest, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rep.Safe {
+		t.Error("Safe = true, want false")
+	}
+	if rep.NoBackupDestination {
+		t.Error("NoBackupDestination = true, want false (New files present)")
+	}
+	if !contains(rep.Reason, "NOT recommended") || !contains(rep.Reason, "not yet imported") {
+		t.Errorf("reason should stay alarming when New files exist: %q", rep.Reason)
+	}
+}
+
+// TestEvaluateSafeToErase_NoDestinationEmptyVolumeSafe confirms an empty volume
+// (no media) is still safe even with no destination — there is nothing to lose.
+func TestEvaluateSafeToErase_NoDestinationEmptyVolumeSafe(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "readme.txt"), "no media")
+	id := newIdentifierForErase()
+	rep, err := id.EvaluateSafeToErase(context.Background(), "src-1", root, false, fakeLookup{}, isMediaTest, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !rep.Safe || rep.NoBackupDestination {
+		t.Errorf("Safe=%v NoBackupDestination=%v, want true/false for empty volume", rep.Safe, rep.NoBackupDestination)
+	}
+}
+
 func TestEvaluateSafeToErase_EmptyVolumeSafe(t *testing.T) {
 	root := t.TempDir()
 	writeFile(t, filepath.Join(root, "readme.txt"), "no media here")
 	id := newIdentifierForErase()
-	rep, err := id.EvaluateSafeToErase(context.Background(), "src-1", root, fakeLookup{}, isMediaTest, nil)
+	rep, err := id.EvaluateSafeToErase(context.Background(), "src-1", root, true, fakeLookup{}, isMediaTest, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -306,7 +425,7 @@ func TestEvaluateSafeToErase_FastPathNoHashing(t *testing.T) {
 
 	h := &countingHasher{}
 	id := NewIdentifier(nil, nil, h, nil)
-	rep, err := id.EvaluateSafeToErase(context.Background(), "src-1", root, lookup, isMediaTest, nil)
+	rep, err := id.EvaluateSafeToErase(context.Background(), "src-1", root, true, lookup, isMediaTest, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -355,7 +474,7 @@ func TestEvaluateSafeToErase_ModifiedFileFallsBackToHash(t *testing.T) {
 
 	h := &countingHasher{}
 	id := NewIdentifier(nil, nil, h, nil)
-	rep, err := id.EvaluateSafeToErase(context.Background(), "src-1", root, lookup, isMediaTest, nil)
+	rep, err := id.EvaluateSafeToErase(context.Background(), "src-1", root, true, lookup, isMediaTest, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -390,7 +509,7 @@ func TestEvaluateSafeToErase_SizeMismatchFallsBackToHash(t *testing.T) {
 
 	h := &countingHasher{}
 	id := NewIdentifier(nil, nil, h, nil)
-	rep, err := id.EvaluateSafeToErase(context.Background(), "src-1", root, lookup, isMediaTest, nil)
+	rep, err := id.EvaluateSafeToErase(context.Background(), "src-1", root, true, lookup, isMediaTest, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -423,7 +542,7 @@ func TestEvaluateSafeToErase_FastPathCollectsOnlySafe(t *testing.T) {
 
 	h := &countingHasher{}
 	id := NewIdentifier(nil, nil, h, nil)
-	rep, err := id.EvaluateSafeToErase(context.Background(), "src-1", root, lookup, isMediaTest, nil)
+	rep, err := id.EvaluateSafeToErase(context.Background(), "src-1", root, true, lookup, isMediaTest, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -400,9 +400,23 @@ function SafeToErasePanel({ report, root }: { report: SafeToEraseDTO; root: stri
     <div className="mt-3 rounded-lg border border-zinc-800 bg-zinc-950/40 p-3">
       <div className="mb-2 flex items-center justify-between">
         <h4 className="text-xs font-semibold text-zinc-300">Safe to Erase</h4>
-        <SafeToEraseBadge safe={report.safe} />
+        <SafeToEraseBadge safe={report.safe} noBackupDestination={report.noBackupDestination} />
       </div>
-      <p className="text-[12px] leading-relaxed text-zinc-400">{report.reason}</p>
+      <p
+        className={`text-[12px] leading-relaxed ${
+          report.noBackupDestination ? "text-amber-400/90" : "text-zinc-400"
+        }`}
+      >
+        {report.reason}
+      </p>
+      {report.noBackupDestination ? (
+        <Link
+          to="/providers"
+          className="mt-1 inline-block text-[11px] font-semibold text-amber-300 hover:text-amber-200"
+        >
+          Add a backup destination →
+        </Link>
+      ) : null}
       <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-5">
         <MiniStat label="Total media" value={report.totalMedia} />
         <MiniStat label="Fully protected" value={report.archived} tone="success" />
@@ -417,7 +431,7 @@ function SafeToErasePanel({ report, root }: { report: SafeToEraseDTO; root: stri
           {formatNumber(report.fastPath)} verified from the catalog without re-reading · {formatNumber(report.hashed)} re-hashed
         </p>
       ) : null}
-      {report.backupIncomplete > 0 && report.new === 0 && report.unverified === 0 ? (
+      {report.backupIncomplete > 0 && report.new === 0 && report.unverified === 0 && !report.noBackupDestination ? (
         <p className="mt-2 text-[11px] text-zinc-500">
           Backups run in the background — track them in the{" "}
           <Link to="/backup-queue" className="text-blue-400 hover:text-blue-300">

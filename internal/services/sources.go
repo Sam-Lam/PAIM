@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -14,6 +16,7 @@ import (
 	"github.com/Sam-Lam/PAIM/internal/repo"
 	"github.com/Sam-Lam/PAIM/internal/source"
 	"github.com/Sam-Lam/PAIM/internal/volumes"
+	"gorm.io/gorm"
 )
 
 // ErrSafeToEraseInProgress is returned by StartSafeToErase when an evaluation is
@@ -114,7 +117,11 @@ type SourcesService struct {
 	watcher    *volumes.Watcher
 	emitter    Emitter
 	log        *slog.Logger
-	// root is the open library root, used to refuse clearing the archive itself.
+	// db is the open catalog, used to count enabled required (non-mirror) backup
+	// providers for the safe-to-erase no-destination rule.
+	db *gorm.DB
+	// root is the open library root, used to refuse clearing the archive itself
+	// and to detect the library's own volume when enriching mount events.
 	root string
 
 	mu             sync.Mutex
@@ -134,7 +141,27 @@ func (s *SourcesService) Bind(core *AppCore) {
 	s.identifier = core.Identifier
 	s.sources = core.Sources
 	s.assets = core.Assets
+	s.db = core.DB
 	s.root = core.Root
+}
+
+// hasBackupDestination reports whether at least one enabled required (non-mirror)
+// backup provider is configured. It gates the safe-to-erase no-destination rule:
+// with none configured the archive is the only copy, so a source can never be
+// safe to erase. On any error it returns false — the conservative direction (an
+// unknown provider state must never vacuously permit erasing).
+func (s *SourcesService) hasBackupDestination(ctx context.Context) bool {
+	if s.db == nil {
+		return false
+	}
+	var n int64
+	if err := s.db.WithContext(ctx).Model(&domain.BackupProvider{}).
+		Where("enabled = ? AND mirror = ?", true, false).
+		Count(&n).Error; err != nil {
+		s.log.Warn("count enabled required providers for safe-to-erase", "error", err.Error())
+		return false
+	}
+	return n > 0
 }
 
 // NewSourcesService constructs a SourcesService.
@@ -290,10 +317,15 @@ func (s *SourcesService) ListKnownSources(ctx context.Context) ([]SourceDTO, err
 // report how many media files were classified from the catalog without hashing
 // vs by (re)hashing, so the UI can show how cheap a just-imported evaluation was.
 type SafeToEraseDTO struct {
-	SourceID         string `json:"sourceId"`
-	Safe             bool   `json:"safe"`
-	Reason           string `json:"reason"`
-	TotalMedia       int    `json:"totalMedia"`
+	SourceID string `json:"sourceId"`
+	Safe     bool   `json:"safe"`
+	Reason   string `json:"reason"`
+	// NoBackupDestination is true when the not-safe verdict is solely because no
+	// backup destination is configured (every file is archived and verified but
+	// the archive is the only copy). The UI renders this amber, distinct from the
+	// red not-archived cases.
+	NoBackupDestination bool `json:"noBackupDestination"`
+	TotalMedia          int  `json:"totalMedia"`
 	Archived         int    `json:"archived"`
 	New              int    `json:"new"`
 	Unverified       int    `json:"unverified"`
@@ -384,7 +416,8 @@ func (s *SourcesService) runSafeToErase(ctx context.Context, sourceID, mountPoin
 		}
 	}
 
-	report, err := s.identifier.EvaluateSafeToErase(ctx, sourceID, mountPoint, assetLookupAdapter{assets: s.assets}, mediatype.IsMedia, progressFn)
+	hasDest := s.hasBackupDestination(ctx)
+	report, err := s.identifier.EvaluateSafeToErase(ctx, sourceID, mountPoint, hasDest, assetLookupAdapter{assets: s.assets}, mediatype.IsMedia, progressFn)
 	if err != nil {
 		s.finishSafeToErase(mountPoint, sourceID, nil, nil, err)
 		return
@@ -398,10 +431,11 @@ func (s *SourcesService) runSafeToErase(ctx context.Context, sourceID, mountPoin
 		"mountPoint", mountPoint, "safe", report.Safe,
 		"totalMedia", report.TotalMedia, "fastPath", report.FastPath, "hashed", report.Hashed)
 	dto := SafeToEraseDTO{
-		SourceID:         report.SourceID,
-		Safe:             report.Safe,
-		Reason:           report.Reason,
-		TotalMedia:       report.TotalMedia,
+		SourceID:            report.SourceID,
+		Safe:                report.Safe,
+		Reason:              report.Reason,
+		NoBackupDestination: report.NoBackupDestination,
+		TotalMedia:          report.TotalMedia,
 		Archived:         report.Archived,
 		New:              report.New,
 		Unverified:       report.Unverified,
@@ -552,7 +586,7 @@ func (s *SourcesService) StartWatching(ctx context.Context) error {
 			switch ev.Type {
 			case volumes.EventMounted:
 				s.log.Info("volume mounted", "mountPoint", ev.MountPoint)
-				emitSafe(s.emitter, EventVolumeMounted, VolumeEvent{MountPoint: ev.MountPoint})
+				emitSafe(s.emitter, EventVolumeMounted, s.mountedEvent(ctx, ev.MountPoint))
 			case volumes.EventUnmounted:
 				s.log.Info("volume unmounted", "mountPoint", ev.MountPoint)
 				emitSafe(s.emitter, EventVolumeUnmounted, VolumeEvent{MountPoint: ev.MountPoint})
@@ -560,4 +594,53 @@ func (s *SourcesService) StartWatching(ctx context.Context) error {
 		}
 	}()
 	return nil
+}
+
+// mountedEvent builds the enriched volume:mounted payload: a lightweight diskutil
+// describe supplies the display name and removable/ejectable flags, and the open
+// library root tells us whether this is the library's own volume. Describe is
+// best-effort — a failure yields a bare payload (MountPoint only), so the toast
+// simply does not fire rather than erroring.
+func (s *SourcesService) mountedEvent(ctx context.Context, mountPoint string) VolumeEvent {
+	var info *volumes.Info
+	if s.collector != nil {
+		if got, err := s.collector.Describe(ctx, mountPoint); err == nil {
+			info = got
+		} else {
+			s.log.Warn("describe mounted volume", "mountPoint", mountPoint, "error", err.Error())
+		}
+	}
+	return enrichMountedEvent(mountPoint, info, s.root)
+}
+
+// enrichMountedEvent maps a described volume plus the library root into a
+// volume:mounted payload. It is a pure function so the mapping (removable/
+// ejectable flags, display name, library-volume detection) is unit-testable
+// without diskutil. A nil info yields a bare payload.
+func enrichMountedEvent(mountPoint string, info *volumes.Info, libraryRoot string) VolumeEvent {
+	ev := VolumeEvent{
+		MountPoint:      mountPoint,
+		IsLibraryVolume: volumeContainsPath(mountPoint, libraryRoot),
+	}
+	if info != nil {
+		ev.VolumeName = info.VolumeName
+		ev.Removable = info.Removable
+		ev.Ejectable = info.Ejectable
+	}
+	return ev
+}
+
+// volumeContainsPath reports whether target lives on the volume mounted at
+// mountPoint (target equals the mount or is a descendant of it). Used to detect
+// the library's own volume so a mount toast never offers to import from it.
+func volumeContainsPath(mountPoint, target string) bool {
+	if mountPoint == "" || target == "" {
+		return false
+	}
+	mp := filepath.Clean(mountPoint)
+	t := filepath.Clean(target)
+	if mp == t {
+		return true
+	}
+	return strings.HasPrefix(t, mp+string(filepath.Separator))
 }

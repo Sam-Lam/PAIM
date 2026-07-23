@@ -2,6 +2,7 @@ package services
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"sync"
@@ -232,6 +233,25 @@ func (s *BackupService) Retry(ctx context.Context, jobID string) error {
 	return s.mutate(ctx, s.manager.Retry(ctx, jobID))
 }
 
+// RetryAllFailed requeues every failed backup job to pending in one transition
+// and returns the number requeued. It emits backup:queue-changed on success. It
+// composes with provider cooldowns and the foreground yield gate naturally (those
+// gate claiming, not status): requeued jobs wait pending until claiming resumes.
+func (s *BackupService) RetryAllFailed(ctx context.Context) (int, error) {
+	if err := s.guard(); err != nil {
+		return 0, err
+	}
+	n, err := s.manager.RetryAllFailed(ctx)
+	if err != nil {
+		return 0, err
+	}
+	if summary, sErr := s.queueSummary(ctx); sErr == nil {
+		emitSafe(s.emitter, EventBackupQueueChanged, BackupQueueChanged{Summary: summary})
+	}
+	s.log.Info("retried all failed backup jobs", "count", n)
+	return n, nil
+}
+
 // Pause pauses a pending job.
 func (s *BackupService) Pause(ctx context.Context, jobID string) error {
 	if err := s.guard(); err != nil {
@@ -379,4 +399,51 @@ func NewBackupProgressEmitter(emitter Emitter) func(jobID string, bytesDone, byt
 			emitSafe(emitter, EventBackupProgress, BackupProgress{JobID: jobID, BytesDone: bytesDone, BytesTotal: bytesTotal})
 		}
 	}
+}
+
+// NewProviderFailingEmitter returns a backup.Options.OnProviderFailing callback
+// that emits a backup:provider-failing event when the Manager reports a provider
+// crossing the failing edge. The Manager already throttles the edge (at most once
+// per provider per failingNotifyInterval) and calls this on a detached goroutine,
+// so it may do a bounded catalog read to resolve a human label for the toast.
+// main.go/appcore wires it after the catalog is open.
+func NewProviderFailingEmitter(emitter Emitter, db *gorm.DB) func(providerID string) {
+	return func(providerID string) {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		emitSafe(emitter, EventBackupProviderFailing, BackupProviderFailing{
+			ProviderID:   providerID,
+			ProviderName: providerDisplayName(ctx, db, providerID),
+		})
+	}
+}
+
+// providerDisplayName resolves a short human label for a provider (for the
+// failing toast): the rclone remote or localfs root from its config when present,
+// else the plugin name, else the raw ID. Best-effort — any failure degrades to
+// the next fallback.
+func providerDisplayName(ctx context.Context, db *gorm.DB, providerID string) string {
+	if db == nil {
+		return providerID
+	}
+	var p domain.BackupProvider
+	if err := db.WithContext(ctx).First(&p, "id = ?", providerID).Error; err != nil {
+		return providerID
+	}
+	var cfg struct {
+		Remote string `json:"remote"`
+		Root   string `json:"root"`
+	}
+	if json.Unmarshal([]byte(p.ConfigJSON), &cfg) == nil {
+		if cfg.Remote != "" {
+			return cfg.Remote
+		}
+		if cfg.Root != "" {
+			return cfg.Root
+		}
+	}
+	if p.PluginName != "" {
+		return p.PluginName
+	}
+	return providerID
 }

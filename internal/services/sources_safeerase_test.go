@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/Sam-Lam/PAIM/internal/db"
+	"github.com/Sam-Lam/PAIM/internal/domain"
 	"github.com/Sam-Lam/PAIM/internal/mediatype"
 	"github.com/Sam-Lam/PAIM/internal/repo"
 	"github.com/Sam-Lam/PAIM/internal/source"
@@ -25,7 +26,15 @@ func newSourcesService(t *testing.T) (*SourcesService, *captureEmitter) {
 	identifier := source.NewIdentifier(nil, sources, Hasher{}, mediatype.IsMedia)
 	emitter := &captureEmitter{}
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
-	return NewSourcesService(nil, identifier, sources, assets, nil, emitter, logger), emitter
+	svc := NewSourcesService(nil, identifier, sources, assets, nil, emitter, logger)
+	// Bind the catalog and seed one enabled required (non-mirror) provider so the
+	// happy-path (backups complete) scenarios have a real backup destination — the
+	// no-destination safe-to-erase rule refuses green when none exists.
+	svc.db = gdb
+	if err := gdb.Create(&domain.BackupProvider{PluginName: "localfs", ConfigJSON: "{}", Enabled: true}).Error; err != nil {
+		t.Fatalf("seed provider: %v", err)
+	}
+	return svc, emitter
 }
 
 func waitSafeErase(t *testing.T, svc *SourcesService, state string) ActiveSafeToEraseDTO {
@@ -118,6 +127,64 @@ func TestSafeToEraseLifecycle(t *testing.T) {
 	again := waitSafeErase(t, svc, "completed")
 	if again.Report == nil || again.Report.TotalMedia != 3 {
 		t.Fatal("completed report not retained for re-attach")
+	}
+}
+
+// TestSafeToErase_NoDestinationFlowsThroughDTO verifies the service wires the
+// no-backup-destination rule end to end: with an archived+verified asset but zero
+// enabled required providers, the report is not-safe and carries
+// NoBackupDestination so the frontend can render the distinct amber state.
+func TestSafeToErase_NoDestinationFlowsThroughDTO(t *testing.T) {
+	svc, _ := newSourcesService(t)
+	// Bind the same catalog the service's repos use so hasBackupDestination can read
+	// it (newSourcesService leaves db unset).
+	gdb, err := db.Open(filepath.Join(t.TempDir(), "nodest.db"))
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	assets := repo.NewAssetRepo(gdb)
+	sources := repo.NewSourceRepo(gdb)
+	svc.assets = assets
+	svc.sources = sources
+	svc.identifier = source.NewIdentifier(nil, sources, Hasher{}, mediatype.IsMedia)
+	svc.db = gdb // no providers configured -> no backup destination
+
+	root := t.TempDir()
+	content := []byte("archived-and-verified")
+	p := filepath.Join(root, "a.jpg")
+	if err := os.WriteFile(p, content, 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	quick, err := Hasher{}.QuickHash(p)
+	if err != nil {
+		t.Fatalf("quick hash: %v", err)
+	}
+	// Register the file as a verified, archived asset (backup complete but no
+	// provider exists — the stale-"complete" vacuous-green case).
+	if err := assets.Create(context.Background(), &domain.Asset{
+		OriginalFilename:   "a.jpg",
+		OriginalFullPath:   p,
+		QuickHash:          quick,
+		CurrentArchivePath: "2026/2026-07-23/a.jpg",
+		VerificationStatus: domain.VerificationStatusVerified,
+		BackupStatus:       domain.BackupStatusComplete,
+		ImportDate:         time.Now(),
+	}); err != nil {
+		t.Fatalf("create asset: %v", err)
+	}
+
+	if _, err := svc.StartSafeToErase(context.Background(), "", root); err != nil {
+		t.Fatalf("StartSafeToErase: %v", err)
+	}
+	done := waitSafeErase(t, svc, "completed")
+	if done.Report == nil {
+		t.Fatal("no report")
+	}
+	if done.Report.Safe {
+		t.Fatal("Safe = true, want false (no backup destination)")
+	}
+	if !done.Report.NoBackupDestination {
+		t.Fatal("NoBackupDestination = false, want true")
 	}
 }
 

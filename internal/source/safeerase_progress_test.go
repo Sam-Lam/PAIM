@@ -29,7 +29,7 @@ func TestEvaluateSafeToErase_Progress(t *testing.T) {
 		done, total int
 	}
 	var samples []sample
-	rep, err := id.EvaluateSafeToErase(context.Background(), "src-1", root, lookup, isMediaTest, func(done, total int, _ string) {
+	rep, err := id.EvaluateSafeToErase(context.Background(), "src-1", root, true, lookup, isMediaTest, func(done, total int, _ string) {
 		samples = append(samples, sample{done, total})
 	})
 	if err != nil {
@@ -67,7 +67,7 @@ func TestEvaluateSafeToErase_Cancel(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	// Cancel from within the first progress callback so the hashing loop observes
 	// the cancellation between files.
-	_, err := id.EvaluateSafeToErase(ctx, "src-1", root, lookup, isMediaTest, func(done, total int, _ string) {
+	_, err := id.EvaluateSafeToErase(ctx, "src-1", root, true, lookup, isMediaTest, func(done, total int, _ string) {
 		cancel()
 	})
 	if err == nil {

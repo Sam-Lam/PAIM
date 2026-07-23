@@ -11,19 +11,26 @@ import { errorMessage } from "./hooks";
 
 export type ToastKind = "success" | "error" | "warn" | "info";
 
+/** An optional inline action button shown on a toast (e.g. a deep-link). */
+export interface ToastAction {
+  label: string;
+  onClick: () => void;
+}
+
 export interface Toast {
   id: number;
   kind: ToastKind;
   title: string;
   message?: string;
+  action?: ToastAction;
 }
 
 interface ToastApi {
-  push: (kind: ToastKind, title: string, message?: string) => void;
-  success: (title: string, message?: string) => void;
-  error: (title: string, message?: string) => void;
-  warn: (title: string, message?: string) => void;
-  info: (title: string, message?: string) => void;
+  push: (kind: ToastKind, title: string, message?: string, action?: ToastAction) => void;
+  success: (title: string, message?: string, action?: ToastAction) => void;
+  error: (title: string, message?: string, action?: ToastAction) => void;
+  warn: (title: string, message?: string, action?: ToastAction) => void;
+  info: (title: string, message?: string, action?: ToastAction) => void;
   /** Turn a caught value into an error toast. Returns the message for logging. */
   fromError: (err: unknown, title?: string) => string;
   dismiss: (id: number) => void;
@@ -48,10 +55,11 @@ export function ToastProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const push = useCallback(
-    (kind: ToastKind, title: string, message?: string) => {
+    (kind: ToastKind, title: string, message?: string, action?: ToastAction) => {
       const id = seq++;
-      setToasts((t) => [...t, { id, kind, title, message }]);
-      const ttl = kind === "error" ? 8000 : 4500;
+      setToasts((t) => [...t, { id, kind, title, message, action }]);
+      // An actionable toast lingers a little longer so the user can reach the button.
+      const ttl = kind === "error" ? 8000 : action ? 9000 : 4500;
       setTimeout(() => dismiss(id), ttl);
     },
     [dismiss],
@@ -60,10 +68,10 @@ export function ToastProvider({ children }: { children: ReactNode }) {
   const api = useMemo<ToastApi>(
     () => ({
       push,
-      success: (title, message) => push("success", title, message),
-      error: (title, message) => push("error", title, message),
-      warn: (title, message) => push("warn", title, message),
-      info: (title, message) => push("info", title, message),
+      success: (title, message, action) => push("success", title, message, action),
+      error: (title, message, action) => push("error", title, message, action),
+      warn: (title, message, action) => push("warn", title, message, action),
+      info: (title, message, action) => push("info", title, message, action),
       fromError: (err, title = "Something went wrong") => {
         const msg = errorMessage(err);
         push("error", title, msg);
@@ -92,6 +100,17 @@ export function ToastProvider({ children }: { children: ReactNode }) {
                   <p className="text-[13px] font-medium text-zinc-100">{t.title}</p>
                   {t.message ? (
                     <p className="selectable mt-0.5 break-words text-xs text-zinc-400">{t.message}</p>
+                  ) : null}
+                  {t.action ? (
+                    <button
+                      onClick={() => {
+                        t.action?.onClick();
+                        dismiss(t.id);
+                      }}
+                      className={`mt-1.5 text-xs font-semibold ${meta.iconColor} hover:underline`}
+                    >
+                      {t.action.label}
+                    </button>
                   ) : null}
                 </div>
                 <button

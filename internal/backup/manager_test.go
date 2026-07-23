@@ -321,6 +321,53 @@ func m0Pause(ctx context.Context, h *testHarness, jobID string) error {
 	return m.Pause(ctx, jobID)
 }
 
+// TestManager_RetryAllFailed verifies the bulk retry transitions every failed job
+// to pending in one call, returns the count, and leaves non-failed jobs untouched.
+func TestManager_RetryAllFailed(t *testing.T) {
+	h := newHarness(t)
+	prov := h.addProvider(t, "localfs")
+	ctx := context.Background()
+
+	// Three failed jobs and one paused job (paused must NOT be requeued).
+	var failedIDs []string
+	for i := 0; i < 3; i++ {
+		a := h.addAsset(t)
+		j, _, err := h.jobs.Enqueue(ctx, a.ID, prov.PluginName, prov.ID, 0)
+		if err != nil {
+			t.Fatalf("enqueue: %v", err)
+		}
+		if err := h.jobs.MarkFailed(ctx, j.ID, "boom"); err != nil {
+			t.Fatalf("mark failed: %v", err)
+		}
+		failedIDs = append(failedIDs, j.ID)
+	}
+	pausedAsset := h.addAsset(t)
+	pausedJob, _, err := h.jobs.Enqueue(ctx, pausedAsset.ID, prov.PluginName, prov.ID, 0)
+	if err != nil {
+		t.Fatalf("enqueue paused: %v", err)
+	}
+	if err := h.jobs.Pause(ctx, pausedJob.ID); err != nil {
+		t.Fatalf("pause: %v", err)
+	}
+
+	m := backup.NewManager(h.jobs, h.assets, h.providers, h.registry, nil, fastOptions())
+	n, err := m.RetryAllFailed(ctx)
+	if err != nil {
+		t.Fatalf("RetryAllFailed: %v", err)
+	}
+	if n != 3 {
+		t.Fatalf("RetryAllFailed count = %d, want 3", n)
+	}
+	for _, id := range failedIDs {
+		if got := h.jobByID(t, id).Status; got != domain.JobStatusPending {
+			t.Fatalf("failed job %s status = %q, want pending", id, got)
+		}
+	}
+	if got := h.jobByID(t, pausedJob.ID).Status; got != domain.JobStatusPaused {
+		t.Fatalf("paused job status = %q, want paused (untouched)", got)
+	}
+}
+
 func TestManager_CancelPreventsClaiming(t *testing.T) {
 	h := newHarness(t)
 	fake := okPlugin("localfs")

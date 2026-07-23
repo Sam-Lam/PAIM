@@ -54,6 +54,8 @@ export function BackupQueuePage() {
   const [cancelJob, setCancelJob] = useState<BackupJobDTO | null>(null);
   const [cancelling, setCancelling] = useState(false);
   const [busyAll, setBusyAll] = useState(false);
+  const [retryAllOpen, setRetryAllOpen] = useState(false);
+  const [retryingAll, setRetryingAll] = useState(false);
   // Whether any enabled destination exists — drives the empty-state hint that
   // points at the Providers page's "Queue missing backups" when a destination was
   // added after importing.
@@ -127,6 +129,20 @@ export function BackupQueuePage() {
       toast.fromError(e, "Could not cancel job");
     } finally {
       setCancelling(false);
+    }
+  };
+
+  const confirmRetryAll = async () => {
+    setRetryingAll(true);
+    try {
+      const n = await BackupService.RetryAllFailed();
+      toast.success(`Requeued ${formatNumber(n)} failed job${n === 1 ? "" : "s"}`);
+      setRetryAllOpen(false);
+      refreshAll(true);
+    } catch (e) {
+      toast.fromError(e, "Could not retry failed jobs");
+    } finally {
+      setRetryingAll(false);
     }
   };
 
@@ -287,6 +303,16 @@ export function BackupQueuePage() {
         description="The SQLite-persisted backup queue. Jobs run automatically after import; pause, resume, retry, or cancel them here."
         actions={
           <>
+            {filter === "failed" && (s?.failed ?? 0) > 0 ? (
+              <Button
+                icon={ArrowPathIcon}
+                variant="secondary"
+                onClick={() => setRetryAllOpen(true)}
+                loading={retryingAll}
+              >
+                Retry all {formatNumber(s?.failed ?? 0)}
+              </Button>
+            ) : null}
             <Button icon={PauseIcon} variant="secondary" onClick={pauseAll} loading={busyAll}>
               Pause all
             </Button>
@@ -382,6 +408,17 @@ export function BackupQueuePage() {
         loading={cancelling}
         onConfirm={() => void confirmCancel()}
         onCancel={() => (cancelling ? undefined : setCancelJob(null))}
+      />
+
+      <ConfirmDialog
+        open={retryAllOpen}
+        title={`Retry all ${formatNumber(s?.failed ?? 0)} failed jobs?`}
+        description="Every failed backup job returns to pending and uploads again in the background. Jobs already paused or cancelled are untouched."
+        confirmLabel="Retry all"
+        cancelLabel="Not now"
+        loading={retryingAll}
+        onConfirm={() => void confirmRetryAll()}
+        onCancel={() => (retryingAll ? undefined : setRetryAllOpen(false))}
       />
     </div>
   );

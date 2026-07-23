@@ -51,6 +51,7 @@ func init() {
 	application.RegisterEvent[services.BackupQueueChanged](services.EventBackupQueueChanged)
 	application.RegisterEvent[services.BackupBackfillProgress](services.EventBackupBackfillProgress)
 	application.RegisterEvent[services.BackupBackfillCompleted](services.EventBackupBackfillCompleted)
+	application.RegisterEvent[services.BackupProviderFailing](services.EventBackupProviderFailing)
 	application.RegisterEvent[services.VolumeEvent](services.EventVolumeMounted)
 	application.RegisterEvent[services.VolumeEvent](services.EventVolumeUnmounted)
 	application.RegisterEvent[services.SourceIdentified](services.EventSourceIdentified)

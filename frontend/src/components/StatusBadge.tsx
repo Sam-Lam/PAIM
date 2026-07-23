@@ -81,11 +81,21 @@ export function StatusBadge({ status, tone, label, dot = false, className = "" }
   );
 }
 
-/** Boolean safe-to-erase badge with the two canonical tones. */
-export function SafeToEraseBadge({ safe }: { safe: boolean }) {
-  return safe ? (
-    <StatusBadge status="safe" tone="success" label="Safe to erase" dot />
-  ) : (
-    <StatusBadge status="not-safe" tone="danger" label="Not safe to erase" dot />
-  );
+/**
+ * Boolean safe-to-erase badge. Three states: green "Safe to erase", amber "No
+ * backup destination" (archived + verified but the archive is the only copy — a
+ * distinct, non-alarming state), and red "Not safe to erase" for genuinely
+ * unprotected files.
+ */
+export function SafeToEraseBadge({
+  safe,
+  noBackupDestination = false,
+}: {
+  safe: boolean;
+  noBackupDestination?: boolean;
+}) {
+  if (safe) return <StatusBadge status="safe" tone="success" label="Safe to erase" dot />;
+  if (noBackupDestination)
+    return <StatusBadge status="no-backup" tone="warn" label="No backup destination" dot />;
+  return <StatusBadge status="not-safe" tone="danger" label="Not safe to erase" dot />;
 }

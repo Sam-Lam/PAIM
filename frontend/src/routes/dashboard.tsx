@@ -33,8 +33,13 @@ import { useAsyncData, usePoll, useWailsEvent } from "../lib/hooks";
 import { useToast } from "../lib/toast";
 import { formatBytes, formatNumber, formatRelative } from "../lib/format";
 
+// interruptedImportToastShown latches the once-per-app-run "resume interrupted
+// import" nudge. Module-scoped so returning to the Dashboard does not re-toast.
+let interruptedImportToastShown = false;
+
 export function DashboardPage() {
   const toast = useToast();
+  const navigate = useNavigate();
   const { data: stats, loading, error, run } = useAsyncData(() => DashboardService.GetStats());
 
   // Poll every 30s (also fires the initial load), and refresh on relevant events.
@@ -43,6 +48,20 @@ export function DashboardPage() {
   }, 30_000);
   useWailsEvent(WailsEvents.ImportCompleted, () => void run({ silent: true }));
   useWailsEvent(WailsEvents.BackupQueueChanged, () => void run({ silent: true }));
+
+  // One-time-per-app-run nudge that an interrupted import can be resumed.
+  useEffect(() => {
+    if (!stats || interruptedImportToastShown) return;
+    if (stats.pendingImports > 0) {
+      interruptedImportToastShown = true;
+      const n = stats.pendingImports;
+      toast.info(
+        "An interrupted import can be resumed",
+        `${formatNumber(n)} import${n === 1 ? "" : "s"} left unfinished — pick up where you left off.`,
+        { label: "Resume import…", onClick: () => void navigate({ to: "/import" }) },
+      );
+    }
+  }, [stats, toast, navigate]);
 
   const refresh = () => void run().catch((e) => toast.fromError(e, "Failed to load dashboard"));
 
@@ -69,6 +88,29 @@ export function DashboardPage() {
         />
       ) : stats ? (
         <div className="space-y-6">
+          {/* No backup destination: the archive has only one copy. */}
+          {stats.enabledRequiredProviders === 0 && stats.totals.assets > 0 ? (
+            <div className="flex items-start gap-3 rounded-lg border border-amber-500/40 bg-amber-500/10 p-4">
+              <ExclamationTriangleIcon className="mt-0.5 h-5 w-5 flex-none text-amber-400" />
+              <div className="min-w-0 flex-1">
+                <h3 className="text-sm font-semibold text-amber-200">
+                  No backup destination — your archive has only one copy
+                </h3>
+                <p className="mt-1 text-[13px] leading-relaxed text-amber-100/80">
+                  Every asset lives in exactly one place. A single drive failure would lose all{" "}
+                  {formatNumber(stats.totals.assets)} of them. Add a backup destination so PAIM can keep a
+                  verified second copy and clear sources safely.
+                </p>
+                <Link
+                  to="/providers"
+                  className="mt-2 inline-block text-xs font-semibold text-amber-300 hover:text-amber-200"
+                >
+                  Add a backup destination →
+                </Link>
+              </div>
+            </div>
+          ) : null}
+
           {/* Stat grid */}
           <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
             <Stat label="Total Assets" value={formatNumber(stats.totals.assets)} icon={Squares2X2Icon} />
@@ -79,12 +121,27 @@ export function DashboardPage() {
               value={formatBytes(stats.totals.storageBytes)}
               icon={CircleStackIcon}
             />
-            <Stat
-              label="Pending Imports"
-              value={formatNumber(stats.pendingImports)}
-              icon={InboxArrowDownIcon}
-              tone={stats.pendingImports > 0 ? "warn" : "default"}
-            />
+            {stats.pendingImports > 0 ? (
+              <Link
+                to="/import"
+                className="block rounded-lg focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
+                title="Resume an interrupted import"
+              >
+                <Stat
+                  label="Pending Imports"
+                  value={formatNumber(stats.pendingImports)}
+                  icon={InboxArrowDownIcon}
+                  tone="warn"
+                />
+              </Link>
+            ) : (
+              <Stat
+                label="Pending Imports"
+                value={formatNumber(stats.pendingImports)}
+                icon={InboxArrowDownIcon}
+                tone="default"
+              />
+            )}
             <Stat
               label="Pending Backups"
               value={formatNumber(stats.backupQueue.pending)}
