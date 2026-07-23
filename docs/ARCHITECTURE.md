@@ -358,10 +358,23 @@ browse grid proving what's archived, (c) provenance at a glance.
   (`qlmanage -t -s <px>`) which handles HEIC, all supported RAW formats, and video poster
   frames; converted/compressed to JPEG (quality ~80) via `sips`. Two sizes: 512 (grid)
   and 2048 (preview), generated lazily on first request; per-key singleflight so
-  concurrent requests generate once; bounded generation concurrency (default 4).
-  Generation failure → cached negative marker (retry after app restart), UI shows a
-  placeholder tile. The cache is disposable and travels with the library; a Settings
-  action can clear it. Missing/moved source file → placeholder, never an error.
+  concurrent requests generate once. Generation is bounded by a **two-tier priority
+  scheduler** (`internal/thumbs/scheduler.go`), not a plain FIFO semaphore: the grid
+  fires one request per near-viewport tile, so a FIFO queue would make a fresh view's
+  tiles wait behind the previous view's stale backlog on an HDD. Interactive requests
+  are served **newest-first (LIFO)** and always **preempt** the background warm-up
+  (warm work keeps FIFO within its own tier); a re-request (singleflight join) bumps
+  the in-flight generation's recency (and promotes a coalesced warmer generation into
+  the interactive tier). A request whose context is cancelled **while still queued**
+  (tile scrolled away) is dropped without generating; once a render has started it
+  runs under a context **detached** from the request, so it completes and caches even
+  if the browser aborts (the work is mostly paid for — caching it is pure win).
+  Generation concurrency is a per-machine setting (Settings → Thumbnails, "Thumbnail
+  generation parallelism", default 2 — low suits spinning HDDs, higher suits SSDs),
+  shared by interactive browsing and the warm-up. Generation failure → cached negative
+  marker (retry after app restart), UI shows a placeholder tile. The cache is
+  disposable and travels with the library; a Settings action can clear it.
+  Missing/moved source file → placeholder, never an error.
 - Serving: Wails v3 asset-server middleware in main.go — `GET /thumb/{assetID}?s=512|2048`
   resolves the asset (via repo), ensures the thumb, streams the JPEG with long-lived
   cache headers keyed by quick hash. No filesystem paths cross the bridge.
@@ -422,9 +435,13 @@ Browsing should be instant, so thumbnails can be generated ahead of time instead
 lazily on first view.
 
 - `thumbs.Warmer`: a cancellable background job that walks a set of asset IDs and
-  ensures 512px thumbs (2048 optional, default off) with bounded concurrency (default 2
-  — must not starve imports/backups), progress events (`thumbs:progress` done/total),
-  registered in the activity tracker (quit guard aware) and sleep-guarded.
+  ensures 512px thumbs (2048 optional, default off) at the scheduler's **warm tier**,
+  so any interactive `/thumb` request preempts it. It no longer owns a separate
+  generation-concurrency bound: actual concurrency is the shared scheduler (the
+  per-machine parallelism setting); the warmer only bounds how many resolve+submit
+  goroutines it keeps outstanding (tracking that same setting). Progress events
+  (`thumbs:progress` done/total), registered in the activity tracker (quit guard
+  aware) and sleep-guarded.
 - Triggers: (a) **after import** — when an import/adopt session completes and the
   "Generate thumbnails after import" setting is on (default ON), warm exactly that
   session's assets; runs AFTER completion, never inline during the import (the import

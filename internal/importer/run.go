@@ -84,7 +84,7 @@ func (p *Pipeline) Run(ctx context.Context, opts Options, progressFn ProgressFun
 		return p.reload(session.ID), fmt.Errorf("run: scan: %w", err)
 	}
 	if err := p.sessions.IncScanned(ctx, session.ID, len(scan.Files)); err != nil {
-		p.log.Warn("run: could not record scanned count", "error", err.Error())
+		p.log.Warn("run: could not record scanned count", "sessionId", session.ID, "error", err.Error())
 	}
 
 	return p.runImport(ctx, session, scan, opts, &state, progressFn)
@@ -100,14 +100,14 @@ func (p *Pipeline) runImport(ctx context.Context, session *domain.ImportSession,
 
 	// Metadata for every file, batched with progress. ContentIdentifier feeds
 	// pairing; capture dates feed the layout. Degrades gracefully per chunk.
-	metaByPath := p.extractMetadata(ctx, scan.Files, progressFn)
+	metaByPath := p.extractMetadata(ctx, session.ID, scan.Files, progressFn)
 
 	// Stage-2 (authoritative) Live Photo pairing using ContentIdentifier.
 	partnerOf := reconcilePairs(scan, metaByPath)
 
 	// Reuse precomputed quick (and full) hashes where the file is provably
 	// unchanged since the dry run (same size + mtime).
-	quick, full := p.reuseHashes(opts.Precomputed, scan.Files)
+	quick, full := p.reuseHashes(session.ID, opts.Precomputed, scan.Files)
 
 	assetIDByPath := make(map[string]string, len(scan.Files))
 	var bytesDone int64
@@ -145,7 +145,7 @@ func (p *Pipeline) runImport(ctx context.Context, session *domain.ImportSession,
 	}
 
 	// Link confirmed Live Photo pairs both ways, now that all files are imported.
-	p.linkPairs(ctx, partnerOf, assetIDByPath)
+	p.linkPairs(ctx, session.ID, partnerOf, assetIDByPath)
 
 	// An import that recorded no assets but hit failures is a failed run, not a
 	// silent success. Decide from the accumulated session counters so resumes see
@@ -195,9 +195,9 @@ func (p *Pipeline) processFile(ctx context.Context, sessionID string, fi FileInf
 	switch cls.Disposition {
 	case DispositionAlreadyImported:
 		if err := p.sessions.IncSkipped(ctx, sessionID, 1); err != nil {
-			p.log.Warn("processFile: inc skipped", "error", err.Error())
+			p.log.Warn("processFile: inc skipped", "sessionId", sessionID, "error", err.Error())
 		}
-		p.log.Debug("skip already-imported file", "path", fi.Path, "assetId", cls.MatchedAssetID)
+		p.log.Debug("skip already-imported file", "sessionId", sessionID, "path", fi.Path, "assetId", cls.MatchedAssetID)
 		return fileOutcome{}
 	case DispositionDuplicate:
 		return p.recordDuplicate(ctx, sessionID, fi, opts, res, cls, meta, state, bytesDone)
@@ -221,7 +221,7 @@ func (p *Pipeline) copyFile(ctx context.Context, sessionID string, fi FileInfo, 
 
 	captureDate, fromMtime := effectiveCaptureDate(meta, fi)
 	if fromMtime {
-		p.log.Info("capture date from file mtime (no EXIF)", "path", fi.Path, "date", captureDate.Format(time.RFC3339))
+		p.log.Info("capture date from file mtime (no EXIF)", "sessionId", sessionID, "path", fi.Path, "date", captureDate.Format(time.RFC3339))
 	}
 	destPath := computeDestination(res, captureDate, opts.EventName, fi)
 	destDir := filepath.Dir(destPath)
@@ -279,7 +279,7 @@ func (p *Pipeline) copyFile(ctx context.Context, sessionID string, fi FileInfo, 
 		_ = os.Remove(finalPath)
 		return p.fail(ctx, sessionID, fi.Path, "record", err)
 	}
-	p.log.Info("imported (copy, verified)", "path", fi.Path, "dest", finalPath, "assetId", asset.ID)
+	p.log.Info("imported (copy, verified)", "sessionId", sessionID, "path", fi.Path, "dest", finalPath, "assetId", asset.ID)
 	return fileOutcome{assetID: asset.ID}
 }
 
@@ -306,11 +306,11 @@ func (p *Pipeline) adoptFile(ctx context.Context, sessionID string, fi FileInfo,
 	if opts.Reorganize && !duplicate {
 		captureDate, fromMtime := effectiveCaptureDate(meta, fi)
 		if fromMtime {
-			p.log.Info("capture date from file mtime (no EXIF)", "path", fi.Path)
+			p.log.Info("capture date from file mtime (no EXIF)", "sessionId", sessionID, "path", fi.Path)
 		}
 		destPath := computeDestination(res, captureDate, opts.EventName, fi)
 		if destPath != fi.Path {
-			moved, newPath, err := p.reorganizeInPlace(ctx, fi.Path, destPath, cls.QuickHash, state)
+			moved, newPath, err := p.reorganizeInPlace(ctx, sessionID, fi.Path, destPath, cls.QuickHash, state)
 			if err != nil {
 				return p.fail(ctx, sessionID, fi.Path, "reorganize", err)
 			}
@@ -341,7 +341,7 @@ func (p *Pipeline) adoptFile(ctx context.Context, sessionID string, fi FileInfo,
 		*bytesDone += fi.Size
 	}
 	p.log.Info("adopted in place (in-place baseline verified)",
-		"path", currentPath, "assetId", asset.ID, "duplicate", duplicate)
+		"sessionId", sessionID, "path", currentPath, "assetId", asset.ID, "duplicate", duplicate)
 	return fileOutcome{assetID: asset.ID}
 }
 
@@ -350,7 +350,7 @@ func (p *Pipeline) adoptFile(ctx context.Context, sessionID string, fi FileInfo,
 // cross-volume destination is refused (never copy+delete in adopt mode): the
 // file is left in place and a note is recorded. It returns whether a move
 // happened and the resulting path.
-func (p *Pipeline) reorganizeInPlace(ctx context.Context, src, destPath, srcQuick string, state *sessionState) (bool, string, error) {
+func (p *Pipeline) reorganizeInPlace(ctx context.Context, sessionID, src, destPath, srcQuick string, state *sessionState) (bool, string, error) {
 	destDir := filepath.Dir(destPath)
 	same, err := sameVolume(src, destDir)
 	if err != nil {
@@ -359,7 +359,7 @@ func (p *Pipeline) reorganizeInPlace(ctx context.Context, src, destPath, srcQuic
 	if !same {
 		note := fmt.Sprintf("left in place (cross-volume): %s", src)
 		state.Notes = append(state.Notes, note)
-		p.log.Warn("adopt reorganize skipped: cross-volume", "path", src, "dest", destPath)
+		p.log.Warn("adopt reorganize skipped: cross-volume", "sessionId", sessionID, "path", src, "dest", destPath)
 		return false, src, nil
 	}
 	if err := os.MkdirAll(destDir, 0o755); err != nil {
@@ -407,7 +407,7 @@ func (p *Pipeline) recordDuplicate(ctx context.Context, sessionID string, fi Fil
 	if err := p.recordAsset(ctx, asset, repo.SessionCounters{Duplicates: 1}, false); err != nil {
 		return p.fail(ctx, sessionID, fi.Path, "record-duplicate", err)
 	}
-	p.log.Info("recorded duplicate (not copied)", "path", fi.Path, "duplicateOf", dupOf, "assetId", asset.ID)
+	p.log.Info("recorded duplicate (not copied)", "sessionId", sessionID, "path", fi.Path, "duplicateOf", dupOf, "assetId", asset.ID)
 	return fileOutcome{assetID: asset.ID}
 }
 
@@ -490,9 +490,9 @@ func (p *Pipeline) recordAsset(ctx context.Context, asset *domain.Asset, counter
 func (p *Pipeline) fail(ctx context.Context, sessionID, path, op string, err error) fileOutcome {
 	wrapped := fmt.Errorf("import %s %q: %w", op, path, err)
 	if e := p.sessions.IncFailures(context.Background(), sessionID, 1); e != nil {
-		p.log.Warn("fail: inc failures", "error", e.Error())
+		p.log.Warn("fail: inc failures", "sessionId", sessionID, "error", e.Error())
 	}
-	p.log.Error("import file failed", "path", path, "op", op, "error", wrapped.Error())
+	p.log.Error("import file failed", "sessionId", sessionID, "path", path, "op", op, "error", wrapped.Error())
 	return fileOutcome{failed: true}
 }
 
@@ -502,7 +502,7 @@ func (p *Pipeline) finishSession(sessionID string, status domain.SessionStatus, 
 	if state != nil {
 		if raw, err := json.Marshal(state); err == nil {
 			if e := p.db.Model(&domain.ImportSession{}).Where("id = ?", sessionID).Update("notes", string(raw)).Error; e != nil {
-				p.log.Warn("finishSession: persist notes", "error", e.Error())
+				p.log.Warn("finishSession: persist notes", "sessionId", sessionID, "error", e.Error())
 			}
 		}
 	}
@@ -533,7 +533,7 @@ const metadataChunk = 200
 // chunk logs and continues: only that chunk's files degrade to mtime fallback,
 // instead of discarding metadata for the entire import when one exiftool request
 // errors.
-func (p *Pipeline) extractMetadata(ctx context.Context, files []FileInfo, progressFn ProgressFunc) map[string]*metadata.AssetMetadata {
+func (p *Pipeline) extractMetadata(ctx context.Context, sessionID string, files []FileInfo, progressFn ProgressFunc) map[string]*metadata.AssetMetadata {
 	byPath := make(map[string]*metadata.AssetMetadata, len(files))
 	if len(files) == 0 || p.extractor == nil {
 		return byPath
@@ -563,7 +563,7 @@ func (p *Pipeline) extractMetadata(ctx context.Context, files []FileInfo, progre
 		if err != nil {
 			// Per-chunk degrade (improvement over the old all-or-nothing path).
 			p.log.Warn("metadata chunk extraction failed; proceeding degraded for this chunk",
-				"start", start, "end", end, "error", err.Error())
+				"sessionId", sessionID, "start", start, "end", end, "error", err.Error())
 		}
 		for path, m := range out {
 			byPath[path] = m
@@ -605,7 +605,7 @@ func reconcilePairs(scan *ScanResult, meta map[string]*metadata.AssetMetadata) m
 // linkPairs sets LivePhotoPartnerID both ways and marks both rows as a
 // live_photo_pair, but only when BOTH components imported successfully. An
 // orphaned component (its partner failed) is logged and left unlinked.
-func (p *Pipeline) linkPairs(ctx context.Context, partnerOf map[string]string, assetIDByPath map[string]string) {
+func (p *Pipeline) linkPairs(ctx context.Context, sessionID string, partnerOf map[string]string, assetIDByPath map[string]string) {
 	linked := map[string]bool{}
 	for stillPath, motionPath := range partnerOf {
 		if linked[stillPath] {
@@ -616,21 +616,21 @@ func (p *Pipeline) linkPairs(ctx context.Context, partnerOf map[string]string, a
 		if !okS || !okM {
 			if okS != okM {
 				p.log.Warn("live photo pair orphaned: one component failed",
-					"still", stillPath, "motion", motionPath)
+					"sessionId", sessionID, "still", stillPath, "motion", motionPath)
 			}
 			continue
 		}
 		if err := p.setPartner(ctx, stillID, motionID); err != nil {
-			p.log.Warn("linkPairs: set still partner", "error", err.Error())
+			p.log.Warn("linkPairs: set still partner", "sessionId", sessionID, "error", err.Error())
 			continue
 		}
 		if err := p.setPartner(ctx, motionID, stillID); err != nil {
-			p.log.Warn("linkPairs: set motion partner", "error", err.Error())
+			p.log.Warn("linkPairs: set motion partner", "sessionId", sessionID, "error", err.Error())
 			continue
 		}
 		linked[stillPath] = true
 		linked[motionPath] = true
-		p.log.Info("linked live photo pair", "stillId", stillID, "motionId", motionID)
+		p.log.Info("linked live photo pair", "sessionId", sessionID, "stillId", stillID, "motionId", motionID)
 	}
 }
 
@@ -654,7 +654,7 @@ func (p *Pipeline) setPartner(ctx context.Context, assetID, partnerID string) er
 // A nil report (the plain crash-resume path) reuses nothing and re-hashes
 // everything, which is correct. Full hashes are gated the same way so adopt-mode
 // baseline reuse is equally safe.
-func (p *Pipeline) reuseHashes(report *DryRunReport, files []FileInfo) (quick, full map[string]string) {
+func (p *Pipeline) reuseHashes(sessionID string, report *DryRunReport, files []FileInfo) (quick, full map[string]string) {
 	quick = make(map[string]string, len(files))
 	full = make(map[string]string, len(files))
 	if report == nil {
@@ -679,7 +679,7 @@ func (p *Pipeline) reuseHashes(report *DryRunReport, files []FileInfo) (quick, f
 			full[f.Path] = fh
 		}
 	}
-	p.log.Info("reusing precomputed hashes", "reused", reused, "stale", stale, "new", missing)
+	p.log.Info("reusing precomputed hashes", "sessionId", sessionID, "reused", reused, "stale", stale, "new", missing)
 	return quick, full
 }
 

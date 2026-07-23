@@ -725,15 +725,22 @@ function ThumbnailsCard() {
   const [clearing, setClearing] = useState(false);
   const [warm, setWarm] = useState<WarmupStatusDTO | null>(null);
   const [starting, setStarting] = useState(false);
+  const [parallelism, setParallelismState] = useState<number | null>(null);
+  const [savingParallelism, setSavingParallelism] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
     (async () => {
       try {
-        const [c, w] = await Promise.all([ThumbnailService.ThumbnailCacheLocation(), ThumbnailService.WarmupStatus()]);
+        const [c, w, p] = await Promise.all([
+          ThumbnailService.ThumbnailCacheLocation(),
+          ThumbnailService.WarmupStatus(),
+          ThumbnailService.ThumbnailParallelism(),
+        ]);
         if (cancelled) return;
         setCache(c);
         setWarm(w);
+        setParallelismState(p);
       } catch {
         /* non-critical */
       }
@@ -742,6 +749,19 @@ function ThumbnailsCard() {
       cancelled = true;
     };
   }, []);
+
+  const saveParallelism = async (n: number) => {
+    setSavingParallelism(true);
+    try {
+      const applied = await ThumbnailService.SetThumbnailParallelism(n);
+      setParallelismState(applied);
+      toast.success("Thumbnail parallelism updated", "Applies immediately to browsing and warm-up.");
+    } catch (e) {
+      toast.fromError(e, "Could not change parallelism");
+    } finally {
+      setSavingParallelism(false);
+    }
+  };
 
   useWailsEvent<ThumbsProgress>(WailsEvents.ThumbsProgress, (p) => {
     setWarm({ running: p.running, done: p.done, total: p.total, label: p.label });
@@ -821,6 +841,32 @@ function ThumbnailsCard() {
           Keeping thumbnails on this Mac's internal disk makes browsing faster for libraries on slow drives. Switching
           takes effect immediately; the old cache is left where it is (delete it with Clear if you like).
         </p>
+      </div>
+
+      <div className="mt-4 border-t border-zinc-800 pt-4">
+        <label className="flex flex-wrap items-center justify-between gap-3">
+          <span className="min-w-0">
+            <span className="block text-[13px] text-zinc-200">Thumbnail generation parallelism</span>
+            <span className="mt-0.5 block max-w-lg text-[11px] text-zinc-500">
+              How many thumbnails PAIM renders at once — shared by browsing and warm-up. Keep it low (1&ndash;2) for a
+              spinning external HDD, where parallel renders cause seek thrash; raise it for a fast SSD. Applies
+              immediately.
+            </span>
+          </span>
+          <input
+            type="number"
+            min={1}
+            max={16}
+            disabled={parallelism == null || savingParallelism}
+            value={parallelism ?? 2}
+            onChange={(e) => setParallelismState(e.target.value === "" ? 1 : Number(e.target.value))}
+            onBlur={(e) => {
+              const n = clampInt(Number(e.target.value), 1);
+              if (n !== parallelism) void saveParallelism(n);
+            }}
+            className="w-20 flex-none rounded-md border border-zinc-700 bg-zinc-950 px-3 py-1.5 text-[13px] text-zinc-200 outline-none focus:border-blue-500 disabled:opacity-60"
+          />
+        </label>
       </div>
 
       <div className="mt-4 flex flex-wrap items-center gap-2 border-t border-zinc-800 pt-4">

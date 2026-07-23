@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -13,6 +14,8 @@ import (
 	"github.com/Sam-Lam/PAIM/internal/importer"
 	"github.com/Sam-Lam/PAIM/internal/mediatype"
 	"github.com/Sam-Lam/PAIM/internal/repo"
+	"github.com/Sam-Lam/PAIM/internal/source"
+	"github.com/Sam-Lam/PAIM/internal/volumes"
 )
 
 // ErrImportInProgress is returned by StartImport/ResumeSession when an import is
@@ -41,6 +44,18 @@ type ImportService struct {
 	emitter  Emitter
 	settings *repo.SettingsRepo
 	log      *slog.Logger
+
+	// sources, identifier, and collector power the best-effort source auto-link at
+	// StartImport (copy mode): resolving the volume a source root sits on and
+	// persisting/updating its ImportSource so the session records where it came
+	// from. All three are bound from the AppCore when a library opens; they are nil
+	// (and the auto-link is skipped) in unit tests that construct the service
+	// directly. identifier and collector are narrow interfaces (satisfied by
+	// *source.Identifier and *volumes.Collector) so the auto-link is unit-testable
+	// with fakes.
+	sources    *repo.SourceRepo
+	identifier sourceIdentifier
+	collector  volumeLister
 
 	// OnCompleted, when set, is invoked (synchronously, after import:completed is
 	// emitted) with the finished session ID. main.go wires it to trigger the
@@ -72,6 +87,19 @@ type ImportService struct {
 	reorgPlanAt time.Time
 	reorgEvent  string
 	reorgLabels bool
+}
+
+// volumeLister enumerates mounted volumes. It is the slice of *volumes.Collector
+// the source auto-link needs (finding which mount a source root sits on).
+type volumeLister interface {
+	List(ctx context.Context) ([]volumes.Info, error)
+}
+
+// sourceIdentifier identifies the volume at a mount point. It is the slice of
+// *source.Identifier the auto-link needs (Identify computes a match and returns
+// the source record; the caller persists it).
+type sourceIdentifier interface {
+	Identify(ctx context.Context, mountPoint string, progressFn func(scanned int)) (*source.Match, error)
 }
 
 // reorgPlanTTL bounds how long a cached reorganize plan is reused between
@@ -120,6 +148,9 @@ func (s *ImportService) Bind(core *AppCore) {
 	s.pipeline = core.Pipeline
 	s.sessions = core.Sessions
 	s.settings = core.Settings
+	s.sources = core.Sources
+	s.identifier = core.Identifier
+	s.collector = core.Collector
 }
 
 // ScanSummary is the provisional result of scanning a source tree, before any
@@ -502,6 +533,16 @@ func (s *ImportService) StartImport(ctx context.Context, opts ImportOptions) (St
 		return StartImportResult{}, fmt.Errorf("services: start import: no destination and no Master Library configured")
 	}
 
+	// Best-effort source auto-link: when the frontend supplied no SourceID and this
+	// is a copy import, resolve and persist the ImportSource the source root lives
+	// on so Import History records where the files came from. It never blocks or
+	// fails the import (short timeout; any error leaves SourceID empty).
+	if iopts.SourceID == "" && iopts.Mode == importer.ModeCopy {
+		if id := s.autoLinkSource(iopts.SourceRoot); id != "" {
+			iopts.SourceID = id
+		}
+	}
+
 	state := resumeState{
 		Mode:            string(iopts.Mode),
 		SourceRoot:      iopts.SourceRoot,
@@ -512,6 +553,74 @@ func (s *ImportService) StartImport(ctx context.Context, opts ImportOptions) (St
 		Concurrency:     iopts.Concurrency,
 	}
 	return s.launch(ctx, state, s.precomputedFor(iopts.SourceRoot))
+}
+
+// autoLinkSource resolves the ImportSource for a copy import's source root and
+// returns its ID (persisting a new record or refreshing a matched one). It is
+// strictly best-effort — bounded to 5s and never propagating an error — so
+// identification can never delay or fail an import: a missing collector/
+// identifier, no matching mount, an identify timeout, or a persistence error all
+// yield "" and the import proceeds with no linked source.
+func (s *ImportService) autoLinkSource(sourceRoot string) string {
+	if s.collector == nil || s.identifier == nil || s.sources == nil || sourceRoot == "" {
+		return ""
+	}
+	idCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	mount := s.mountPointFor(idCtx, sourceRoot)
+	if mount == "" {
+		return ""
+	}
+	match, err := s.identifier.Identify(idCtx, mount, nil)
+	if err != nil {
+		s.log.Info("source auto-link skipped", "root", sourceRoot, "mount", mount, "error", err.Error())
+		return ""
+	}
+	rec := match.SourceRecord
+	if rec == nil {
+		return ""
+	}
+	// Persist with a background context so the 5s identify budget expiring cannot
+	// abort the (fast) source write.
+	rec.LastSeenAt = timeNow()
+	if match.IsKnown && rec.ID != "" {
+		if err := s.sources.Update(context.Background(), rec); err != nil {
+			s.log.Warn("source auto-link: update source", "error", err.Error())
+			return ""
+		}
+	} else {
+		if err := s.sources.Create(context.Background(), rec); err != nil {
+			s.log.Warn("source auto-link: create source", "error", err.Error())
+			return ""
+		}
+	}
+	s.log.Info("linked import source", "sourceId", rec.ID, "mount", mount, "confidence", match.Confidence)
+	return rec.ID
+}
+
+// mountPointFor returns the mount point of the volume that contains root — the
+// longest volume mount path that is a prefix of root — or "" when none matches
+// (root is on the internal disk, or enumeration failed). It walks the mounted
+// volumes via the collector rather than assuming /Volumes/<name> parsing.
+func (s *ImportService) mountPointFor(ctx context.Context, root string) string {
+	vols, err := s.collector.List(ctx)
+	if err != nil {
+		return ""
+	}
+	best := ""
+	for _, v := range vols {
+		mp := v.MountPoint
+		if mp == "" {
+			continue
+		}
+		if root == mp || strings.HasPrefix(root, mp+string(filepath.Separator)) {
+			if len(mp) > len(best) {
+				best = mp
+			}
+		}
+	}
+	return best
 }
 
 // precomputedFor returns the cached dry-run report for absRoot when a scan+report

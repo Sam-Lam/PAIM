@@ -229,7 +229,7 @@ func TestQuickLookPipeline(t *testing.T) {
 	src := filepath.Join(dir, "real.jpg")
 	writeJPEG(t, src)
 
-	c := New(dir, nil)
+	c := New(dir, 2, nil)
 	p, err := c.Ensure(context.Background(), src, "0123456789abcdef", SizeGrid)
 	if err != nil {
 		// QuickLook can fail in headless/sandboxed environments; that is not a test

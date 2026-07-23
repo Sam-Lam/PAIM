@@ -363,6 +363,19 @@ func finalizeReport(r *SafeToEraseReport) {
 		return
 	}
 
+	// Backups-only blocking case: every media file is already archived and
+	// verified against the archive, and the ONLY thing not yet done is backing
+	// some of them up. Nothing here is at risk of loss, so the message leads with
+	// reassurance rather than the alarming "NOT recommended" wording reserved for
+	// New/Unverified files (which genuinely are not safely archived).
+	if r.New == 0 && r.Unverified == 0 && r.BackupIncomplete > 0 {
+		r.Safe = false
+		r.Reason = fmt.Sprintf(
+			"All %d media file(s) are archived and verified. Deletion is not recommended yet: backups are still pending for %d.",
+			r.TotalMedia, r.BackupIncomplete)
+		return
+	}
+
 	var problems []string
 	if r.New > 0 {
 		problems = append(problems, fmt.Sprintf("%d not yet imported", r.New))

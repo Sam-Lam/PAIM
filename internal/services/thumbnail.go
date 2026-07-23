@@ -17,6 +17,29 @@ import (
 // politely rather than queued).
 var ErrWarmupInProgress = errors.New("services: a thumbnail warm-up is already running")
 
+// Thumbnail generation parallelism bounds (per-machine setting).
+const (
+	// DefaultThumbnailParallelism is the concurrency used when the per-machine
+	// setting is unset. It is intentionally low (HDD-friendly): parallel qlmanage
+	// renders on a spinning external drive thrash the heads and slow every tile.
+	DefaultThumbnailParallelism = 2
+	// MaxThumbnailParallelism caps the setting so a typo cannot spawn hundreds of
+	// concurrent qlmanage processes.
+	MaxThumbnailParallelism = 16
+)
+
+// clampThumbnailParallelism normalizes a stored/requested parallelism to the
+// supported range, applying the default for 0/absent values.
+func clampThumbnailParallelism(n int) int {
+	if n < 1 {
+		return DefaultThumbnailParallelism
+	}
+	if n > MaxThumbnailParallelism {
+		return MaxThumbnailParallelism
+	}
+	return n
+}
+
 // ThumbnailService owns the disposable thumbnail cache's per-machine concerns:
 // where the cache lives (in-library vs this Mac's local disk), clearing it, and
 // warming it ahead of browsing. The cache location is stored in the per-machine
@@ -173,6 +196,45 @@ func (s *ThumbnailService) ClearThumbnailCache(ctx context.Context) error {
 		return fmt.Errorf("services: refusing to clear cache: %q is not a known cache root", active)
 	}
 	return s.cache.Clear()
+}
+
+/* --------------------------- generation parallelism ------------------------ */
+
+// ThumbnailParallelism returns the per-machine thumbnail generation parallelism,
+// normalized to the supported range (the default when unset).
+func (s *ThumbnailService) ThumbnailParallelism(ctx context.Context) (int, error) {
+	if err := s.guard(); err != nil {
+		return 0, err
+	}
+	cfg, err := s.config.Load()
+	if err != nil {
+		return 0, err
+	}
+	return clampThumbnailParallelism(cfg.ThumbnailParallelism), nil
+}
+
+// SetThumbnailParallelism persists the per-machine generation parallelism and
+// applies it to the live cache immediately (shared by interactive browsing and
+// the warm-up). The requested value is clamped to [1, MaxThumbnailParallelism];
+// the clamped value is returned.
+func (s *ThumbnailService) SetThumbnailParallelism(ctx context.Context, n int) (int, error) {
+	if err := s.guard(); err != nil {
+		return 0, err
+	}
+	n = clampThumbnailParallelism(n)
+	cfg, err := s.config.Load()
+	if err != nil {
+		return 0, err
+	}
+	cfg.ThumbnailParallelism = n
+	if err := s.config.Save(cfg); err != nil {
+		return 0, err
+	}
+	if s.cache != nil {
+		s.cache.SetParallelism(n)
+	}
+	s.log.Info("thumbnail generation parallelism changed", "parallelism", n)
+	return n, nil
 }
 
 /* -------------------------------- warm-up ---------------------------------- */

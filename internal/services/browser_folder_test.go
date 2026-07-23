@@ -79,7 +79,7 @@ func TestListFolderRootAndDrillIn(t *testing.T) {
 	h.seed("2020/2020-01-01/IMG_3.jpg")
 
 	// Root lists the two year folders.
-	root, err := h.svc.ListFolder(ctx, "", 1, 60)
+	root, err := h.svc.ListFolder(ctx, "", 1, 60, "date", "desc")
 	if err != nil {
 		t.Fatalf("list root: %v", err)
 	}
@@ -97,7 +97,7 @@ func TestListFolderRootAndDrillIn(t *testing.T) {
 	}
 
 	// Into 2019: two date folders, one of which is renameable.
-	y2019, err := h.svc.ListFolder(ctx, "2019", 1, 60)
+	y2019, err := h.svc.ListFolder(ctx, "2019", 1, 60, "date", "desc")
 	if err != nil {
 		t.Fatalf("list 2019: %v", err)
 	}
@@ -125,7 +125,7 @@ func TestListFolderRootAndDrillIn(t *testing.T) {
 
 	// Into the Trip date folder: the JPEG is directly present; the RAW is in a
 	// subfolder, not a direct asset.
-	tripList, err := h.svc.ListFolder(ctx, "2019/2019-06-12 Trip", 1, 60)
+	tripList, err := h.svc.ListFolder(ctx, "2019/2019-06-12 Trip", 1, 60, "date", "desc")
 	if err != nil {
 		t.Fatalf("list trip: %v", err)
 	}
@@ -289,4 +289,60 @@ type busyActivity struct{}
 
 func (busyActivity) Snapshot() []OperationInfo {
 	return []OperationInfo{{Kind: "import", Label: "Importing files"}}
+}
+
+// TestNormalizeFolderSort covers the ListFolder sort parameter validation:
+// recognized values pass through; anything else (including the folder-only
+// "items" key) collapses to the default date/desc.
+func TestNormalizeFolderSort(t *testing.T) {
+	cases := []struct {
+		inBy, inDir     string
+		wantBy, wantDir string
+	}{
+		{"name", "asc", "name", "asc"},
+		{"name", "desc", "name", "desc"},
+		{"date", "asc", "date", "asc"},
+		{"date", "desc", "date", "desc"},
+		{"", "", "date", "desc"},                // empty -> default
+		{"items", "asc", "date", "asc"},         // items is folder-only, not a server sort
+		{"bogus", "sideways", "date", "desc"},   // unknown both -> default
+		{"NAME", "ASC", "name", "asc"},          // case-insensitive
+		{"  date  ", "  DESC ", "date", "desc"}, // trimmed
+	}
+	for _, c := range cases {
+		by, dir := normalizeFolderSort(c.inBy, c.inDir)
+		if by != c.wantBy || dir != c.wantDir {
+			t.Errorf("normalizeFolderSort(%q,%q) = (%q,%q), want (%q,%q)",
+				c.inBy, c.inDir, by, dir, c.wantBy, c.wantDir)
+		}
+	}
+}
+
+// TestListFolderAssetSorting proves ListFolder threads sortBy/sortDir into the
+// asset ordering and defaults invalid values to date/desc.
+func TestListFolderAssetSorting(t *testing.T) {
+	h := newFolderHarness(t)
+	ctx := context.Background()
+	h.seed("f/Bravo.jpg")
+	h.seed("f/alpha.jpg")
+	h.seed("f/Charlie.jpg")
+
+	filenames := func(sortBy, sortDir string) []string {
+		l, err := h.svc.ListFolder(ctx, "f", 1, 60, sortBy, sortDir)
+		if err != nil {
+			t.Fatalf("list folder %s/%s: %v", sortBy, sortDir, err)
+		}
+		out := make([]string, len(l.Assets.Items))
+		for i, a := range l.Assets.Items {
+			out[i] = a.Filename
+		}
+		return out
+	}
+
+	if got := filenames("name", "asc"); len(got) != 3 || got[0] != "alpha.jpg" || got[2] != "Charlie.jpg" {
+		t.Errorf("name asc = %v, want case-insensitive alpha, Bravo, Charlie", got)
+	}
+	if got := filenames("name", "desc"); len(got) != 3 || got[0] != "Charlie.jpg" || got[2] != "alpha.jpg" {
+		t.Errorf("name desc = %v, want Charlie, Bravo, alpha", got)
+	}
 }

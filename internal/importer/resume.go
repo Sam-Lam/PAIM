@@ -67,11 +67,11 @@ func (p *Pipeline) resumeSession(ctx context.Context, sessionID string, precompu
 	// hits this too.)
 	if root := opts.DestinationRoot; root != "" {
 		progressFn.emit(Progress{Phase: PhasePreparing})
-		removed, err := p.cleanStrayPartials(ctx, root, progressFn)
+		removed, err := p.cleanStrayPartials(ctx, sessionID, root, progressFn)
 		if err != nil {
-			p.log.Warn("resume: cleaning stray partials", "error", err.Error())
+			p.log.Warn("resume: cleaning stray partials", "sessionId", sessionID, "error", err.Error())
 		} else if removed > 0 {
-			p.log.Info("resume: removed stray partial files", "count", removed)
+			p.log.Info("resume: removed stray partial files", "sessionId", sessionID, "count", removed)
 		}
 	}
 
@@ -99,7 +99,7 @@ const strayPartialProgressInterval = 512
 // each removal, and returns the count removed. It emits a periodic checked-file
 // count into the existing PhasePreparing progress (progressFn may be nil) so the
 // UI shows forward motion during the walk.
-func (p *Pipeline) cleanStrayPartials(ctx context.Context, root string, progressFn ProgressFunc) (int, error) {
+func (p *Pipeline) cleanStrayPartials(ctx context.Context, sessionID, root string, progressFn ProgressFunc) (int, error) {
 	if _, err := os.Stat(root); err != nil {
 		if os.IsNotExist(err) {
 			return 0, nil
@@ -124,10 +124,10 @@ func (p *Pipeline) cleanStrayPartials(ctx context.Context, root string, progress
 		}
 		if strings.HasPrefix(d.Name(), partialPrefix) {
 			if rmErr := os.Remove(path); rmErr != nil {
-				p.log.Warn("clean partials: remove failed", "path", path, "error", rmErr.Error())
+				p.log.Warn("clean partials: remove failed", "sessionId", sessionID, "path", path, "error", rmErr.Error())
 				return nil
 			}
-			p.log.Info("clean partials: removed stray partial", "path", path)
+			p.log.Info("clean partials: removed stray partial", "sessionId", sessionID, "path", path)
 			removed++
 		}
 		return nil

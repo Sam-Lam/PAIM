@@ -59,17 +59,22 @@ export function ListAssets(filters, page, pageSize) {
 /**
  * ListFolder returns one level of the archive tree derived from the catalog
  * (never a filesystem walk): the immediate subfolders of relDir (each with a
- * recursive asset count and cover thumbnail) plus the assets sitting directly in
- * relDir, paged. relDir is a root-relative forward-slash directory; "" lists the
- * year folders at the root. The returned RelDir is the cleaned, breadcrumb-safe
- * path.
+ * recursive asset count, cover thumbnail, and newest capture date) plus the
+ * assets sitting directly in relDir, paged. relDir is a root-relative
+ * forward-slash directory; "" lists the year folders at the root. The returned
+ * RelDir is the cleaned, breadcrumb-safe path. sortBy ("name"|"date") and
+ * sortDir ("asc"|"desc") order the directly-contained assets; unknown values
+ * default to date/desc (newest first). Subfolders are always returned in name
+ * order and re-sorted client-side.
  * @param {string} relDir
  * @param {number} page
  * @param {number} pageSize
+ * @param {string} sortBy
+ * @param {string} sortDir
  * @returns {$CancellablePromise<$models.FolderListingDTO>}
  */
-export function ListFolder(relDir, page, pageSize) {
-    return $Call.ByID(3269834490, relDir, page, pageSize).then(/** @type {($result: any) => any} */(($result) => {
+export function ListFolder(relDir, page, pageSize, sortBy, sortDir) {
+    return $Call.ByID(3269834490, relDir, page, pageSize, sortBy, sortDir).then(/** @type {($result: any) => any} */(($result) => {
         return $$createType3($result);
     }));
 }

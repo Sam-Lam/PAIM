@@ -7,9 +7,18 @@
 // supported still, RAW, or video, then sips to compress it to JPEG. Two sizes
 // are produced lazily on first request: 512 (grid tiles) and 2048 (detail
 // preview). Concurrent requests for the same key collapse to a single generation
-// (singleflight), generation is globally bounded by a semaphore, and a failed
-// render leaves a negative marker so it is not retried until the next app
-// restart (stale markers are swept on construction).
+// (singleflight), generation is bounded by a two-tier priority scheduler (see
+// scheduler.go), and a failed render leaves a negative marker so it is not
+// retried until the next app restart (stale markers are swept on construction).
+//
+// Scheduling (why it is not a plain FIFO semaphore): the Library grid fires one
+// /thumb request per near-viewport tile, so navigating a large HDD-backed library
+// would otherwise queue a fresh view's tiles BEHIND the previous view's now-
+// irrelevant backlog. Instead, interactive requests are served newest-first
+// (LIFO) and always preempt the background warm-up; a request whose context is
+// cancelled while still queued (the tile scrolled away) is dropped before any
+// work starts. See Cache.ensure for the queue-wait vs. exec context split that
+// lets an already-started render finish and cache even after abandonment.
 //
 // The package is deliberately decoupled from the catalog: the HTTP Handler
 // depends on an AssetResolver interface (implemented in internal/services) to map
@@ -39,7 +48,7 @@ const (
 // Defaults.
 const (
 	defaultQuality     = 80 // sips JPEG quality (0-100)
-	defaultConcurrency = 4  // max simultaneous generations
+	defaultConcurrency = 2  // max simultaneous generations (HDD-friendly; a per-machine setting overrides)
 	failMarkerExt      = ".fail"
 	thumbExt           = ".jpg"
 )
@@ -81,23 +90,26 @@ type Cache struct {
 	dir     string
 	gen     generator
 	quality int
-	sem     chan struct{}
+	sched   *scheduler
 	flight  flight
 	log     *slog.Logger
 }
 
 // New constructs a Cache at the library's default in-library location
-// (<root>/.paim/thumbs). It sweeps stale negative markers so a failed render from
-// a previous run is retried once after a restart.
-func New(root string, logger *slog.Logger) *Cache {
-	return NewInDir(filepath.Join(root, ".paim", "thumbs"), logger)
+// (<root>/.paim/thumbs) with the given generation concurrency (min 1). It sweeps
+// stale negative markers so a failed render from a previous run is retried once
+// after a restart.
+func New(root string, concurrency int, logger *slog.Logger) *Cache {
+	return NewInDir(filepath.Join(root, ".paim", "thumbs"), concurrency, logger)
 }
 
-// NewInDir constructs a Cache whose thumbnails live directly under dir. It backs
-// the configurable cache-location feature: main.go resolves the per-machine
-// preference to a directory and hands it here.
-func NewInDir(dir string, logger *slog.Logger) *Cache {
-	return newCacheAt(dir, qlGenerator{}, defaultConcurrency, logger)
+// NewInDir constructs a Cache whose thumbnails live directly under dir with the
+// given generation concurrency (min 1). It backs the configurable cache-location
+// feature: main.go resolves the per-machine preference to a directory and the
+// per-machine "Thumbnail generation parallelism" setting to a concurrency, and
+// hands both here.
+func NewInDir(dir string, concurrency int, logger *slog.Logger) *Cache {
+	return newCacheAt(dir, qlGenerator{}, concurrency, logger)
 }
 
 // newCache is the injectable constructor used by tests to supply a fake
@@ -119,12 +131,22 @@ func newCacheAt(dir string, gen generator, concurrency int, logger *slog.Logger)
 		dir:     dir,
 		gen:     gen,
 		quality: defaultQuality,
-		sem:     make(chan struct{}, concurrency),
+		sched:   newScheduler(concurrency),
 		log:     logger.With(slog.String("subsystem", "thumbs")),
 	}
 	c.sweepFailMarkers()
 	return c
 }
+
+// Parallelism returns the current generation concurrency bound (shared by
+// interactive requests and the warm-up).
+func (c *Cache) Parallelism() int { return c.sched.capacityValue() }
+
+// SetParallelism changes the generation concurrency bound at runtime (min 1).
+// It takes effect immediately for queue-waiting requests; in-flight generations
+// are never interrupted. Backs the per-machine "Thumbnail generation
+// parallelism" setting.
+func (c *Cache) SetParallelism(n int) { c.sched.setCapacity(n) }
 
 // dirOf returns the current cache directory under the read lock.
 func (c *Cache) dirOf() string {
@@ -191,10 +213,28 @@ func (c *Cache) failPath(sizePx int, quickHash string) string {
 }
 
 // Ensure returns the path to the cached JPEG thumbnail for (srcPath, quickHash)
-// at sizePx, generating it if necessary. Concurrent callers for the same key
-// share one generation. It returns ErrSourceMissing when srcPath does not exist
-// and ErrGenerationFailed (with a persisted negative marker) when rendering fails.
+// at sizePx, generating it if necessary. It is the INTERACTIVE entry point (the
+// HTTP thumbnail handler): its generation is scheduled at the interactive tier,
+// newest-first, preempting the background warm-up. Concurrent callers for the
+// same key share one generation. It returns ErrSourceMissing when srcPath does
+// not exist and ErrGenerationFailed (with a persisted negative marker) when
+// rendering fails.
 func (c *Cache) Ensure(ctx context.Context, srcPath, quickHash string, sizePx int) (string, error) {
+	return c.ensure(ctx, srcPath, quickHash, sizePx, tierInteractive)
+}
+
+// ensure is the shared implementation behind Ensure (interactive) and the
+// Warmer (warm tier). tier selects the scheduler priority; everything else is
+// identical.
+//
+// Abandonment context split (requirement of the interactive path): the request
+// ctx governs only the QUEUE-WAIT — if the browser aborts a tile that is still
+// waiting for a slot, acquire() returns ctx.Err() and no work is done. Once a
+// slot is granted, the render runs under a context DETACHED from the request
+// (context.WithoutCancel): an already-started qlmanage/sips pipeline is mostly
+// paid for, so it finishes and caches even if the browser has since aborted —
+// caching that result is pure win and avoids regenerating it on the next visit.
+func (c *Cache) ensure(ctx context.Context, srcPath, quickHash string, sizePx, tier int) (string, error) {
 	if !validSize(sizePx) {
 		return "", ErrUnsupportedSize
 	}
@@ -209,7 +249,7 @@ func (c *Cache) Ensure(ctx context.Context, srcPath, quickHash string, sizePx in
 	}
 
 	key := strconv.Itoa(sizePx) + "/" + quickHash
-	return c.flight.Do(key, func() (string, error) {
+	return c.flight.Do(key, func(call *flightCall) (string, error) {
 		// Re-check under the flight: a concurrent caller for this key may have just
 		// finished, and the negative marker may already exist.
 		if fileExists(dst) {
@@ -223,20 +263,21 @@ func (c *Cache) Ensure(ctx context.Context, srcPath, quickHash string, sizePx in
 			return "", ErrSourceMissing
 		}
 
-		// Bound global generation concurrency; honor cancellation while queued.
-		select {
-		case c.sem <- struct{}{}:
-		case <-ctx.Done():
-			return "", ctx.Err()
+		// Priority-scheduled slot acquisition. A coalescing re-request (a follower
+		// joining this singleflight) bumps recency via the registered hook, so a
+		// tile that re-enters the viewport — or an interactive request landing on a
+		// queued warmer generation — jumps to the front / into the interactive tier.
+		req := &schedReq{tier: tier, ctx: ctx}
+		call.setBump(func() { c.sched.bump(req) })
+		if err := c.sched.acquire(req); err != nil {
+			return "", err // abandoned while queued: dropped without generating
 		}
-		defer func() { <-c.sem }()
+		defer c.sched.release()
 
-		if err := c.generateAtomic(ctx, srcPath, dst, sizePx); err != nil {
-			// A cancelled context is transient — do not poison the cache with a
-			// negative marker for it.
-			if ctx.Err() != nil {
-				return "", ctx.Err()
-			}
+		// Detach the exec context from the request ctx (see method doc): the render
+		// runs to completion even if the request is cancelled mid-flight.
+		execCtx := context.WithoutCancel(ctx)
+		if err := c.generateAtomic(execCtx, srcPath, dst, sizePx); err != nil {
 			c.markFailed(sizePx, quickHash)
 			c.log.Warn("thumbnail generation failed",
 				"src", srcPath, "size", sizePx, "error", err.Error())
@@ -310,27 +351,54 @@ func fileExists(path string) bool {
 
 // flight is a minimal singleflight: concurrent Do calls sharing a key run the
 // function once and all receive the same result. PAIM does not vendor
-// golang.org/x/sync, so this is implemented directly.
+// golang.org/x/sync, so this is implemented directly. It additionally lets the
+// winner register a "bump" hook that every follower (a re-request for the same
+// key) invokes on join, so a coalesced re-request can refresh the in-flight
+// generation's scheduling recency.
 type flight struct {
 	mu    sync.Mutex
 	calls map[string]*flightCall
 }
 
 type flightCall struct {
-	wg  sync.WaitGroup
-	val string
-	err error
+	wg   sync.WaitGroup
+	val  string
+	err  error
+	mu   sync.Mutex // guards bump
+	bump func()     // set by the winner once its request is enqueued; may be nil
+}
+
+// setBump registers the winner's recency-bump hook. Called by fn once it has a
+// schedReq to promote.
+func (c *flightCall) setBump(b func()) {
+	c.mu.Lock()
+	c.bump = b
+	c.mu.Unlock()
+}
+
+// join is invoked by each follower coalescing onto an in-flight generation. It
+// fires the winner's bump hook (if registered) so the re-request refreshes the
+// generation's recency / promotes it into the interactive tier.
+func (c *flightCall) join() {
+	c.mu.Lock()
+	b := c.bump
+	c.mu.Unlock()
+	if b != nil {
+		b()
+	}
 }
 
 // Do runs fn for key, deduplicating concurrent callers. The winner executes fn;
-// followers block until it completes and return its result.
-func (f *flight) Do(key string, fn func() (string, error)) (string, error) {
+// followers fire the winner's bump hook, then block until it completes and
+// return its result.
+func (f *flight) Do(key string, fn func(*flightCall) (string, error)) (string, error) {
 	f.mu.Lock()
 	if f.calls == nil {
 		f.calls = make(map[string]*flightCall)
 	}
 	if c, ok := f.calls[key]; ok {
 		f.mu.Unlock()
+		c.join()
 		c.wg.Wait()
 		return c.val, c.err
 	}
@@ -339,7 +407,7 @@ func (f *flight) Do(key string, fn func() (string, error)) (string, error) {
 	f.calls[key] = c
 	f.mu.Unlock()
 
-	c.val, c.err = fn()
+	c.val, c.err = fn(c)
 	c.wg.Done()
 
 	f.mu.Lock()

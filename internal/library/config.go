@@ -36,6 +36,13 @@ type Config struct {
 	// because it is a performance preference tied to this machine's disks.
 	ThumbnailCacheLocation string `json:"thumbnailCacheLocation,omitempty"`
 
+	// ThumbnailParallelism bounds how many thumbnails PAIM generates at once
+	// (shared by on-demand browsing and the background warm-up). Machine-local
+	// because the right value depends on THIS Mac's disk: a low value suits a
+	// spinning external HDD (parallel qlmanage renders cause seek thrash), a
+	// higher value suits an SSD. 0/absent means the default (2).
+	ThumbnailParallelism int `json:"thumbnailParallelism,omitempty"`
+
 	// SnapshotDest is the folder catalog snapshots are copied to. Empty disables
 	// snapshots (the default). SnapshotInterval is one of the SnapshotInterval*
 	// tokens; it only matters when SnapshotDest is set.

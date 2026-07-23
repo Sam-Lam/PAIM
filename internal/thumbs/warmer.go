@@ -7,32 +7,33 @@ import (
 	"sync"
 )
 
-// defaultWarmConcurrency bounds how many thumbnails a warm-up generates at once.
-// It is intentionally lower than the interactive generation bound (2 vs 4) so a
-// background warm-up cannot starve an import/backup or the responsive on-demand
-// path the browser depends on.
-const defaultWarmConcurrency = 2
-
 // Warmer pre-generates 512px thumbnails for a set of asset IDs so browsing is
 // instant instead of lazy-on-first-view. It is deliberately thin: it walks IDs,
-// resolves each to a source path + quick hash, and calls Cache.Ensure (which
-// no-ops on a cache hit, so a warm-up is resumable and cheap to re-run). All
-// lifecycle/eventing/quit-guard concerns live in the service that drives it.
+// resolves each to a source path + quick hash, and submits each to the cache at
+// the WARM scheduler tier (which no-ops on a cache hit, so a warm-up is resumable
+// and cheap to re-run). All lifecycle/eventing/quit-guard concerns live in the
+// service that drives it.
+//
+// The warmer no longer owns a generation concurrency bound of its own: actual
+// generation concurrency is the cache's shared two-tier scheduler, where any
+// interactive request preempts warm work. The warmer only bounds how many
+// resolve+submit goroutines it keeps outstanding, and that bound tracks the same
+// per-machine "Thumbnail generation parallelism" setting (via Cache.Parallelism)
+// so it never spawns an unbounded goroutine per catalog ID.
 type Warmer struct {
 	cache    *Cache
 	resolver AssetResolver
-	conc     int
+	conc     int // outstanding-goroutine bound; <1 means "use Cache.Parallelism()"
 	log      *slog.Logger
 }
 
 // NewWarmer constructs a Warmer over a cache and asset resolver. concurrency <= 0
-// falls back to the default bound of 2.
+// means the warmer's outstanding-work bound follows the cache's shared
+// parallelism setting at each Warm() call (the production wiring); a positive
+// value pins it (used by tests).
 func NewWarmer(cache *Cache, resolver AssetResolver, concurrency int, logger *slog.Logger) *Warmer {
 	if logger == nil {
 		logger = slog.Default()
-	}
-	if concurrency < 1 {
-		concurrency = defaultWarmConcurrency
 	}
 	return &Warmer{
 		cache:    cache,
@@ -68,7 +69,14 @@ func (w *Warmer) Warm(ctx context.Context, ids []string, progress func(done, tot
 		progress(d, total)
 	}
 
-	sem := make(chan struct{}, w.conc)
+	conc := w.conc
+	if conc < 1 {
+		conc = w.cache.Parallelism()
+	}
+	if conc < 1 {
+		conc = 1
+	}
+	sem := make(chan struct{}, conc)
 	var wg sync.WaitGroup
 	for _, id := range ids {
 		select {
@@ -107,7 +115,8 @@ func (w *Warmer) warmOne(ctx context.Context, assetID string) {
 		w.log.Debug("warm-up: resolve asset", "assetId", assetID, "error", err.Error())
 		return
 	}
-	if _, err := w.cache.Ensure(ctx, absPath, quickHash, SizeGrid); err != nil {
+	// Warm tier: yields to any interactive /thumb request at the scheduler.
+	if _, err := w.cache.ensure(ctx, absPath, quickHash, SizeGrid, tierWarm); err != nil {
 		// ErrSourceMissing / ErrGenerationFailed are expected for some assets and
 		// already handled (placeholder tile / negative marker); nothing to do.
 		w.log.Debug("warm-up: ensure thumbnail", "assetId", assetID, "error", err.Error())

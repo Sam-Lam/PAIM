@@ -5,8 +5,11 @@ import {
   ArrowsPointingOutIcon,
   BoltIcon,
   CheckIcon,
+  ChevronDownIcon,
   ChevronLeftIcon,
   ChevronRightIcon,
+  ChevronUpDownIcon,
+  ChevronUpIcon,
   ClipboardDocumentIcon,
   FilmIcon,
   FolderIcon,
@@ -1236,11 +1239,151 @@ function ContextMenu({ state, onClose }: { state: ContextMenuState; onClose: () 
 
 const FOLDER_PAGE_SIZE = 90;
 
+/* -------------------------------------------------------------------------- */
+/* Folder sorting                                                              */
+/* -------------------------------------------------------------------------- */
+
+type FolderSortKey = "name" | "date" | "items";
+type SortDir = "asc" | "desc";
+interface FolderSort {
+  key: FolderSortKey;
+  dir: SortDir;
+}
+
+// The direction a column resets to when it first becomes the active sort:
+// name reads best A→Z, date and item-count newest/most first.
+const FOLDER_SORT_DEFAULTS: Record<FolderSortKey, SortDir> = { name: "asc", date: "desc", items: "desc" };
+const FOLDER_SORT_KEY = "paim.library.folderSort";
+
+function loadFolderSort(): FolderSort {
+  const raw = localStorage.getItem(FOLDER_SORT_KEY);
+  if (raw) {
+    const [key, dir] = raw.split(":");
+    if ((key === "name" || key === "date" || key === "items") && (dir === "asc" || dir === "desc")) {
+      return { key, dir };
+    }
+  }
+  return { key: "date", dir: "desc" };
+}
+function saveFolderSort(s: FolderSort): void {
+  localStorage.setItem(FOLDER_SORT_KEY, `${s.key}:${s.dir}`);
+}
+
+const naturalName = (a: string, b: string) =>
+  a.localeCompare(b, undefined, { numeric: true, sensitivity: "base" });
+
+/**
+ * sortFolders orders a fully-loaded folder level client-side. name uses a
+ * natural/numeric locale compare; date uses newestCapture with NULLs always last
+ * (regardless of direction); items uses the recursive asset count. Ties fall back
+ * to natural name so the order is stable.
+ */
+function sortFolders(folders: FolderEntryDTO[], sort: FolderSort): FolderEntryDTO[] {
+  const dir = sort.dir === "asc" ? 1 : -1;
+  return [...folders].sort((a, b) => {
+    let cmp = 0;
+    if (sort.key === "name") {
+      cmp = naturalName(a.name, b.name);
+    } else if (sort.key === "items") {
+      cmp = a.assetCount - b.assetCount;
+    } else {
+      const at = a.newestCapture ? Date.parse(a.newestCapture) : NaN;
+      const bt = b.newestCapture ? Date.parse(b.newestCapture) : NaN;
+      const aNull = Number.isNaN(at);
+      const bNull = Number.isNaN(bt);
+      if (aNull && bNull) cmp = 0;
+      else if (aNull) return 1; // nulls last, regardless of direction
+      else if (bNull) return -1;
+      else cmp = at - bt;
+    }
+    if (cmp === 0) return naturalName(a.name, b.name);
+    return cmp * dir;
+  });
+}
+
+/** One clickable sort-header column, mirroring the DataTable arrow convention. */
+function SortColBtn({
+  label,
+  active,
+  dir,
+  onClick,
+  className = "",
+}: {
+  label: string;
+  active: boolean;
+  dir: SortDir;
+  onClick: () => void;
+  className?: string;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      className={`flex items-center gap-1 text-[11px] font-medium tracking-wide uppercase transition ${
+        active ? "text-zinc-200" : "text-zinc-500 hover:text-zinc-300"
+      } ${className}`}
+    >
+      {label}
+      {active ? (
+        dir === "asc" ? (
+          <ChevronUpIcon className="h-3.5 w-3.5 text-blue-400" />
+        ) : (
+          <ChevronDownIcon className="h-3.5 w-3.5 text-blue-400" />
+        )
+      ) : (
+        <ChevronUpDownIcon className="h-3.5 w-3.5 text-zinc-600" />
+      )}
+    </button>
+  );
+}
+
+/**
+ * FolderSortHeader — the Name | Date | Items header row. Its columns align with
+ * the folder rows below (cover + icon spacers on the left, chevron spacer on the
+ * right). Name and Date order BOTH the folder rows and the folder's assets; Items
+ * reorders folders only.
+ */
+function FolderSortHeader({ sort, onSort }: { sort: FolderSort; onSort: (key: FolderSortKey) => void }) {
+  return (
+    <div className="flex w-full items-center gap-3 border-b border-zinc-800 bg-zinc-900/40 px-3 py-2">
+      <div className="h-9 w-9 flex-none" />
+      <div className="h-4 w-4 flex-none" />
+      <SortColBtn
+        className="min-w-0 flex-1 justify-start"
+        label="Name"
+        active={sort.key === "name"}
+        dir={sort.dir}
+        onClick={() => onSort("name")}
+      />
+      <SortColBtn
+        className="w-24 flex-none justify-end"
+        label="Date"
+        active={sort.key === "date"}
+        dir={sort.dir}
+        onClick={() => onSort("date")}
+      />
+      <SortColBtn
+        className="w-16 flex-none justify-end"
+        label="Items"
+        active={sort.key === "items"}
+        dir={sort.dir}
+        onClick={() => onSort("items")}
+      />
+      <div className="h-4 w-4 flex-none" />
+    </div>
+  );
+}
+
 /**
  * FolderView — the archive tree, driven by BrowserService.ListFolder. Breadcrumb
- * navigation, folder rows (icon, name, count, cover thumb) that drill in, and the
- * folder's own assets as rows below. A custom right-click menu offers Rename… /
- * Reveal in Finder on date-event folders and Reveal in Finder on assets.
+ * navigation, a sortable Name | Date | Items header, folder rows (cover thumb,
+ * name, newest date, count) that drill in, and the folder's own assets as rows
+ * below. A custom right-click menu offers Rename… / Reveal in Finder on
+ * date-event folders and Reveal in Finder on assets.
+ *
+ * Sorting: the header persists to localStorage (paim.library.folderSort). Folders
+ * are fully loaded so they sort CLIENT-side. Assets are server-paginated, so Name
+ * and Date are threaded to ListFolder and reset pagination; Items reorders folders
+ * only and leaves the asset order (and its server sort) untouched.
  */
 function FolderView({ fit }: { fit: boolean }) {
   const toast = useToast();
@@ -1256,12 +1399,36 @@ function FolderView({ fit }: { fit: boolean }) {
   const [renameTarget, setRenameTarget] = useState<{ relDir: string; label: string } | null>(null);
   const [drawerNonce, setDrawerNonce] = useState(0);
 
+  // Header sort. folderSort drives the (client-side) folder ordering; assetSort is
+  // the server sort for the folder's own assets and follows folderSort whenever the
+  // active column is Name or Date. Selecting Items reorders folders only and leaves
+  // the asset order (and its server sort) as it was.
+  const [folderSort, setFolderSort] = useState<FolderSort>(() => loadFolderSort());
+  const [assetSort, setAssetSort] = useState<{ by: "name" | "date"; dir: SortDir }>(() => {
+    const s = loadFolderSort();
+    return s.key === "items" ? { by: "date", dir: "desc" } : { by: s.key, dir: s.dir };
+  });
+  useEffect(() => {
+    if (folderSort.key !== "items") setAssetSort({ by: folderSort.key, dir: folderSort.dir });
+  }, [folderSort]);
+
+  const cycleSort = useCallback((key: FolderSortKey) => {
+    setFolderSort((cur) => {
+      const next: FolderSort =
+        cur.key === key
+          ? { key, dir: cur.dir === "asc" ? "desc" : "asc" }
+          : { key, dir: FOLDER_SORT_DEFAULTS[key] };
+      saveFolderSort(next);
+      return next;
+    });
+  }, []);
+
   const load = useCallback(
     async (dir: string, pageNum: number, reset: boolean) => {
       if (reset) setLoading(true);
       else setLoadingMore(true);
       try {
-        const res = await BrowserService.ListFolder(dir, pageNum, FOLDER_PAGE_SIZE);
+        const res = await BrowserService.ListFolder(dir, pageNum, FOLDER_PAGE_SIZE, assetSort.by, assetSort.dir);
         setListing(res);
         setTotal(res.assets?.total ?? 0);
         const incoming = res.assets?.items ?? [];
@@ -1274,12 +1441,19 @@ function FolderView({ fit }: { fit: boolean }) {
         setLoadingMore(false);
       }
     },
-    [toast],
+    [toast, assetSort],
   );
 
+  // Reload page 1 on directory change OR asset-sort change (load's identity tracks
+  // assetSort), which also resets the "Load more" pagination.
   useEffect(() => {
     void load(relDir, 1, true);
   }, [relDir, load]);
+
+  const sortedFolders = useMemo(
+    () => sortFolders(listing?.subfolders ?? [], folderSort),
+    [listing, folderSort],
+  );
 
   const revealAsset = async (id: string) => {
     try {
@@ -1384,10 +1558,12 @@ function FolderView({ fit }: { fit: boolean }) {
         <LoadingBlock label="Loading folder…" />
       ) : (
         <div className="space-y-5">
-          {/* Subfolders */}
-          {(listing?.subfolders ?? []).length > 0 ? (
+          {/* Sortable header + subfolders. The header shows whenever there is any
+              content, since Name/Date also govern the asset order below. */}
+          {sortedFolders.length > 0 || assets.length > 0 ? (
             <div className="overflow-hidden rounded-lg border border-zinc-800">
-              {(listing?.subfolders ?? []).map((f) => (
+              <FolderSortHeader sort={folderSort} onSort={cycleSort} />
+              {sortedFolders.map((f) => (
                 <button
                   key={f.relPath}
                   onClick={() => setRelDir(f.relPath)}
@@ -1397,8 +1573,11 @@ function FolderView({ fit }: { fit: boolean }) {
                   <FolderCover coverId={f.coverAssetId} />
                   <FolderIcon className="h-4 w-4 flex-none text-zinc-500" />
                   <span className="min-w-0 flex-1 truncate text-[13px] text-zinc-200">{f.name}</span>
-                  <span className="flex-none text-[11px] text-zinc-500 tabular-nums">
-                    {formatNumber(f.assetCount)} item{f.assetCount === 1 ? "" : "s"}
+                  <span className="w-24 flex-none text-right text-[11px] text-zinc-500 tabular-nums">
+                    {f.newestCapture ? formatDateOnly(f.newestCapture) : "—"}
+                  </span>
+                  <span className="w-16 flex-none text-right text-[11px] text-zinc-500 tabular-nums">
+                    {formatNumber(f.assetCount)}
                   </span>
                   <ChevronRightIcon className="h-4 w-4 flex-none text-zinc-600" />
                 </button>

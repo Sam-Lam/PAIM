@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ArrowPathIcon, ClockIcon, ExclamationTriangleIcon } from "@heroicons/react/24/outline";
+import { ArrowPathIcon, ClockIcon, ExclamationTriangleIcon, InformationCircleIcon } from "@heroicons/react/24/outline";
 import {
   Button,
   Card,
@@ -67,11 +67,14 @@ export function HistoryPage() {
       {
         id: "source",
         header: "Source",
-        accessorFn: (s) => s.sourceId,
+        accessorFn: (s) => s.sourceLabel,
         cell: ({ row }) =>
-          row.original.sourceId ? (
-            <span className="font-mono text-[11px] text-zinc-500" title={row.original.sourceId}>
-              {row.original.sourceId.slice(0, 8)}
+          row.original.sourceLabel ? (
+            <span
+              className="text-[12px] text-zinc-400"
+              title={row.original.sourceRoot || row.original.sourceId || row.original.sourceLabel}
+            >
+              {row.original.sourceLabel}
             </span>
           ) : (
             <span className="text-zinc-600">—</span>
@@ -268,6 +271,12 @@ function SessionDetailPanel({ session, cache }: { session: SessionDTO; cache: Ma
           </p>
         ) : (
           <>
+            {detail?.approximate ? (
+              <p className="mb-2 flex items-center gap-2 text-[11px] text-zinc-500">
+                <InformationCircleIcon className="h-3.5 w-3.5 flex-none" /> Events matched by time window — this older
+                session's logs predate per-event session tagging.
+              </p>
+            ) : null}
             <ul className="space-y-1">
               {events.map((ev) => (
                 <EventRow key={ev.id} event={ev} />

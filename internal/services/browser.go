@@ -141,14 +141,16 @@ func (s *BrowserService) RevealAsset(ctx context.Context, assetID, which string)
 
 // FolderEntryDTO is one immediate subdirectory in a folder listing: its display
 // name, full root-relative path (for drilling in), recursive asset count, a
-// representative cover asset id (for a thumbnail), and whether it is a renameable
-// date-event folder.
+// representative cover asset id (for a thumbnail), the newest effective capture
+// date anywhere beneath it (nullable ISO string; capture date, or import date as
+// fallback), and whether it is a renameable date-event folder.
 type FolderEntryDTO struct {
-	Name         string `json:"name"`
-	RelPath      string `json:"relPath"`
-	AssetCount   int64  `json:"assetCount"`
-	CoverAssetID string `json:"coverAssetId"`
-	IsDateFolder bool   `json:"isDateFolder"`
+	Name          string     `json:"name"`
+	RelPath       string     `json:"relPath"`
+	AssetCount    int64      `json:"assetCount"`
+	CoverAssetID  string     `json:"coverAssetId"`
+	NewestCapture *time.Time `json:"newestCapture"`
+	IsDateFolder  bool       `json:"isDateFolder"`
 }
 
 // FolderListingDTO is one level of the archive tree: the cleaned directory, its
@@ -163,13 +165,33 @@ type FolderListingDTO struct {
 	Assets       PageResult[BrowseAssetDTO] `json:"assets"`
 }
 
+// normalizeFolderSort validates the ListFolder sort parameters, mapping any
+// unrecognized value to the default (date/desc — newest first). sortBy is
+// "name" or "date"; sortDir is "asc" or "desc". The Items column is a
+// folder-only, client-side ordering and never reaches the server, so it is not a
+// valid sortBy here.
+func normalizeFolderSort(sortBy, sortDir string) (by, dir string) {
+	by = strings.ToLower(strings.TrimSpace(sortBy))
+	if by != "name" && by != "date" {
+		by = "date"
+	}
+	dir = strings.ToLower(strings.TrimSpace(sortDir))
+	if dir != "asc" && dir != "desc" {
+		dir = "desc"
+	}
+	return by, dir
+}
+
 // ListFolder returns one level of the archive tree derived from the catalog
 // (never a filesystem walk): the immediate subfolders of relDir (each with a
-// recursive asset count and cover thumbnail) plus the assets sitting directly in
-// relDir, paged. relDir is a root-relative forward-slash directory; "" lists the
-// year folders at the root. The returned RelDir is the cleaned, breadcrumb-safe
-// path.
-func (s *BrowserService) ListFolder(ctx context.Context, relDir string, page, pageSize int) (FolderListingDTO, error) {
+// recursive asset count, cover thumbnail, and newest capture date) plus the
+// assets sitting directly in relDir, paged. relDir is a root-relative
+// forward-slash directory; "" lists the year folders at the root. The returned
+// RelDir is the cleaned, breadcrumb-safe path. sortBy ("name"|"date") and
+// sortDir ("asc"|"desc") order the directly-contained assets; unknown values
+// default to date/desc (newest first). Subfolders are always returned in name
+// order and re-sorted client-side.
+func (s *BrowserService) ListFolder(ctx context.Context, relDir string, page, pageSize int, sortBy, sortDir string) (FolderListingDTO, error) {
 	if err := s.guard(); err != nil {
 		return FolderListingDTO{}, err
 	}
@@ -189,16 +211,18 @@ func (s *BrowserService) ListFolder(ctx context.Context, relDir string, page, pa
 			relPath = clean + "/" + c.Name
 		}
 		subs = append(subs, FolderEntryDTO{
-			Name:         c.Name,
-			RelPath:      relPath,
-			AssetCount:   c.AssetCount,
-			CoverAssetID: c.CoverAssetID,
-			IsDateFolder: dateFolderRe.MatchString(relPath),
+			Name:          c.Name,
+			RelPath:       relPath,
+			AssetCount:    c.AssetCount,
+			CoverAssetID:  c.CoverAssetID,
+			NewestCapture: c.NewestCapture,
+			IsDateFolder:  dateFolderRe.MatchString(relPath),
 		})
 	}
 
+	by, dir := normalizeFolderSort(sortBy, sortDir)
 	limit, offset := normalizePage(page, pageSize)
-	rows, total, err := s.assets.FolderAssets(ctx, clean, repo.Page{Limit: limit, Offset: offset})
+	rows, total, err := s.assets.FolderAssets(ctx, clean, repo.Page{Limit: limit, Offset: offset}, by, dir)
 	if err != nil {
 		return FolderListingDTO{}, err
 	}
@@ -272,8 +296,8 @@ func (s *BrowserService) RenameEventFolder(ctx context.Context, relDir, newLabel
 		return FolderListingDTO{}, fmt.Errorf("services: rename: %q is not a YYYY/YYYY-MM-DD event folder", oldRel)
 	}
 
-	year, base := path.Split(oldRel)          // "2019/", "2019-06-12 Trip"
-	datePart := base[:10]                      // "2019-06-12" (regex guarantees length)
+	year, base := path.Split(oldRel) // "2019/", "2019-06-12 Trip"
+	datePart := base[:10]            // "2019-06-12" (regex guarantees length)
 	newBase := datePart
 	if label := archive.SanitizeEvent(newLabel); label != "" {
 		newBase = datePart + " " + label
@@ -289,7 +313,7 @@ func (s *BrowserService) RenameEventFolder(ctx context.Context, relDir, newLabel
 
 	if newRel == oldRel {
 		// No change requested; return the current listing unchanged.
-		return s.ListFolder(ctx, oldRel, 1, folderRenamePageSize)
+		return s.ListFolder(ctx, oldRel, 1, folderRenamePageSize, "date", "desc")
 	}
 
 	// The source must exist and be a directory.
@@ -324,7 +348,7 @@ func (s *BrowserService) RenameEventFolder(ctx context.Context, relDir, newLabel
 	}
 
 	s.log.Info("renamed event folder", "from", oldRel, "to", newRel)
-	return s.ListFolder(ctx, newRel, 1, folderRenamePageSize)
+	return s.ListFolder(ctx, newRel, 1, folderRenamePageSize, "date", "desc")
 }
 
 // folderRenamePageSize is the first-page size the rename/no-op paths use when

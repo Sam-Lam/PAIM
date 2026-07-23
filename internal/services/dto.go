@@ -1,10 +1,12 @@
 package services
 
 import (
+	"path/filepath"
 	"time"
 
 	"github.com/Sam-Lam/PAIM/internal/backup"
 	"github.com/Sam-Lam/PAIM/internal/domain"
+	"github.com/Sam-Lam/PAIM/internal/importer"
 	"github.com/Sam-Lam/PAIM/internal/library"
 	"github.com/Sam-Lam/PAIM/internal/volumes"
 )
@@ -87,13 +89,25 @@ type SessionDTO struct {
 	Skipped         int        `json:"skipped"`
 	Status          string     `json:"status"`
 	Mode            string     `json:"mode"`
+	// SourceLabel is a human-readable description of the import source for the
+	// History "Source" column: for adopt runs "Library (adopt)"; for a copy run
+	// with a linked source, the volume label + type (enriched by HistoryService);
+	// otherwise a display-only fallback to the source root folder's basename. It is
+	// never empty for a session whose notes recorded a source root.
+	SourceLabel string `json:"sourceLabel"`
+	// SourceRoot is the absolute source tree recorded in the session's resume-state
+	// notes. It backs the Source column's tooltip (and the basename fallback).
+	SourceRoot string `json:"sourceRoot"`
 }
 
 // toSessionDTO maps a domain.ImportSession to its DTO, extracting the import mode
-// from the resume-state JSON stored in Notes (defaulting to "copy").
+// from the resume-state JSON stored in Notes (defaulting to "copy") and deriving
+// a display-only SourceLabel. HistoryService replaces the label with the linked
+// volume's label+type when the session records a SourceID.
 func toSessionDTO(s domain.ImportSession) SessionDTO {
+	st, _ := decodeResumeState(s.Notes)
 	mode := "copy"
-	if st, err := decodeResumeState(s.Notes); err == nil && st.Mode != "" {
+	if st.Mode != "" {
 		mode = st.Mode
 	}
 	return SessionDTO{
@@ -110,7 +124,23 @@ func toSessionDTO(s domain.ImportSession) SessionDTO {
 		Skipped:         s.Skipped,
 		Status:          string(s.Status),
 		Mode:            mode,
+		SourceLabel:     defaultSourceLabel(mode, st.SourceRoot),
+		SourceRoot:      st.SourceRoot,
 	}
+}
+
+// defaultSourceLabel derives the display-only source label from a session's mode
+// and recorded source root, used when no ImportSource is linked (or before
+// enrichment): adopt runs are labeled "Library (adopt)" (the source is the
+// library itself); copy runs fall back to the source root folder's basename.
+func defaultSourceLabel(mode, sourceRoot string) string {
+	if mode == string(importer.ModeAdopt) {
+		return "Library (adopt)"
+	}
+	if sourceRoot != "" {
+		return filepath.Base(sourceRoot)
+	}
+	return ""
 }
 
 // SourceDTO is the JSON-friendly projection of an ImportSource.

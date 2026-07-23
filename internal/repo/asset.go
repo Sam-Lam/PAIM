@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/Sam-Lam/PAIM/internal/domain"
 	"gorm.io/gorm"
@@ -168,12 +169,54 @@ func (r *AssetRepo) UpdateArchivePathPrefix(ctx context.Context, oldPrefix, newP
 }
 
 // FolderChild is one immediate subdirectory of a browsed folder: its segment
-// name, the number of assets anywhere beneath it (recursive), and a
-// representative cover asset (the newest by capture date).
+// name, the number of assets anywhere beneath it (recursive), a representative
+// cover asset (the newest by effective capture date), and the newest effective
+// capture date anywhere beneath it. NewestCapture is nil only when the subtree
+// has no datable rows (never in practice — import_date is always set).
 type FolderChild struct {
-	Name         string `json:"name"`
-	AssetCount   int64  `json:"assetCount"`
-	CoverAssetID string `json:"coverAssetId"`
+	Name          string     `json:"name"`
+	AssetCount    int64      `json:"assetCount"`
+	CoverAssetID  string     `json:"coverAssetId"`
+	NewestCapture *time.Time `json:"newestCapture"`
+}
+
+// folderChildRow is the raw scan target for FolderChildren. SQLite (via the
+// mattn driver) returns a datetime EXPRESSION — max(COALESCE(...)) has no
+// declared column type — as a text value, not time.Time, so newest_capture is
+// scanned as a string and parsed into FolderChild.NewestCapture.
+type folderChildRow struct {
+	Name          string
+	AssetCount    int64
+	CoverAssetID  string
+	NewestCapture string
+}
+
+// sqliteTimeLayouts are the datetime text formats the SQLite driver may emit
+// for a stored time.Time, tried in order when parsing a raw datetime expression
+// (see folderChildRow.NewestCapture). The first entry matches the driver's
+// default write format (e.g. "2019-06-12 10:00:00+00:00").
+var sqliteTimeLayouts = []string{
+	"2006-01-02 15:04:05.999999999-07:00",
+	"2006-01-02 15:04:05-07:00",
+	"2006-01-02T15:04:05.999999999-07:00",
+	"2006-01-02T15:04:05Z07:00",
+	"2006-01-02 15:04:05",
+	"2006-01-02T15:04:05",
+	"2006-01-02",
+}
+
+// parseSQLiteTime parses a datetime text value emitted by the SQLite driver for
+// an untyped expression, returning nil for an empty or unparseable value.
+func parseSQLiteTime(s string) *time.Time {
+	if s == "" {
+		return nil
+	}
+	for _, layout := range sqliteTimeLayouts {
+		if tm, err := time.Parse(layout, s); err == nil {
+			return &tm
+		}
+	}
+	return nil
 }
 
 // FolderChildren returns the immediate subdirectories of relDir derived from
@@ -205,34 +248,75 @@ func (r *AssetRepo) FolderChildren(ctx context.Context, relDir string) ([]Folder
 		args = append(args, escapeLike(prefix)+"%")
 	}
 
-	// Inner: project each row to its (rest-of-path) relative to relDir. Middle:
-	// keep only rows that go DEEPER than relDir (a subfolder) and cut the first
-	// segment. Outer: group by that segment. The bare `id` column takes its value
-	// from the row holding max(capture_date) — SQLite's documented min/max
-	// bare-column rule — giving a newest-first cover per subfolder.
+	// eff is each row's effective capture date: the real capture date when known,
+	// otherwise the import date (COALESCE fallback). import_date is always set, so
+	// eff is never NULL and every subfolder gets a newest_capture.
+	//
+	// Inner: project each row to its (rest-of-path) relative to relDir and its eff.
+	// Middle: keep only rows that go DEEPER than relDir (a subfolder) and cut the
+	// first segment. Outer: group by that segment, taking the recursive count, the
+	// subtree's MAX effective date, and a cover asset. With exactly one max()
+	// aggregate the bare `id` column takes its value from that same max(eff) row
+	// (SQLite's documented min/max bare-column rule), giving a newest-first cover
+	// per subfolder.
 	sql := `
-SELECT name, count(*) AS asset_count, id AS cover_asset_id
+SELECT name, count(*) AS asset_count, id AS cover_asset_id, max(eff) AS newest_capture
 FROM (
-  SELECT id, capture_date, substr(rest, 1, instr(rest, '/') - 1) AS name
-  FROM (SELECT id, capture_date, ` + restExpr + ` AS rest FROM assets WHERE ` + where + `)
+  SELECT id, eff, substr(rest, 1, instr(rest, '/') - 1) AS name
+  FROM (SELECT id, COALESCE(capture_date, import_date) AS eff, ` + restExpr + ` AS rest FROM assets WHERE ` + where + `)
   WHERE instr(rest, '/') > 0
 )
 GROUP BY name
 ORDER BY name`
 
-	var rows []FolderChild
-	if err := r.db.WithContext(ctx).Raw(sql, args...).Scan(&rows).Error; err != nil {
+	var raw []folderChildRow
+	if err := r.db.WithContext(ctx).Raw(sql, args...).Scan(&raw).Error; err != nil {
 		return nil, fmt.Errorf("repo: folder children of %q: %w", relDir, err)
+	}
+	rows := make([]FolderChild, 0, len(raw))
+	for _, rr := range raw {
+		rows = append(rows, FolderChild{
+			Name:          rr.Name,
+			AssetCount:    rr.AssetCount,
+			CoverAssetID:  rr.CoverAssetID,
+			NewestCapture: parseSQLiteTime(rr.NewestCapture),
+		})
 	}
 	return rows, nil
 }
 
+// folderAssetsOrderBy builds the ORDER BY clause for FolderAssets from a
+// validated sortBy ("name"|"date") and sortDir ("asc"|"desc"). Unknown values
+// fall back to the default date/desc. The clause is assembled ONLY from these
+// fixed, whitelisted tokens — never interpolated caller text — so it is
+// injection-safe.
+//
+//   - name: original_filename COLLATE NOCASE (case-insensitive), created_at tie-break.
+//   - date: effective capture date = COALESCE(capture_date, import_date). Rows with
+//     NO capture date are treated as undated and always sort LAST regardless of
+//     direction (nulls last per direction); import_date then created_at break ties.
+//     For date/desc this reproduces the prior default order exactly.
+func folderAssetsOrderBy(sortBy, sortDir string) string {
+	dir := "DESC"
+	if strings.EqualFold(sortDir, "asc") {
+		dir = "ASC"
+	}
+	if strings.EqualFold(sortBy, "name") {
+		return "original_filename COLLATE NOCASE " + dir + ", created_at " + dir
+	}
+	// date (default): undated (NULL capture) last in both directions.
+	return "CASE WHEN capture_date IS NULL THEN 1 ELSE 0 END ASC, " +
+		"COALESCE(capture_date, import_date) " + dir + ", import_date " + dir + ", created_at " + dir
+}
+
 // FolderAssets returns the assets sitting DIRECTLY in relDir (their parent
-// directory equals relDir) plus the total count, ordered newest-capture-first
-// like List. relDir is a root-relative forward-slash directory ("" = root). A
-// file is "directly in" relDir when the remainder of its path after relDir
-// contains no further "/".
-func (r *AssetRepo) FolderAssets(ctx context.Context, relDir string, page Page) ([]domain.Asset, int64, error) {
+// directory equals relDir) plus the total count. relDir is a root-relative
+// forward-slash directory ("" = root). A file is "directly in" relDir when the
+// remainder of its path after relDir contains no further "/". Ordering is set by
+// sortBy ("name"|"date", default "date") and sortDir ("asc"|"desc", default
+// "desc"); see folderAssetsOrderBy. The default date/desc matches List's
+// newest-capture-first order.
+func (r *AssetRepo) FolderAssets(ctx context.Context, relDir string, page Page, sortBy, sortDir string) ([]domain.Asset, int64, error) {
 	relDir = strings.Trim(relDir, "/")
 
 	base := r.db.WithContext(ctx).Model(&domain.Asset{})
@@ -250,7 +334,7 @@ func (r *AssetRepo) FolderAssets(ctx context.Context, relDir string, page Page) 
 		return nil, 0, fmt.Errorf("repo: folder assets of %q (count): %w", relDir, err)
 	}
 	limit, offset := page.apply()
-	q := base.Order("capture_date DESC, import_date DESC, created_at DESC")
+	q := base.Order(folderAssetsOrderBy(sortBy, sortDir))
 	if limit > 0 {
 		q = q.Limit(limit)
 	}

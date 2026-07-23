@@ -29,6 +29,9 @@ import * as source$0 from "../source/models.js";
 import * as thumbs$0 from "../thumbs/models.js";
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore: Unused imports
+import * as volumes$0 from "../volumes/models.js";
+// eslint-disable-next-line @typescript-eslint/ban-ts-comment
+// @ts-ignore: Unused imports
 import * as gorm$0 from "../../../../../gorm.io/gorm/models.js";
 
 /**
@@ -528,6 +531,17 @@ export class AppCore {
              */
             this["Identifier"] = null;
         }
+        if (!("Collector" in $$source)) {
+            /**
+             * Collector enumerates/describes mounted volumes. It is library-independent
+             * (owned by main.go, passed through CoreDeps) but carried here so services
+             * bound to the core — e.g. the ImportService source auto-link — can reach it
+             * without a separate wiring path.
+             * @member
+             * @type {volumes$0.Collector | null}
+             */
+            this["Collector"] = null;
+        }
         if (!("Thumbs" in $$source)) {
             /**
              * Thumbs is this library's disposable thumbnail cache
@@ -560,6 +574,7 @@ export class AppCore {
         const $$createField11_0 = $$createType36;
         const $$createField12_0 = $$createType38;
         const $$createField13_0 = $$createType40;
+        const $$createField14_0 = $$createType42;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("Meta" in $$parsedSource) {
             $$parsedSource["Meta"] = $$createField1_0($$parsedSource["Meta"]);
@@ -597,8 +612,11 @@ export class AppCore {
         if ("Identifier" in $$parsedSource) {
             $$parsedSource["Identifier"] = $$createField12_0($$parsedSource["Identifier"]);
         }
+        if ("Collector" in $$parsedSource) {
+            $$parsedSource["Collector"] = $$createField13_0($$parsedSource["Collector"]);
+        }
         if ("Thumbs" in $$parsedSource) {
-            $$parsedSource["Thumbs"] = $$createField13_0($$parsedSource["Thumbs"]);
+            $$parsedSource["Thumbs"] = $$createField14_0($$parsedSource["Thumbs"]);
         }
         return new AppCore(/** @type {Partial<AppCore>} */($$parsedSource));
     }
@@ -1035,10 +1053,10 @@ export class AssetDetailDTO {
      * @returns {AssetDetailDTO}
      */
     static createFrom($$source = {}) {
-        const $$createField30_0 = $$createType42;
-        const $$createField31_0 = $$createType44;
-        const $$createField32_0 = $$createType45;
-        const $$createField33_0 = $$createType44;
+        const $$createField30_0 = $$createType44;
+        const $$createField31_0 = $$createType46;
+        const $$createField32_0 = $$createType47;
+        const $$createField33_0 = $$createType46;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("backupJobs" in $$parsedSource) {
             $$parsedSource["backupJobs"] = $$createField30_0($$parsedSource["backupJobs"]);
@@ -1336,7 +1354,7 @@ export class BackupQueueChanged {
      * @returns {BackupQueueChanged}
      */
     static createFrom($$source = {}) {
-        const $$createField0_0 = $$createType46;
+        const $$createField0_0 = $$createType48;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("summary" in $$parsedSource) {
             $$parsedSource["summary"] = $$createField0_0($$parsedSource["summary"]);
@@ -1638,7 +1656,7 @@ export class ClassStatDTO {
      * @returns {ClassStatDTO}
      */
     static createFrom($$source = {}) {
-        const $$createField3_0 = $$createType47;
+        const $$createField3_0 = $$createType49;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("files" in $$parsedSource) {
             $$parsedSource["files"] = $$createField3_0($$parsedSource["files"]);
@@ -1843,8 +1861,8 @@ export class CleanupReportDTO {
      * @returns {CleanupReportDTO}
      */
     static createFrom($$source = {}) {
-        const $$createField1_0 = $$createType49;
-        const $$createField9_0 = $$createType50;
+        const $$createField1_0 = $$createType51;
+        const $$createField9_0 = $$createType52;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("classes" in $$parsedSource) {
             $$parsedSource["classes"] = $$createField1_0($$parsedSource["classes"]);
@@ -2115,12 +2133,12 @@ export class DashboardStats {
      * @returns {DashboardStats}
      */
     static createFrom($$source = {}) {
-        const $$createField0_0 = $$createType51;
-        const $$createField1_0 = $$createType53;
-        const $$createField3_0 = $$createType54;
-        const $$createField5_0 = $$createType56;
-        const $$createField6_0 = $$createType56;
-        const $$createField7_0 = $$createType58;
+        const $$createField0_0 = $$createType53;
+        const $$createField1_0 = $$createType55;
+        const $$createField3_0 = $$createType56;
+        const $$createField5_0 = $$createType58;
+        const $$createField6_0 = $$createType58;
+        const $$createField7_0 = $$createType60;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("totals" in $$parsedSource) {
             $$parsedSource["totals"] = $$createField0_0($$parsedSource["totals"]);
@@ -2319,8 +2337,8 @@ export class DuplicatePairDTO {
      * @returns {DuplicatePairDTO}
      */
     static createFrom($$source = {}) {
-        const $$createField0_0 = $$createType59;
-        const $$createField1_0 = $$createType59;
+        const $$createField0_0 = $$createType61;
+        const $$createField1_0 = $$createType61;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("duplicate" in $$parsedSource) {
             $$parsedSource["duplicate"] = $$createField0_0($$parsedSource["duplicate"]);
@@ -2381,8 +2399,9 @@ export class DuplicateProgress {
 /**
  * FolderEntryDTO is one immediate subdirectory in a folder listing: its display
  * name, full root-relative path (for drilling in), recursive asset count, a
- * representative cover asset id (for a thumbnail), and whether it is a renameable
- * date-event folder.
+ * representative cover asset id (for a thumbnail), the newest effective capture
+ * date anywhere beneath it (nullable ISO string; capture date, or import date as
+ * fallback), and whether it is a renameable date-event folder.
  */
 export class FolderEntryDTO {
     /**
@@ -2417,6 +2436,13 @@ export class FolderEntryDTO {
              * @type {string}
              */
             this["coverAssetId"] = "";
+        }
+        if (!("newestCapture" in $$source)) {
+            /**
+             * @member
+             * @type {string | null}
+             */
+            this["newestCapture"] = null;
         }
         if (!("isDateFolder" in $$source)) {
             /**
@@ -2497,8 +2523,8 @@ export class FolderListingDTO {
      * @returns {FolderListingDTO}
      */
     static createFrom($$source = {}) {
-        const $$createField3_0 = $$createType61;
-        const $$createField4_0 = $$createType63;
+        const $$createField3_0 = $$createType63;
+        const $$createField4_0 = $$createType65;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("subfolders" in $$parsedSource) {
             $$parsedSource["subfolders"] = $$createField3_0($$parsedSource["subfolders"]);
@@ -3090,8 +3116,8 @@ export class MatchDTO {
      * @returns {MatchDTO}
      */
     static createFrom($$source = {}) {
-        const $$createField1_0 = $$createType55;
-        const $$createField3_0 = $$createType47;
+        const $$createField1_0 = $$createType57;
+        const $$createField3_0 = $$createType49;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("source" in $$parsedSource) {
             $$parsedSource["source"] = $$createField1_0($$parsedSource["source"]);
@@ -3187,8 +3213,8 @@ export class OpenResultDTO {
      * @returns {OpenResultDTO}
      */
     static createFrom($$source = {}) {
-        const $$createField1_0 = $$createType65;
-        const $$createField2_0 = $$createType67;
+        const $$createField1_0 = $$createType67;
+        const $$createField2_0 = $$createType69;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("library" in $$parsedSource) {
             $$parsedSource["library"] = $$createField1_0($$parsedSource["library"]);
@@ -3323,7 +3349,7 @@ export class PageResult {
      * @returns {($$source?: any) => PageResult<T>}
      */
     static createFrom($$createParamT) {
-        const $$createField0_0 = $$createType68($$createParamT);
+        const $$createField0_0 = $$createType70($$createParamT);
         return ($$source = {}) => {
             let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
             if ("items" in $$parsedSource) {
@@ -3581,7 +3607,7 @@ export class QueueSummaryDTO {
      * @returns {QueueSummaryDTO}
      */
     static createFrom($$source = {}) {
-        const $$createField7_0 = $$createType70;
+        const $$createField7_0 = $$createType72;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("cooldowns" in $$parsedSource) {
             $$parsedSource["cooldowns"] = $$createField7_0($$parsedSource["cooldowns"]);
@@ -3619,7 +3645,7 @@ export class QuitRequested {
      * @returns {QuitRequested}
      */
     static createFrom($$source = {}) {
-        const $$createField0_0 = $$createType72;
+        const $$createField0_0 = $$createType74;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("operations" in $$parsedSource) {
             $$parsedSource["operations"] = $$createField0_0($$parsedSource["operations"]);
@@ -3735,7 +3761,7 @@ export class RcloneRemotesDTO {
      * @returns {RcloneRemotesDTO}
      */
     static createFrom($$source = {}) {
-        const $$createField2_0 = $$createType47;
+        const $$createField2_0 = $$createType49;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("remotes" in $$parsedSource) {
             $$parsedSource["remotes"] = $$createField2_0($$parsedSource["remotes"]);
@@ -3836,7 +3862,7 @@ export class RecommendationDTO {
      * @returns {RecommendationDTO}
      */
     static createFrom($$source = {}) {
-        const $$createField3_0 = $$createType47;
+        const $$createField3_0 = $$createType49;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("reasons" in $$parsedSource) {
             $$parsedSource["reasons"] = $$createField3_0($$parsedSource["reasons"]);
@@ -3974,8 +4000,8 @@ export class ReorganizePlanDTO {
      * @returns {ReorganizePlanDTO}
      */
     static createFrom($$source = {}) {
-        const $$createField6_0 = $$createType74;
-        const $$createField7_0 = $$createType76;
+        const $$createField6_0 = $$createType76;
+        const $$createField7_0 = $$createType78;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("movesSample" in $$parsedSource) {
             $$parsedSource["movesSample"] = $$createField6_0($$parsedSource["movesSample"]);
@@ -4409,6 +4435,27 @@ export class SessionDTO {
              */
             this["mode"] = "";
         }
+        if (!("sourceLabel" in $$source)) {
+            /**
+             * SourceLabel is a human-readable description of the import source for the
+             * History "Source" column: for adopt runs "Library (adopt)"; for a copy run
+             * with a linked source, the volume label + type (enriched by HistoryService);
+             * otherwise a display-only fallback to the source root folder's basename. It is
+             * never empty for a session whose notes recorded a source root.
+             * @member
+             * @type {string}
+             */
+            this["sourceLabel"] = "";
+        }
+        if (!("sourceRoot" in $$source)) {
+            /**
+             * SourceRoot is the absolute source tree recorded in the session's resume-state
+             * notes. It backs the Source column's tooltip (and the basename fallback).
+             * @member
+             * @type {string}
+             */
+            this["sourceRoot"] = "";
+        }
 
         Object.assign(this, $$source);
     }
@@ -4456,6 +4503,17 @@ export class SessionDetail {
              */
             this["truncated"] = false;
         }
+        if (!("approximate" in $$source)) {
+            /**
+             * Approximate is true when the events could not be matched to this session by
+             * ID (an older session imported before per-file logs carried a sessionId) and
+             * were instead gathered by the import subsystem's time window. The UI notes
+             * this so the user knows the list is a best-effort time-window match.
+             * @member
+             * @type {boolean}
+             */
+            this["approximate"] = false;
+        }
 
         Object.assign(this, $$source);
     }
@@ -4466,8 +4524,8 @@ export class SessionDetail {
      * @returns {SessionDetail}
      */
     static createFrom($$source = {}) {
-        const $$createField0_0 = $$createType77;
-        const $$createField1_0 = $$createType58;
+        const $$createField0_0 = $$createType79;
+        const $$createField1_0 = $$createType60;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("session" in $$parsedSource) {
             $$parsedSource["session"] = $$createField0_0($$parsedSource["session"]);
@@ -5641,7 +5699,7 @@ export class VolumeDTO {
      * @returns {VolumeDTO}
      */
     static createFrom($$source = {}) {
-        const $$createField16_0 = $$createType47;
+        const $$createField16_0 = $$createType49;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("warnings" in $$parsedSource) {
             $$parsedSource["warnings"] = $$createField16_0($$parsedSource["warnings"]);
@@ -5779,42 +5837,44 @@ const $$createType35 = cleanup$0.Analyzer.createFrom;
 const $$createType36 = $Create.Nullable($$createType35);
 const $$createType37 = source$0.Identifier.createFrom;
 const $$createType38 = $Create.Nullable($$createType37);
-const $$createType39 = thumbs$0.Cache.createFrom;
+const $$createType39 = volumes$0.Collector.createFrom;
 const $$createType40 = $Create.Nullable($$createType39);
-const $$createType41 = BackupJobRefDTO.createFrom;
-const $$createType42 = $Create.Array($$createType41);
-const $$createType43 = AssetRefDTO.createFrom;
-const $$createType44 = $Create.Nullable($$createType43);
-const $$createType45 = $Create.Array($$createType43);
-const $$createType46 = QueueSummaryDTO.createFrom;
-const $$createType47 = $Create.Array($Create.Any);
-const $$createType48 = ClassStatDTO.createFrom;
-const $$createType49 = $Create.Array($$createType48);
-const $$createType50 = RecommendationDTO.createFrom;
-const $$createType51 = TotalsDTO.createFrom;
-const $$createType52 = MonthCountDTO.createFrom;
-const $$createType53 = $Create.Array($$createType52);
-const $$createType54 = BackupSummaryDTO.createFrom;
-const $$createType55 = SourceDTO.createFrom;
-const $$createType56 = $Create.Array($$createType55);
-const $$createType57 = LogEntryDTO.createFrom;
+const $$createType41 = thumbs$0.Cache.createFrom;
+const $$createType42 = $Create.Nullable($$createType41);
+const $$createType43 = BackupJobRefDTO.createFrom;
+const $$createType44 = $Create.Array($$createType43);
+const $$createType45 = AssetRefDTO.createFrom;
+const $$createType46 = $Create.Nullable($$createType45);
+const $$createType47 = $Create.Array($$createType45);
+const $$createType48 = QueueSummaryDTO.createFrom;
+const $$createType49 = $Create.Array($Create.Any);
+const $$createType50 = ClassStatDTO.createFrom;
+const $$createType51 = $Create.Array($$createType50);
+const $$createType52 = RecommendationDTO.createFrom;
+const $$createType53 = TotalsDTO.createFrom;
+const $$createType54 = MonthCountDTO.createFrom;
+const $$createType55 = $Create.Array($$createType54);
+const $$createType56 = BackupSummaryDTO.createFrom;
+const $$createType57 = SourceDTO.createFrom;
 const $$createType58 = $Create.Array($$createType57);
-const $$createType59 = AssetDTO.createFrom;
-const $$createType60 = FolderEntryDTO.createFrom;
-const $$createType61 = $Create.Array($$createType60);
-const $$createType62 = BrowseAssetDTO.createFrom;
-const $$createType63 = PageResult.createFrom($$createType62);
-const $$createType64 = CurrentLibraryDTO.createFrom;
-const $$createType65 = $Create.Nullable($$createType64);
-const $$createType66 = LockConflictDTO.createFrom;
+const $$createType59 = LogEntryDTO.createFrom;
+const $$createType60 = $Create.Array($$createType59);
+const $$createType61 = AssetDTO.createFrom;
+const $$createType62 = FolderEntryDTO.createFrom;
+const $$createType63 = $Create.Array($$createType62);
+const $$createType64 = BrowseAssetDTO.createFrom;
+const $$createType65 = PageResult.createFrom($$createType64);
+const $$createType66 = CurrentLibraryDTO.createFrom;
 const $$createType67 = $Create.Nullable($$createType66);
-const $$createType68 = /** @type {(...args: any[]) => any} */(($$createParamT) => $Create.Array($$createParamT));
-const $$createType69 = ProviderCooldownDTO.createFrom;
-const $$createType70 = $Create.Array($$createType69);
-const $$createType71 = OperationInfo.createFrom;
+const $$createType68 = LockConflictDTO.createFrom;
+const $$createType69 = $Create.Nullable($$createType68);
+const $$createType70 = /** @type {(...args: any[]) => any} */(($$createParamT) => $Create.Array($$createParamT));
+const $$createType71 = ProviderCooldownDTO.createFrom;
 const $$createType72 = $Create.Array($$createType71);
-const $$createType73 = ReorganizeMoveDTO.createFrom;
+const $$createType73 = OperationInfo.createFrom;
 const $$createType74 = $Create.Array($$createType73);
-const $$createType75 = ReorganizeSkipDTO.createFrom;
+const $$createType75 = ReorganizeMoveDTO.createFrom;
 const $$createType76 = $Create.Array($$createType75);
-const $$createType77 = SessionDTO.createFrom;
+const $$createType77 = ReorganizeSkipDTO.createFrom;
+const $$createType78 = $Create.Array($$createType77);
+const $$createType79 = SessionDTO.createFrom;

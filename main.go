@@ -412,26 +412,29 @@ func (c *composition) Open(ctx context.Context, root string, force, migrateLegac
 	// back atomically).
 	c.emitLibraryProgress("migrating", "Upgrading library catalog — don't quit PAIM")
 
-	// Resolve the per-machine thumbnail-cache location preference to a directory so
-	// the cache opens at the right place from the start (in-library or this Mac's
-	// local disk). A config error falls back to the in-library default.
+	// Resolve the per-machine thumbnail preferences so the cache opens correctly
+	// from the start: the cache-location directory (in-library or this Mac's local
+	// disk) and the generation parallelism. A config error falls back to defaults.
 	thumbDir := ""
+	thumbParallelism := 0
 	if cfg, cerr := c.config.Load(); cerr == nil {
 		if d, derr := library.ResolveThumbCacheDir(root, cfg.ThumbnailCacheLocation); derr == nil {
 			thumbDir = d
 		}
+		thumbParallelism = cfg.ThumbnailParallelism
 	}
 
 	core, err := services.BuildCore(services.CoreDeps{
-		Root:          root,
-		AppVersion:    c.appVersion,
-		Emitter:       c.emitter,
-		Registry:      c.registry,
-		Extractor:     c.extractor,
-		Collector:     c.collector,
-		Watcher:       c.watcher,
-		Logger:        c.logger,
-		ThumbCacheDir: thumbDir,
+		Root:             root,
+		AppVersion:       c.appVersion,
+		Emitter:          c.emitter,
+		Registry:         c.registry,
+		Extractor:        c.extractor,
+		Collector:        c.collector,
+		Watcher:          c.watcher,
+		Logger:           c.logger,
+		ThumbCacheDir:    thumbDir,
+		ThumbParallelism: thumbParallelism,
 	})
 	if err != nil {
 		_ = lock.Release()

@@ -391,7 +391,7 @@ func (p *Pipeline) RunReorganizeSession(ctx context.Context, sessionID string, p
 // place). It never aborts the run.
 func (p *Pipeline) reorganizeOne(ctx context.Context, sessionID string, e ReorganizeEntry, state *sessionState) (ok, moved bool) {
 	log := p.reorgLog()
-	didMove, newPath, err := p.reorganizeInPlace(ctx, e.From, e.To, e.QuickHash, state)
+	didMove, newPath, err := p.reorganizeInPlace(ctx, sessionID, e.From, e.To, e.QuickHash, state)
 	if err != nil {
 		if e := p.sessions.IncFailures(context.Background(), sessionID, 1); e != nil {
 			log.Warn("reorganize: inc failures", "error", e.Error())

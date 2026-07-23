@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { useNavigate } from "@tanstack/react-router";
+import { Link, useNavigate } from "@tanstack/react-router";
 import {
   ArrowDownTrayIcon,
   ArrowPathIcon,
@@ -405,14 +405,25 @@ function SafeToErasePanel({ report, root }: { report: SafeToEraseDTO; root: stri
       <p className="text-[12px] leading-relaxed text-zinc-400">{report.reason}</p>
       <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-5">
         <MiniStat label="Total media" value={report.totalMedia} />
-        <MiniStat label="Archived" value={report.archived} tone="success" />
+        <MiniStat label="Fully protected" value={report.archived} tone="success" />
         <MiniStat label="New" value={report.new} tone={report.new > 0 ? "warn" : "default"} />
         <MiniStat label="Unverified" value={report.unverified} tone={report.unverified > 0 ? "warn" : "default"} />
-        <MiniStat label="Backup incomplete" value={report.backupIncomplete} tone={report.backupIncomplete > 0 ? "danger" : "default"} />
+        {/* Archived + verified but backups still pending — amber, not red:
+            nothing here is at risk, the backups simply have not finished. */}
+        <MiniStat label="Archived — backup pending" value={report.backupIncomplete} tone={report.backupIncomplete > 0 ? "warn" : "default"} />
       </div>
       {report.fastPath + report.hashed > 0 ? (
         <p className="mt-2 text-[10px] text-zinc-600">
           {formatNumber(report.fastPath)} verified from the catalog without re-reading · {formatNumber(report.hashed)} re-hashed
+        </p>
+      ) : null}
+      {report.backupIncomplete > 0 && report.new === 0 && report.unverified === 0 ? (
+        <p className="mt-2 text-[11px] text-zinc-500">
+          Backups run in the background — track them in the{" "}
+          <Link to="/backup-queue" className="text-blue-400 hover:text-blue-300">
+            Backup Queue
+          </Link>
+          .
         </p>
       ) : null}
       {report.safe ? <ClearSourceControl root={root} report={report} fresh /> : null}

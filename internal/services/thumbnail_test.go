@@ -63,7 +63,7 @@ func TestWarmupSingleInstance(t *testing.T) {
 	seedArchivedAsset(t, assets, "b.jpg")
 
 	release := make(chan struct{})
-	cache := thumbs.NewInDir(library.LibraryThumbsDir(root), nil)
+	cache := thumbs.NewInDir(library.LibraryThumbsDir(root), 2, nil)
 	svc.cache = cache
 	svc.warmer = thumbs.NewWarmer(cache, blockingResolver{release: release}, 1, nil)
 
@@ -96,18 +96,66 @@ func TestWarmupSingleInstance(t *testing.T) {
 	t.Fatal("warm-up did not drain to idle after cancel")
 }
 
+func TestThumbnailParallelismPersistsAndAppliesLive(t *testing.T) {
+	root := t.TempDir()
+	cfg, err := library.NewConfigStore(filepath.Join(root, "config.json"))
+	if err != nil {
+		t.Fatalf("config store: %v", err)
+	}
+	svc := NewThumbnailService(cfg, nil, nil)
+	cache := thumbs.NewInDir(library.LibraryThumbsDir(root), 2, nil)
+	svc.cache = cache
+	svc.root = root
+
+	// Unset → default.
+	got, err := svc.ThumbnailParallelism(context.Background())
+	if err != nil {
+		t.Fatalf("get parallelism: %v", err)
+	}
+	if got != DefaultThumbnailParallelism {
+		t.Errorf("default parallelism = %d, want %d", got, DefaultThumbnailParallelism)
+	}
+
+	// Set → persisted, clamped, and applied to the live cache.
+	set, err := svc.SetThumbnailParallelism(context.Background(), 5)
+	if err != nil {
+		t.Fatalf("set parallelism: %v", err)
+	}
+	if set != 5 {
+		t.Errorf("set returned %d, want 5", set)
+	}
+	if cache.Parallelism() != 5 {
+		t.Errorf("live cache parallelism = %d, want 5", cache.Parallelism())
+	}
+	stored, err := cfg.Load()
+	if err != nil {
+		t.Fatalf("reload config: %v", err)
+	}
+	if stored.ThumbnailParallelism != 5 {
+		t.Errorf("persisted parallelism = %d, want 5", stored.ThumbnailParallelism)
+	}
+
+	// Out-of-range requests are clamped.
+	if v, _ := svc.SetThumbnailParallelism(context.Background(), 0); v != DefaultThumbnailParallelism {
+		t.Errorf("clamp(0) = %d, want %d", v, DefaultThumbnailParallelism)
+	}
+	if v, _ := svc.SetThumbnailParallelism(context.Background(), 9999); v != MaxThumbnailParallelism {
+		t.Errorf("clamp(9999) = %d, want %d", v, MaxThumbnailParallelism)
+	}
+}
+
 func TestClearCacheGuardRejectsUnknownDir(t *testing.T) {
 	svc, _, root := newThumbHarness(t)
 
 	// A cache pointed OUTSIDE the two known roots must be refused.
 	stray := filepath.Join(t.TempDir(), "stray")
-	svc.cache = thumbs.NewInDir(stray, nil)
+	svc.cache = thumbs.NewInDir(stray, 2, nil)
 	if err := svc.ClearThumbnailCache(context.Background()); err == nil {
 		t.Fatal("expected ClearThumbnailCache to refuse a non-known cache root")
 	}
 
 	// A cache at the in-library known root is cleared without error.
-	svc.cache = thumbs.NewInDir(library.LibraryThumbsDir(root), nil)
+	svc.cache = thumbs.NewInDir(library.LibraryThumbsDir(root), 2, nil)
 	if err := svc.ClearThumbnailCache(context.Background()); err != nil {
 		t.Fatalf("clear at known root: %v", err)
 	}

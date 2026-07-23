@@ -110,6 +110,11 @@ type AppCore struct {
 	Pipeline   *importer.Pipeline
 	Analyzer   *cleanup.Analyzer
 	Identifier *source.Identifier
+	// Collector enumerates/describes mounted volumes. It is library-independent
+	// (owned by main.go, passed through CoreDeps) but carried here so services
+	// bound to the core — e.g. the ImportService source auto-link — can reach it
+	// without a separate wiring path.
+	Collector *volumes.Collector
 	// Thumbs is this library's disposable thumbnail cache
 	// (<root>/.paim/thumbs). The thumbnail HTTP handler serves from it.
 	Thumbs *thumbs.Cache
@@ -131,6 +136,11 @@ type CoreDeps struct {
 	// to (resolved by main.go from the per-machine location preference). Empty
 	// falls back to the in-library "<root>/.paim/thumbs".
 	ThumbCacheDir string
+
+	// ThumbParallelism is the per-machine "Thumbnail generation parallelism"
+	// setting (shared by interactive browsing and the warm-up). < 1 falls back to
+	// DefaultThumbnailParallelism.
+	ThumbParallelism int
 
 	// OpenedDB, when non-nil, is used instead of opening a library catalog under
 	// Root. It backs the PAIM_DB_PATH dev escape hatch (plain db.Open, absolute
@@ -224,11 +234,16 @@ func BuildCore(deps CoreDeps) (*AppCore, error) {
 	// (disposable, travels with the library), or at an explicit ThumbCacheDir when
 	// the per-machine preference moves it to this Mac's local disk. In the dev
 	// escape hatch (Root empty, no dir) it falls back to a cwd-relative cache.
+	// Generation concurrency is the per-machine parallelism setting (default 2).
+	thumbConc := deps.ThumbParallelism
+	if thumbConc < 1 {
+		thumbConc = DefaultThumbnailParallelism
+	}
 	var thumbCache *thumbs.Cache
 	if deps.ThumbCacheDir != "" {
-		thumbCache = thumbs.NewInDir(deps.ThumbCacheDir, logger)
+		thumbCache = thumbs.NewInDir(deps.ThumbCacheDir, thumbConc, logger)
 	} else {
-		thumbCache = thumbs.New(deps.Root, logger)
+		thumbCache = thumbs.New(deps.Root, thumbConc, logger)
 	}
 
 	return &AppCore{
@@ -245,6 +260,7 @@ func BuildCore(deps CoreDeps) (*AppCore, error) {
 		Pipeline:   pipeline,
 		Analyzer:   analyzer,
 		Identifier: identifier,
+		Collector:  deps.Collector,
 		Thumbs:     thumbCache,
 	}, nil
 }

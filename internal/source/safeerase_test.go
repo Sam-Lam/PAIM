@@ -162,8 +162,10 @@ func TestEvaluateSafeToErase_BackupIncompleteUnsafe(t *testing.T) {
 	if rep.BackupIncomplete != 1 {
 		t.Errorf("BackupIncomplete = %d, want 1", rep.BackupIncomplete)
 	}
-	if !contains(rep.Reason, "incomplete backups") {
-		t.Errorf("reason %q should mention backups", rep.Reason)
+	// Backups-only blocking: reassuring wording (archived + verified, backups
+	// pending) rather than the alarming NOT-recommended phrasing.
+	if !contains(rep.Reason, "backups are still pending") {
+		t.Errorf("reason %q should mention pending backups", rep.Reason)
 	}
 }
 
@@ -195,6 +197,66 @@ func TestEvaluateSafeToErase_QuickHashCollisionResolvedByFullHash(t *testing.T) 
 	}
 	if rep.Archived != 1 {
 		t.Errorf("Archived = %d, want 1", rep.Archived)
+	}
+}
+
+// TestEvaluateSafeToErase_BackupsOnlyReassuringWording covers the presentation
+// fix: when every media file is archived and verified and the ONLY thing pending
+// is backups, the reason leads with reassurance ("archived and verified") and
+// explains the pending backups, rather than the alarming NOT-recommended wording
+// reserved for New/Unverified files.
+func TestEvaluateSafeToErase_BackupsOnlyReassuringWording(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "a.jpg"), "one")
+	writeFile(t, filepath.Join(root, "b.jpg"), "two")
+
+	lookup := fakeLookup{byQuick: map[string][]ArchivedAsset{
+		quickOf("one"): {{ID: "a", Verified: true, BackupComplete: false}},
+		quickOf("two"): {{ID: "b", Verified: true, BackupComplete: false}},
+	}}
+
+	id := newIdentifierForErase()
+	rep, err := id.EvaluateSafeToErase(context.Background(), "src-1", root, lookup, isMediaTest, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rep.Safe {
+		t.Error("Safe = true, want false (backups still pending)")
+	}
+	if rep.BackupIncomplete != 2 || rep.New != 0 || rep.Unverified != 0 {
+		t.Errorf("unexpected counts: %+v", rep)
+	}
+	// Leads with reassurance, not "NOT recommended".
+	want := "All 2 media file(s) are archived and verified. Deletion is not recommended yet: backups are still pending for 2."
+	if rep.Reason != want {
+		t.Errorf("reason = %q, want %q", rep.Reason, want)
+	}
+	if contains(rep.Reason, "NOT recommended") {
+		t.Errorf("reason should not use the alarming NOT-recommended wording: %q", rep.Reason)
+	}
+}
+
+// TestEvaluateSafeToErase_NewStillAlarming confirms the alarming wording is kept
+// when files are genuinely not archived (New present alongside backup-pending).
+func TestEvaluateSafeToErase_NewStillAlarming(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "a.jpg"), "one")   // archived, backup pending
+	writeFile(t, filepath.Join(root, "new.jpg"), "brand-new") // not imported
+
+	lookup := fakeLookup{byQuick: map[string][]ArchivedAsset{
+		quickOf("one"): {{ID: "a", Verified: true, BackupComplete: false}},
+	}}
+
+	id := newIdentifierForErase()
+	rep, err := id.EvaluateSafeToErase(context.Background(), "src-1", root, lookup, isMediaTest, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !contains(rep.Reason, "NOT recommended") {
+		t.Errorf("reason should stay alarming when New files exist: %q", rep.Reason)
+	}
+	if !contains(rep.Reason, "not yet imported") {
+		t.Errorf("reason should mention not-yet-imported: %q", rep.Reason)
 	}
 }
 

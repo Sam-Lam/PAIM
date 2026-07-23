@@ -84,6 +84,18 @@ export function SetThumbnailCacheLocation(location) {
 }
 
 /**
+ * SetThumbnailParallelism persists the per-machine generation parallelism and
+ * applies it to the live cache immediately (shared by interactive browsing and
+ * the warm-up). The requested value is clamped to [1, MaxThumbnailParallelism];
+ * the clamped value is returned.
+ * @param {number} n
+ * @returns {$CancellablePromise<number>}
+ */
+export function SetThumbnailParallelism(n) {
+    return $Call.ByID(83115572, n);
+}
+
+/**
  * StartWarmupAll pre-generates 512px thumbnails for the whole catalog. It is
  * resumable (cache hits are skipped instantly), so re-running after a partial run
  * finishes the rest. Refused with ErrWarmupInProgress if one is already running.
@@ -103,6 +115,15 @@ export function ThumbnailCacheLocation() {
     return $Call.ByID(1453629195).then(/** @type {($result: any) => any} */(($result) => {
         return $$createType0($result);
     }));
+}
+
+/**
+ * ThumbnailParallelism returns the per-machine thumbnail generation parallelism,
+ * normalized to the supported range (the default when unset).
+ * @returns {$CancellablePromise<number>}
+ */
+export function ThumbnailParallelism() {
+    return $Call.ByID(1355637308);
 }
 
 /**
