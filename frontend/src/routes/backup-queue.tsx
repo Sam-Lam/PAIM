@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowPathIcon,
   ArrowUturnLeftIcon,
+  ClockIcon,
   CloudArrowUpIcon,
   PauseIcon,
   PlayIcon,
@@ -283,6 +284,23 @@ export function BackupQueuePage() {
         }
       />
 
+      {(s?.cooldowns ?? []).length > 0 ? (
+        <div className="mb-4 space-y-2">
+          {(s?.cooldowns ?? []).map((c) => (
+            <div
+              key={c.providerId}
+              className="flex items-start gap-2 rounded-md border border-amber-500/30 bg-amber-500/5 p-3 text-[12px] text-amber-200/90"
+            >
+              <ClockIcon className="mt-0.5 h-4 w-4 flex-none" />
+              <span>
+                {c.reason || "Provider quota reached"} — uploads resume ~{formatResume(c.until)}. Cooling jobs stay
+                queued as pending and resume automatically.
+              </span>
+            </div>
+          ))}
+        </div>
+      ) : null}
+
       <div className="mb-5 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
         <Stat label="Pending" value={formatNumber(s?.pending ?? 0)} tone={s && s.pending > 0 ? "warn" : "default"} icon={CloudArrowUpIcon} />
         <Stat label="Running" value={formatNumber(s?.running ?? 0)} tone={s && s.running > 0 ? "accent" : "default"} />
@@ -342,6 +360,17 @@ export function BackupQueuePage() {
       />
     </div>
   );
+}
+
+/** formatResume renders a cooldown resume time as a local HH:MM (with the day when
+ *  it is not today), from an ISO/Date string in the DTO. */
+function formatResume(until: string): string {
+  const d = new Date(until);
+  if (isNaN(d.getTime())) return "soon";
+  const now = new Date();
+  const time = d.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
+  if (d.toDateString() === now.toDateString()) return time;
+  return `${d.toLocaleDateString(undefined, { month: "short", day: "numeric" })} ${time}`;
 }
 
 function tabCount(s: QueueSummaryDTO | null, key: string): string {

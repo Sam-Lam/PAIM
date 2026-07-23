@@ -3,6 +3,7 @@ package services
 import (
 	"time"
 
+	"github.com/Sam-Lam/PAIM/internal/backup"
 	"github.com/Sam-Lam/PAIM/internal/domain"
 	"github.com/Sam-Lam/PAIM/internal/library"
 	"github.com/Sam-Lam/PAIM/internal/volumes"
@@ -214,7 +215,9 @@ type BackupJobDTO struct {
 	ErrorMessage string     `json:"errorMessage"`
 }
 
-// QueueSummaryDTO reports the number of backup jobs in each status.
+// QueueSummaryDTO reports the number of backup jobs in each status, plus any
+// provider quota cooldowns currently in effect (so the Backup Queue can show a
+// "uploads resume ~HH:MM" banner; the cooling jobs stay visible as pending).
 type QueueSummaryDTO struct {
 	Pending   int64 `json:"pending"`
 	Running   int64 `json:"running"`
@@ -223,6 +226,24 @@ type QueueSummaryDTO struct {
 	Failed    int64 `json:"failed"`
 	Cancelled int64 `json:"cancelled"`
 	Total     int64 `json:"total"`
+
+	Cooldowns []ProviderCooldownDTO `json:"cooldowns"`
+}
+
+// ProviderCooldownDTO describes one provider's active quota cooldown.
+type ProviderCooldownDTO struct {
+	ProviderID string    `json:"providerId"`
+	Until      time.Time `json:"until"`
+	Reason     string    `json:"reason"`
+}
+
+// cooldownDTOs projects manager cooldown snapshots into DTOs.
+func cooldownDTOs(cds []backup.ProviderCooldown) []ProviderCooldownDTO {
+	out := make([]ProviderCooldownDTO, 0, len(cds))
+	for _, c := range cds {
+		out = append(out, ProviderCooldownDTO{ProviderID: c.ProviderID, Until: c.Until, Reason: c.Reason})
+	}
+	return out
 }
 
 // summaryFromCounts folds repo StatusCount rows into a QueueSummaryDTO.

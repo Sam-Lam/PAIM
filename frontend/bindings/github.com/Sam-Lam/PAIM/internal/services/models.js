@@ -1346,7 +1346,11 @@ export class BackupQueueChanged {
 }
 
 /**
- * BackupSummaryDTO is the dashboard's compact backup-queue view.
+ * BackupSummaryDTO is the dashboard's compact backup-queue view. Pending/Failed
+ * are the HEADLINE numbers and count required (non-mirror) backups only, so a
+ * convenience mirror lagging behind never inflates the failure count. MirrorPending
+ * / MirrorFailed are a separate soft count the dashboard shows as "mirror uploads
+ * pending: N".
  */
 export class BackupSummaryDTO {
     /**
@@ -1367,6 +1371,20 @@ export class BackupSummaryDTO {
              * @type {number}
              */
             this["failed"] = 0;
+        }
+        if (!("mirrorPending" in $$source)) {
+            /**
+             * @member
+             * @type {number}
+             */
+            this["mirrorPending"] = 0;
+        }
+        if (!("mirrorFailed" in $$source)) {
+            /**
+             * @member
+             * @type {number}
+             */
+            this["mirrorFailed"] = 0;
         }
 
         Object.assign(this, $$source);
@@ -3376,6 +3394,51 @@ export class PluginDTO {
 }
 
 /**
+ * ProviderCooldownDTO describes one provider's active quota cooldown.
+ */
+export class ProviderCooldownDTO {
+    /**
+     * Creates a new ProviderCooldownDTO instance.
+     * @param {Partial<ProviderCooldownDTO>} [$$source = {}] - The source object to create the ProviderCooldownDTO.
+     */
+    constructor($$source = {}) {
+        if (!("providerId" in $$source)) {
+            /**
+             * @member
+             * @type {string}
+             */
+            this["providerId"] = "";
+        }
+        if (!("until" in $$source)) {
+            /**
+             * @member
+             * @type {string}
+             */
+            this["until"] = "0001-01-01T00:00:00.000Z";
+        }
+        if (!("reason" in $$source)) {
+            /**
+             * @member
+             * @type {string}
+             */
+            this["reason"] = "";
+        }
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new ProviderCooldownDTO instance from a string or object.
+     * @param {any} [$$source = {}]
+     * @returns {ProviderCooldownDTO}
+     */
+    static createFrom($$source = {}) {
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        return new ProviderCooldownDTO(/** @type {Partial<ProviderCooldownDTO>} */($$parsedSource));
+    }
+}
+
+/**
  * ProviderDTO is the JSON-friendly projection of a BackupProvider.
  */
 export class ProviderDTO {
@@ -3412,6 +3475,20 @@ export class ProviderDTO {
              */
             this["enabled"] = false;
         }
+        if (!("mirror" in $$source)) {
+            /**
+             * @member
+             * @type {boolean}
+             */
+            this["mirror"] = false;
+        }
+        if (!("uploadOrder" in $$source)) {
+            /**
+             * @member
+             * @type {string}
+             */
+            this["uploadOrder"] = "";
+        }
 
         Object.assign(this, $$source);
     }
@@ -3428,7 +3505,9 @@ export class ProviderDTO {
 }
 
 /**
- * QueueSummaryDTO reports the number of backup jobs in each status.
+ * QueueSummaryDTO reports the number of backup jobs in each status, plus any
+ * provider quota cooldowns currently in effect (so the Backup Queue can show a
+ * "uploads resume ~HH:MM" banner; the cooling jobs stay visible as pending).
  */
 export class QueueSummaryDTO {
     /**
@@ -3485,6 +3564,13 @@ export class QueueSummaryDTO {
              */
             this["total"] = 0;
         }
+        if (!("cooldowns" in $$source)) {
+            /**
+             * @member
+             * @type {ProviderCooldownDTO[]}
+             */
+            this["cooldowns"] = [];
+        }
 
         Object.assign(this, $$source);
     }
@@ -3495,7 +3581,11 @@ export class QueueSummaryDTO {
      * @returns {QueueSummaryDTO}
      */
     static createFrom($$source = {}) {
+        const $$createField7_0 = $$createType70;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        if ("cooldowns" in $$parsedSource) {
+            $$parsedSource["cooldowns"] = $$createField7_0($$parsedSource["cooldowns"]);
+        }
         return new QueueSummaryDTO(/** @type {Partial<QueueSummaryDTO>} */($$parsedSource));
     }
 }
@@ -3529,12 +3619,67 @@ export class QuitRequested {
      * @returns {QuitRequested}
      */
     static createFrom($$source = {}) {
-        const $$createField0_0 = $$createType70;
+        const $$createField0_0 = $$createType72;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("operations" in $$parsedSource) {
             $$parsedSource["operations"] = $$createField0_0($$parsedSource["operations"]);
         }
         return new QuitRequested(/** @type {Partial<QuitRequested>} */($$parsedSource));
+    }
+}
+
+/**
+ * RcloneRemoteInfoDTO reports a chosen rclone remote's backend type and whether
+ * PAIM can verify uploads to it. The Add-destination UI uses SupportsChecksum to
+ * auto-suggest the Mirror toggle and warn that uploads cannot be verified when the
+ * backend (e.g. Google Photos) exposes no content hash.
+ */
+export class RcloneRemoteInfoDTO {
+    /**
+     * Creates a new RcloneRemoteInfoDTO instance.
+     * @param {Partial<RcloneRemoteInfoDTO>} [$$source = {}] - The source object to create the RcloneRemoteInfoDTO.
+     */
+    constructor($$source = {}) {
+        if (!("remote" in $$source)) {
+            /**
+             * @member
+             * @type {string}
+             */
+            this["remote"] = "";
+        }
+        if (!("backendType" in $$source)) {
+            /**
+             * @member
+             * @type {string}
+             */
+            this["backendType"] = "";
+        }
+        if (!("supportsChecksum" in $$source)) {
+            /**
+             * @member
+             * @type {boolean}
+             */
+            this["supportsChecksum"] = false;
+        }
+        if (!("error" in $$source)) {
+            /**
+             * @member
+             * @type {string}
+             */
+            this["error"] = "";
+        }
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new RcloneRemoteInfoDTO instance from a string or object.
+     * @param {any} [$$source = {}]
+     * @returns {RcloneRemoteInfoDTO}
+     */
+    static createFrom($$source = {}) {
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        return new RcloneRemoteInfoDTO(/** @type {Partial<RcloneRemoteInfoDTO>} */($$parsedSource));
     }
 }
 
@@ -3829,8 +3974,8 @@ export class ReorganizePlanDTO {
      * @returns {ReorganizePlanDTO}
      */
     static createFrom($$source = {}) {
-        const $$createField6_0 = $$createType72;
-        const $$createField7_0 = $$createType74;
+        const $$createField6_0 = $$createType74;
+        const $$createField7_0 = $$createType76;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("movesSample" in $$parsedSource) {
             $$parsedSource["movesSample"] = $$createField6_0($$parsedSource["movesSample"]);
@@ -4321,7 +4466,7 @@ export class SessionDetail {
      * @returns {SessionDetail}
      */
     static createFrom($$source = {}) {
-        const $$createField0_0 = $$createType75;
+        const $$createField0_0 = $$createType77;
         const $$createField1_0 = $$createType58;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("session" in $$parsedSource) {
@@ -5664,10 +5809,12 @@ const $$createType65 = $Create.Nullable($$createType64);
 const $$createType66 = LockConflictDTO.createFrom;
 const $$createType67 = $Create.Nullable($$createType66);
 const $$createType68 = /** @type {(...args: any[]) => any} */(($$createParamT) => $Create.Array($$createParamT));
-const $$createType69 = OperationInfo.createFrom;
+const $$createType69 = ProviderCooldownDTO.createFrom;
 const $$createType70 = $Create.Array($$createType69);
-const $$createType71 = ReorganizeMoveDTO.createFrom;
+const $$createType71 = OperationInfo.createFrom;
 const $$createType72 = $Create.Array($$createType71);
-const $$createType73 = ReorganizeSkipDTO.createFrom;
+const $$createType73 = ReorganizeMoveDTO.createFrom;
 const $$createType74 = $Create.Array($$createType73);
-const $$createType75 = SessionDTO.createFrom;
+const $$createType75 = ReorganizeSkipDTO.createFrom;
+const $$createType76 = $Create.Array($$createType75);
+const $$createType77 = SessionDTO.createFrom;

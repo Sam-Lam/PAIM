@@ -53,10 +53,16 @@ type MonthCountDTO struct {
 	Count int64  `json:"count"`
 }
 
-// BackupSummaryDTO is the dashboard's compact backup-queue view.
+// BackupSummaryDTO is the dashboard's compact backup-queue view. Pending/Failed
+// are the HEADLINE numbers and count required (non-mirror) backups only, so a
+// convenience mirror lagging behind never inflates the failure count. MirrorPending
+// / MirrorFailed are a separate soft count the dashboard shows as "mirror uploads
+// pending: N".
 type BackupSummaryDTO struct {
-	Pending int64 `json:"pending"`
-	Failed  int64 `json:"failed"`
+	Pending       int64 `json:"pending"`
+	Failed        int64 `json:"failed"`
+	MirrorPending int64 `json:"mirrorPending"`
+	MirrorFailed  int64 `json:"mirrorFailed"`
 }
 
 // DashboardStats is the full dashboard payload.
@@ -109,18 +115,11 @@ func (s *DashboardService) GetStats(ctx context.Context) (DashboardStats, error)
 		return DashboardStats{}, err
 	}
 
-	// Backup queue summary.
-	summary, err := s.backups.QueueSummary(ctx)
-	if err != nil {
+	// Backup queue summary, split so mirror (quality-of-life) providers do not
+	// inflate the headline pending/failed numbers. Mirror jobs are counted
+	// separately as a soft indicator.
+	if out.BackupQueue, err = s.backupSummary(ctx); err != nil {
 		return DashboardStats{}, err
-	}
-	for _, c := range summary {
-		switch c.Status {
-		case domain.JobStatusPending:
-			out.BackupQueue.Pending = c.Count
-		case domain.JobStatusFailed:
-			out.BackupQueue.Failed = c.Count
-		}
 	}
 
 	// Duplicate count.
@@ -164,6 +163,50 @@ func (s *DashboardService) GetStats(ctx context.Context) (DashboardStats, error)
 		out.RecentActivity = append(out.RecentActivity, toLogEntryDTO(e))
 	}
 
+	return out, nil
+}
+
+// backupSummary computes the dashboard's backup counts, splitting mirror-provider
+// jobs (a soft count) from required-provider jobs (the headline). A job maps to
+// its provider by destination = provider ID.
+func (s *DashboardService) backupSummary(ctx context.Context) (BackupSummaryDTO, error) {
+	var mirrorIDs []string
+	if err := s.db.WithContext(ctx).
+		Model(&domain.BackupProvider{}).
+		Where("mirror = ?", true).
+		Pluck("id", &mirrorIDs).Error; err != nil {
+		return BackupSummaryDTO{}, err
+	}
+
+	countJobs := func(status domain.JobStatus, mirror bool) (int64, error) {
+		q := s.db.WithContext(ctx).Model(&domain.BackupJob{}).Where("status = ?", status)
+		if len(mirrorIDs) == 0 {
+			if mirror {
+				return 0, nil // no mirror providers ⇒ no mirror jobs
+			}
+		} else if mirror {
+			q = q.Where("destination IN ?", mirrorIDs)
+		} else {
+			q = q.Where("destination NOT IN ?", mirrorIDs)
+		}
+		var n int64
+		return n, q.Count(&n).Error
+	}
+
+	var out BackupSummaryDTO
+	var err error
+	if out.Pending, err = countJobs(domain.JobStatusPending, false); err != nil {
+		return BackupSummaryDTO{}, err
+	}
+	if out.Failed, err = countJobs(domain.JobStatusFailed, false); err != nil {
+		return BackupSummaryDTO{}, err
+	}
+	if out.MirrorPending, err = countJobs(domain.JobStatusPending, true); err != nil {
+		return BackupSummaryDTO{}, err
+	}
+	if out.MirrorFailed, err = countJobs(domain.JobStatusFailed, true); err != nil {
+		return BackupSummaryDTO{}, err
+	}
 	return out, nil
 }
 

@@ -105,6 +105,9 @@ type Options struct {
 	// waiting for its periodic poll. It is called from Manager goroutines and must
 	// not block them.
 	OnQueueChanged func()
+	// Now, when set, is the clock the Manager uses for provider cooldown
+	// bookkeeping. It defaults to time.Now; tests inject a controllable clock.
+	Now func() time.Time
 }
 
 func (o Options) withDefaults() Options {
@@ -119,6 +122,9 @@ func (o Options) withDefaults() Options {
 	}
 	if o.PollInterval <= 0 {
 		o.PollInterval = defaultPollInterval
+	}
+	if o.Now == nil {
+		o.Now = time.Now
 	}
 	return o
 }
@@ -145,7 +151,7 @@ type Manager struct {
 	pluginMu    sync.Mutex
 	pluginCache map[string]Plugin // providerID -> initialized plugin
 
-	// mu guards backoff and lastQueueNotify.
+	// mu guards backoff, lastQueueNotify, cooldowns and claimRotation.
 	mu sync.Mutex
 	// backoff maps a failed job ID to the time at which it may be requeued. The
 	// scheduler goroutine promotes elapsed entries back to pending.
@@ -153,6 +159,15 @@ type Manager struct {
 	// lastQueueNotify is the time OnQueueChanged was last invoked; it throttles
 	// queue-change notifications (see notifyQueueChanged).
 	lastQueueNotify time.Time
+	// cooldowns maps a provider ID to the time its quota cooldown expires. While an
+	// entry is in the future, workers skip claiming that provider's jobs. It is
+	// in-memory only: a restart clears it, and the worst case is one failed probe
+	// re-establishing it. Reasons are kept alongside for the UI banner.
+	cooldowns       map[string]time.Time
+	cooldownReasons map[string]string
+	// claimRotation rotates the starting provider each claim so no single provider
+	// starves the others (round-robin fairness across providers).
+	claimRotation int
 
 	// uploadsMu guards uploads. It is separate from mu because per-job upload
 	// progress fires frequently and must not contend with the queue-change /
@@ -186,15 +201,17 @@ func NewManager(jobs JobQueue, assets AssetStore, providers ProviderStore, regis
 		logger = slog.Default()
 	}
 	return &Manager{
-		jobs:        jobs,
-		assets:      assets,
-		providers:   providers,
-		registry:    registry,
-		log:         logger,
-		opts:        opts.withDefaults(),
-		pluginCache: make(map[string]Plugin),
-		backoff:     make(map[string]time.Time),
-		uploads:     make(map[string]*JobInfo),
+		jobs:            jobs,
+		assets:          assets,
+		providers:       providers,
+		registry:        registry,
+		log:             logger,
+		opts:            opts.withDefaults(),
+		pluginCache:     make(map[string]Plugin),
+		backoff:         make(map[string]time.Time),
+		cooldowns:       make(map[string]time.Time),
+		cooldownReasons: make(map[string]string),
+		uploads:         make(map[string]*JobInfo),
 	}
 }
 
@@ -288,7 +305,7 @@ func (m *Manager) worker(ctx context.Context) {
 		if ctx.Err() != nil {
 			return
 		}
-		job, err := m.jobs.NextPending(ctx)
+		job, err := m.claimNext(ctx)
 		if err != nil {
 			if ctx.Err() != nil {
 				return
@@ -307,6 +324,97 @@ func (m *Manager) worker(ctx context.Context) {
 		}
 		m.handle(ctx, job)
 	}
+}
+
+// claimNext claims the next job to process across all eligible providers. It lists
+// the enabled providers, skips any currently in quota cooldown, and — starting
+// from a rotating offset for round-robin fairness — asks each provider for its
+// next pending job in that provider's upload order (newest- or oldest-first),
+// returning the first one claimed. Restricting the claim per provider is what lets
+// cooldown exclusion compose with per-provider ordering: a cooling provider is
+// simply not offered a turn until it clears.
+func (m *Manager) claimNext(ctx context.Context) (*domain.BackupJob, error) {
+	providers, err := m.providers.ListEnabled(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("backup: list providers to claim: %w", err)
+	}
+	if len(providers) == 0 {
+		return nil, nil
+	}
+
+	m.mu.Lock()
+	now := m.opts.Now()
+	eligible := providers[:0:0]
+	for _, p := range providers {
+		if until, cooling := m.cooldowns[p.ID]; cooling {
+			if until.After(now) {
+				continue // still cooling; do not offer it a turn
+			}
+			delete(m.cooldowns, p.ID)
+			delete(m.cooldownReasons, p.ID)
+		}
+		eligible = append(eligible, p)
+	}
+	start := 0
+	if n := len(eligible); n > 0 {
+		start = m.claimRotation % n
+		m.claimRotation = (m.claimRotation + 1) % n
+	}
+	m.mu.Unlock()
+
+	for i := 0; i < len(eligible); i++ {
+		p := eligible[(start+i)%len(eligible)]
+		newestFirst := p.UploadOrder == domain.UploadOrderNewestFirst
+		job, err := m.jobs.ClaimNextForProvider(ctx, p.ID, newestFirst)
+		if err != nil {
+			return nil, err
+		}
+		if job != nil {
+			return job, nil
+		}
+	}
+	return nil, nil
+}
+
+// setCooldown records that a provider is cooling until the given time and emits a
+// queue-changed notification so the UI can show the resume banner.
+func (m *Manager) setCooldown(providerID string, until time.Time, reason string) {
+	m.mu.Lock()
+	prev, had := m.cooldowns[providerID]
+	if !had || until.After(prev) {
+		m.cooldowns[providerID] = until
+		m.cooldownReasons[providerID] = reason
+	}
+	m.mu.Unlock()
+	m.log.Warn("backup: provider in quota cooldown",
+		"provider", providerID, "reason", reason, "resumesAt", until.Format(time.RFC3339))
+	m.notifyQueueChanged()
+}
+
+// ProviderCooldown is a snapshot of one provider's active quota cooldown, exposed
+// via Cooldowns for the Backup Queue cooldown banner.
+type ProviderCooldown struct {
+	ProviderID string
+	Until      time.Time
+	Reason     string
+}
+
+// Cooldowns returns the providers currently in quota cooldown (expired entries
+// are pruned). The Backup Queue UI renders a banner per entry.
+func (m *Manager) Cooldowns() []ProviderCooldown {
+	now := m.opts.Now()
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := make([]ProviderCooldown, 0, len(m.cooldowns))
+	for id, until := range m.cooldowns {
+		if !until.After(now) {
+			delete(m.cooldowns, id)
+			delete(m.cooldownReasons, id)
+			continue
+		}
+		out = append(out, ProviderCooldown{ProviderID: id, Until: until, Reason: m.cooldownReasons[id]})
+	}
+	return out
 }
 
 // idle sleeps for one poll interval, returning false if the context is cancelled
@@ -334,6 +442,23 @@ func (m *Manager) handle(ctx context.Context, job *domain.BackupJob) {
 	if ctx.Err() != nil {
 		// Shutting down mid-upload: leave the job running so Stop() (and the next
 		// startup) reverts it to pending. Do not burn a retry on a cancellation.
+		return
+	}
+
+	// A provider quota cooldown is NOT a job failure: return the job to pending
+	// untouched (no retry increment) and put the whole provider into cooldown so
+	// workers stop claiming its jobs until it clears. The job is re-claimed
+	// automatically once the cooldown expires — no restart needed.
+	var cd *ErrProviderCooldown
+	if errors.As(err, &cd) {
+		until := m.opts.Now().Add(cd.RetryAfter)
+		m.setCooldown(job.Destination, until, cd.Reason)
+		recCtx, cancel := recordCtx()
+		defer cancel()
+		if rErr := m.jobs.RevertToPending(recCtx, job.ID); rErr != nil && !errors.Is(rErr, repo.ErrNotFound) {
+			m.log.Error("backup: revert job to pending after cooldown", "job", job.ID, "error", rErr)
+		}
+		m.notifyQueueChanged()
 		return
 	}
 
@@ -407,22 +532,39 @@ func (m *Manager) process(ctx context.Context, job *domain.BackupJob) (terminal 
 	}
 
 	if err := plugin.Upload(ctx, localPath, remoteRel, progress); err != nil {
+		// A provider cooldown (e.g. daily quota) is propagated untouched so handle()
+		// can put the provider into cooldown rather than failing the job.
+		if isCooldown(err) {
+			return false, err
+		}
 		return false, fmt.Errorf("upload asset %q to %q: %w", job.AssetID, remoteRel, err)
 	}
 
+	// completedNote, when non-empty, records a non-fatal note on an otherwise
+	// successful completion — used by the best-effort mirror verification path.
+	var completedNote string
 	if caps.SupportsVerify {
 		ok, err := plugin.Verify(ctx, localPath, remoteRel)
-		if err != nil {
+		switch {
+		case err != nil && isCooldown(err):
+			// Verify hit the provider's quota: treat as a cooldown, not a failure.
+			return false, err
+		case provider.Mirror && (err != nil || !ok):
+			// Mirrors are convenience, not custody: an unavailable or failing verify
+			// still completes the job with an explanatory note (documented behavior).
+			completedNote = "verify unavailable (mirror)"
+			m.log.Warn("backup: mirror verify unavailable; completing with note",
+				"job", job.ID, "asset", job.AssetID, "provider", provider.ID, "verifyOk", ok, "verifyErr", errString(err))
+		case err != nil:
 			return false, fmt.Errorf("verify asset %q at %q: %w", job.AssetID, remoteRel, err)
-		}
-		if !ok {
+		case !ok:
 			return false, fmt.Errorf("verify asset %q at %q: destination does not match source", job.AssetID, remoteRel)
 		}
 	}
 
-	// Point of no return: the upload is verified. Record the outcome on a
-	// detached context (see recordCtx) so a graceful shutdown cannot abort the
-	// bookkeeping and leave a completed upload unrecorded.
+	// Point of no return: the upload is verified (or best-effort-completed for a
+	// mirror). Record the outcome on a detached context (see recordCtx) so a
+	// graceful shutdown cannot abort the bookkeeping and leave it unrecorded.
 	recCtx, cancel := recordCtx()
 	defer cancel()
 
@@ -440,13 +582,31 @@ func (m *Manager) process(ctx context.Context, job *domain.BackupJob) (terminal 
 		return false, nil
 	}
 
-	if err := m.jobs.MarkCompleted(recCtx, job.ID); err != nil {
-		return false, fmt.Errorf("mark job %q completed: %w", job.ID, err)
+	markErr := m.jobs.MarkCompleted(recCtx, job.ID)
+	if completedNote != "" {
+		markErr = m.jobs.MarkCompletedWithNote(recCtx, job.ID, completedNote)
+	}
+	if markErr != nil {
+		return false, fmt.Errorf("mark job %q completed: %w", job.ID, markErr)
 	}
 	m.recomputeAsset(recCtx, job.AssetID)
 	m.notifyQueueChanged()
-	m.log.Info("backup: job completed", "job", job.ID, "asset", job.AssetID, "plugin", plugin.Name())
+	m.log.Info("backup: job completed", "job", job.ID, "asset", job.AssetID, "plugin", plugin.Name(), "note", completedNote)
 	return false, nil
+}
+
+// isCooldown reports whether err is (or wraps) an ErrProviderCooldown.
+func isCooldown(err error) bool {
+	var cd *ErrProviderCooldown
+	return errors.As(err, &cd)
+}
+
+// errString renders err for logging, tolerating nil.
+func errString(err error) string {
+	if err == nil {
+		return ""
+	}
+	return err.Error()
 }
 
 // pluginFor returns the initialized plugin for a provider, constructing and
@@ -566,7 +726,15 @@ func (m *Manager) recomputeAsset(ctx context.Context, assetID string) {
 		m.log.Error("backup: load jobs for asset status", "asset", assetID, "error", err)
 		return
 	}
-	status := AggregateBackupStatus(jobs)
+	mirrors, err := m.providers.MirrorIDs(ctx)
+	if err != nil {
+		// Fall back to treating none as mirror rather than aborting: the aggregate
+		// would then include mirrors (conservative — it can only make the status
+		// look less complete, never falsely green).
+		m.log.Error("backup: load mirror providers for asset status", "asset", assetID, "error", err)
+		mirrors = nil
+	}
+	status := AggregateBackupStatus(jobs, func(providerID string) bool { return mirrors[providerID] })
 	if err := m.assets.UpdateBackupStatus(ctx, assetID, status); err != nil {
 		m.log.Error("backup: update asset backup status", "asset", assetID, "error", err)
 	}
@@ -574,18 +742,24 @@ func (m *Manager) recomputeAsset(ctx context.Context, assetID string) {
 
 // AggregateBackupStatus reduces an asset's jobs to a single aggregate
 // BackupStatus. Cancelled jobs are excluded (a cancelled destination is no
-// longer a required backup). The rules:
+// longer a required backup), and — via isMirror — so are jobs belonging to
+// mirror providers (a mirror is convenience, not custody, so it must never block
+// a safety verdict). isMirror may be nil (nothing is a mirror). A job maps to its
+// provider by Destination (the provider ID). The rules over the REQUIRED jobs:
 //
-//   - no active jobs            -> none
-//   - every active job complete -> complete
-//   - some complete, some not   -> partial
-//   - none complete, any failed -> failed
+//   - no required jobs           -> none
+//   - every required job complete -> complete
+//   - some complete, some not    -> partial
+//   - none complete, any failed  -> failed
 //   - otherwise (pending/paused/running) -> pending
-func AggregateBackupStatus(jobs []domain.BackupJob) domain.BackupStatus {
+func AggregateBackupStatus(jobs []domain.BackupJob, isMirror func(providerID string) bool) domain.BackupStatus {
 	var total, completed, failed int
 	for _, j := range jobs {
 		if j.Status == domain.JobStatusCancelled {
 			continue
+		}
+		if isMirror != nil && isMirror(j.Destination) {
+			continue // mirror jobs are excluded from the required-backup aggregate
 		}
 		total++
 		switch j.Status {
@@ -621,10 +795,19 @@ func (m *Manager) EnqueueForAsset(ctx context.Context, tx *gorm.DB, assetID stri
 	if err != nil {
 		return 0, fmt.Errorf("backup: list providers for asset %q: %w", assetID, err)
 	}
+	// Read the asset within the caller's transaction (it was just created there) to
+	// derive the per-provider upload-order key: newer media should be able to jump
+	// the queue, so the key is the capture time (falling back to import time).
+	var asset domain.Asset
+	if err := tx.WithContext(ctx).Where("id = ?", assetID).First(&asset).Error; err != nil {
+		return 0, fmt.Errorf("backup: load asset %q for enqueue: %w", assetID, err)
+	}
+	sortKey := backupSortKey(asset)
+
 	q := m.jobs.WithTx(tx)
 	created := 0
 	for _, p := range providers {
-		_, wasCreated, err := q.Enqueue(ctx, assetID, p.PluginName, p.ID)
+		_, wasCreated, err := q.Enqueue(ctx, assetID, p.PluginName, p.ID, sortKey)
 		if err != nil {
 			return created, fmt.Errorf("backup: enqueue job for asset %q provider %q: %w", assetID, p.ID, err)
 		}
@@ -633,6 +816,16 @@ func (m *Manager) EnqueueForAsset(ctx context.Context, tx *gorm.DB, assetID stri
 		}
 	}
 	return created, nil
+}
+
+// backupSortKey is the per-provider upload-order key for an asset: unix seconds of
+// its CaptureDate, or its ImportDate when no capture date is known. Higher = newer,
+// so a newest-first provider claims the largest key first.
+func backupSortKey(asset domain.Asset) int64 {
+	if asset.CaptureDate != nil && !asset.CaptureDate.IsZero() {
+		return asset.CaptureDate.Unix()
+	}
+	return asset.ImportDate.Unix()
 }
 
 // Pause moves a pending job to paused so workers stop claiming it. A job that is

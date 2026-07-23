@@ -208,7 +208,7 @@ func TestManager_HappyPath(t *testing.T) {
 	asset := h.addAsset(t)
 
 	ctx := context.Background()
-	job, _, err := h.jobs.Enqueue(ctx, asset.ID, prov.PluginName, prov.ID)
+	job, _, err := h.jobs.Enqueue(ctx, asset.ID, prov.PluginName, prov.ID, 0)
 	if err != nil {
 		t.Fatalf("enqueue: %v", err)
 	}
@@ -246,7 +246,7 @@ func TestManager_RetryThenFail(t *testing.T) {
 	asset := h.addAsset(t)
 
 	ctx := context.Background()
-	job, _, err := h.jobs.Enqueue(ctx, asset.ID, prov.PluginName, prov.ID)
+	job, _, err := h.jobs.Enqueue(ctx, asset.ID, prov.PluginName, prov.ID, 0)
 	if err != nil {
 		t.Fatalf("enqueue: %v", err)
 	}
@@ -284,7 +284,7 @@ func TestManager_PausePreventsClaimingThenResume(t *testing.T) {
 	asset := h.addAsset(t)
 
 	ctx := context.Background()
-	job, _, err := h.jobs.Enqueue(ctx, asset.ID, prov.PluginName, prov.ID)
+	job, _, err := h.jobs.Enqueue(ctx, asset.ID, prov.PluginName, prov.ID, 0)
 	if err != nil {
 		t.Fatalf("enqueue: %v", err)
 	}
@@ -329,7 +329,7 @@ func TestManager_CancelPreventsClaiming(t *testing.T) {
 	asset := h.addAsset(t)
 
 	ctx := context.Background()
-	job, _, err := h.jobs.Enqueue(ctx, asset.ID, prov.PluginName, prov.ID)
+	job, _, err := h.jobs.Enqueue(ctx, asset.ID, prov.PluginName, prov.ID, 0)
 	if err != nil {
 		t.Fatalf("enqueue: %v", err)
 	}
@@ -494,7 +494,7 @@ func TestManager_OnQueueChangedFiresOnCompletion(t *testing.T) {
 	opts.OnQueueChanged = func() { atomic.AddInt32(&notes, 1) }
 
 	ctx := context.Background()
-	job, _, err := h.jobs.Enqueue(ctx, asset.ID, prov.PluginName, prov.ID)
+	job, _, err := h.jobs.Enqueue(ctx, asset.ID, prov.PluginName, prov.ID, 0)
 	if err != nil {
 		t.Fatalf("enqueue: %v", err)
 	}
@@ -539,7 +539,7 @@ func TestAggregateBackupStatus(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := backup.AggregateBackupStatus(tc.jobs); got != tc.want {
+			if got := backup.AggregateBackupStatus(tc.jobs, nil); got != tc.want {
 				t.Fatalf("got %q, want %q", got, tc.want)
 			}
 		})
@@ -574,7 +574,7 @@ func TestManager_RunningJobs(t *testing.T) {
 	asset := h.addAsset(t)
 
 	ctx := context.Background()
-	job, _, err := h.jobs.Enqueue(ctx, asset.ID, prov.PluginName, prov.ID)
+	job, _, err := h.jobs.Enqueue(ctx, asset.ID, prov.PluginName, prov.ID, 0)
 	if err != nil {
 		t.Fatalf("enqueue: %v", err)
 	}

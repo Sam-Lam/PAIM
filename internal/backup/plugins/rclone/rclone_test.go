@@ -98,8 +98,8 @@ func TestInitializeParsesConfigAndValidatesRemote(t *testing.T) {
 	if err := p.Initialize(context.Background(), cfg); err != nil {
 		t.Fatalf("initialize: %v", err)
 	}
-	if p.remote != "gdrive:" {
-		t.Errorf("remote = %q, want gdrive:", p.remote)
+	if len(p.remotes) != 1 || p.remotes[0] != "gdrive:" {
+		t.Errorf("remotes = %v, want [gdrive:]", p.remotes)
 	}
 	if p.path != "PAIM-Backup" {
 		t.Errorf("path = %q, want PAIM-Backup", p.path)
@@ -116,8 +116,8 @@ func TestInitializeNormalizesRemoteWithoutColon(t *testing.T) {
 	if err := p.Initialize(context.Background(), `{"remote":"gdrive"}`); err != nil {
 		t.Fatalf("initialize: %v", err)
 	}
-	if p.remote != "gdrive:" {
-		t.Errorf("remote = %q, want gdrive:", p.remote)
+	if len(p.remotes) != 1 || p.remotes[0] != "gdrive:" {
+		t.Errorf("remotes = %v, want [gdrive:]", p.remotes)
 	}
 	if p.path != defaultPath {
 		t.Errorf("path defaulted to %q, want %q", p.path, defaultPath)
@@ -319,7 +319,8 @@ func TestUploadErrorSurfacesStderrTail(t *testing.T) {
 	}
 	runner := &fakeRunner{responder: listRemotesResponder([]string{"gdrive:"}, func(ctx context.Context, args []string, onLine func(string)) ([]byte, []byte, error) {
 		if args[0] == "copyto" {
-			return nil, []byte("some log\nFatal error: quota exceeded\n"), errors.New("exit status 1")
+			// A generic (non-quota) failure must surface its stderr tail verbatim.
+			return nil, []byte("some log\nFatal error: permission denied\n"), errors.New("exit status 1")
 		}
 		return nil, nil, nil
 	})}
@@ -328,7 +329,7 @@ func TestUploadErrorSurfacesStderrTail(t *testing.T) {
 		t.Fatalf("initialize: %v", err)
 	}
 	err := p.Upload(context.Background(), src, "a.jpg", nil)
-	if err == nil || !strings.Contains(err.Error(), "quota exceeded") {
+	if err == nil || !strings.Contains(err.Error(), "permission denied") {
 		t.Fatalf("expected error with stderr tail, got %v", err)
 	}
 }

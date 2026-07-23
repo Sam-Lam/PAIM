@@ -71,6 +71,19 @@ const (
 	JobStatusCancelled JobStatus = "cancelled"
 )
 
+// UploadOrder controls the order in which a backup provider's pending jobs are
+// claimed by the worker pool. OldestFirst (the default / zero-equivalent) keeps
+// strict FIFO; NewestFirst drains the newest media first so a quota-limited
+// mirror spends each day's budget on the most recently imported memories and new
+// imports jump the queue.
+type UploadOrder string
+
+// UploadOrder values. An empty string is treated as UploadOrderOldestFirst.
+const (
+	UploadOrderOldestFirst UploadOrder = "oldest_first"
+	UploadOrderNewestFirst UploadOrder = "newest_first"
+)
+
 // SourceType classifies the physical or logical origin of imported media.
 type SourceType string
 

@@ -2,6 +2,7 @@ package services
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -40,14 +41,56 @@ func NewProviderService(db *gorm.DB, registry *backup.Registry, logger *slog.Log
 
 // ProviderDTO is the JSON-friendly projection of a BackupProvider.
 type ProviderDTO struct {
-	ID         string `json:"id"`
-	PluginName string `json:"pluginName"`
-	ConfigJSON string `json:"configJson"`
-	Enabled    bool   `json:"enabled"`
+	ID          string `json:"id"`
+	PluginName  string `json:"pluginName"`
+	ConfigJSON  string `json:"configJson"`
+	Enabled     bool   `json:"enabled"`
+	Mirror      bool   `json:"mirror"`
+	UploadOrder string `json:"uploadOrder"`
 }
 
 func toProviderDTO(p domain.BackupProvider) ProviderDTO {
-	return ProviderDTO{ID: p.ID, PluginName: p.PluginName, ConfigJSON: p.ConfigJSON, Enabled: p.Enabled}
+	order := string(p.UploadOrder)
+	if order == "" {
+		order = string(domain.UploadOrderOldestFirst)
+	}
+	return ProviderDTO{
+		ID:          p.ID,
+		PluginName:  p.PluginName,
+		ConfigJSON:  p.ConfigJSON,
+		Enabled:     p.Enabled,
+		Mirror:      p.Mirror,
+		UploadOrder: order,
+	}
+}
+
+// normalizeUploadOrder maps a requested order string to a valid UploadOrder,
+// defaulting to oldest_first for anything unrecognized (including empty).
+func normalizeUploadOrder(order string) domain.UploadOrder {
+	if domain.UploadOrder(order) == domain.UploadOrderNewestFirst {
+		return domain.UploadOrderNewestFirst
+	}
+	return domain.UploadOrderOldestFirst
+}
+
+// injectRcloneMirror stamps the mirror flag into an rclone config JSON so the
+// plugin's Initialize can enforce pool rules (a >1 remote pool is only valid on a
+// mirror provider). It is a no-op for non-rclone plugins and tolerates a config
+// that is not a JSON object (Initialize will reject that separately).
+func injectRcloneMirror(pluginName, configJSON string, mirror bool) string {
+	if pluginName != rclone.PluginName {
+		return configJSON
+	}
+	var m map[string]any
+	if err := json.Unmarshal([]byte(configJSON), &m); err != nil || m == nil {
+		return configJSON
+	}
+	m["mirror"] = mirror
+	b, err := json.Marshal(m)
+	if err != nil {
+		return configJSON
+	}
+	return string(b)
 }
 
 // PluginDTO describes an available backup plugin and its capabilities.
@@ -76,25 +119,35 @@ func (s *ProviderService) List(ctx context.Context) ([]ProviderDTO, error) {
 }
 
 // Add validates configJSON against the named plugin (via an Initialize probe)
-// and, on success, creates an enabled provider.
-func (s *ProviderService) Add(ctx context.Context, pluginName, configJSON string) (ProviderDTO, error) {
+// and, on success, creates an enabled provider. mirror marks a quality-of-life
+// destination (its jobs never block a safety verdict); uploadOrder controls claim
+// order (oldest_first FIFO or newest_first). The mirror flag is also stamped into
+// the rclone config so the plugin can enforce its multi-remote-pool rules.
+func (s *ProviderService) Add(ctx context.Context, pluginName, configJSON string, mirror bool, uploadOrder string) (ProviderDTO, error) {
 	if err := s.guard(); err != nil {
 		return ProviderDTO{}, err
 	}
+	configJSON = injectRcloneMirror(pluginName, configJSON, mirror)
 	if err := s.probe(ctx, pluginName, configJSON); err != nil {
 		return ProviderDTO{}, err
 	}
-	p := &domain.BackupProvider{PluginName: pluginName, ConfigJSON: configJSON, Enabled: true}
+	p := &domain.BackupProvider{
+		PluginName:  pluginName,
+		ConfigJSON:  configJSON,
+		Enabled:     true,
+		Mirror:      mirror,
+		UploadOrder: normalizeUploadOrder(uploadOrder),
+	}
 	if err := s.db.WithContext(ctx).Create(p).Error; err != nil {
 		return ProviderDTO{}, fmt.Errorf("services: create provider: %w", err)
 	}
-	s.log.Info("backup provider added", "id", p.ID, "plugin", pluginName)
+	s.log.Info("backup provider added", "id", p.ID, "plugin", pluginName, "mirror", mirror, "uploadOrder", p.UploadOrder)
 	return toProviderDTO(*p), nil
 }
 
 // Update revalidates configJSON against the provider's plugin and persists the
-// new config and enabled flag.
-func (s *ProviderService) Update(ctx context.Context, id, configJSON string, enabled bool) (ProviderDTO, error) {
+// new config, enabled flag, mirror flag, and upload order.
+func (s *ProviderService) Update(ctx context.Context, id, configJSON string, enabled, mirror bool, uploadOrder string) (ProviderDTO, error) {
 	if err := s.guard(); err != nil {
 		return ProviderDTO{}, err
 	}
@@ -102,19 +155,25 @@ func (s *ProviderService) Update(ctx context.Context, id, configJSON string, ena
 	if err := s.db.WithContext(ctx).First(&p, "id = ?", id).Error; err != nil {
 		return ProviderDTO{}, fmt.Errorf("services: get provider %q: %w", id, err)
 	}
+	configJSON = injectRcloneMirror(p.PluginName, configJSON, mirror)
 	if err := s.probe(ctx, p.PluginName, configJSON); err != nil {
 		return ProviderDTO{}, err
 	}
+	order := normalizeUploadOrder(uploadOrder)
 	res := s.db.WithContext(ctx).Model(&domain.BackupProvider{}).Where("id = ?", id).Updates(map[string]any{
-		"config_json": configJSON,
-		"enabled":     enabled,
+		"config_json":  configJSON,
+		"enabled":      enabled,
+		"mirror":       mirror,
+		"upload_order": order,
 	})
 	if res.Error != nil {
 		return ProviderDTO{}, fmt.Errorf("services: update provider %q: %w", id, res.Error)
 	}
 	p.ConfigJSON = configJSON
 	p.Enabled = enabled
-	s.log.Info("backup provider updated", "id", id, "enabled", enabled)
+	p.Mirror = mirror
+	p.UploadOrder = order
+	s.log.Info("backup provider updated", "id", id, "enabled", enabled, "mirror", mirror, "uploadOrder", order)
 	return toProviderDTO(p), nil
 }
 
@@ -150,6 +209,39 @@ func (s *ProviderService) RcloneRemotes(ctx context.Context) (RcloneRemotesDTO, 
 		return RcloneRemotesDTO{Installed: true, Binary: binary, Error: err.Error()}, nil
 	}
 	return RcloneRemotesDTO{Installed: true, Binary: binary, Remotes: remotes}, nil
+}
+
+// RcloneRemoteInfoDTO reports a chosen rclone remote's backend type and whether
+// PAIM can verify uploads to it. The Add-destination UI uses SupportsChecksum to
+// auto-suggest the Mirror toggle and warn that uploads cannot be verified when the
+// backend (e.g. Google Photos) exposes no content hash.
+type RcloneRemoteInfoDTO struct {
+	Remote           string `json:"remote"`
+	BackendType      string `json:"backendType"`
+	SupportsChecksum bool   `json:"supportsChecksum"`
+	Error            string `json:"error"`
+}
+
+// RcloneRemoteInfo probes one rclone remote's backend type and checksum support.
+// It is not gated on an open library (it inspects rclone config, not the catalog).
+// A probe failure is returned inline (Error set) rather than as a hard error so
+// the UI degrades to the manual Mirror toggle.
+func (s *ProviderService) RcloneRemoteInfo(ctx context.Context, remote string) (RcloneRemoteInfoDTO, error) {
+	if remote == "" {
+		return RcloneRemoteInfoDTO{}, fmt.Errorf("services: rclone remote info: empty remote")
+	}
+	cctx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+	backendType, supportsChecksum, err := rclone.RemoteInfo(cctx, "", remote)
+	if err != nil {
+		// Optimistic default so the UI still lets the user proceed (manual toggle).
+		return RcloneRemoteInfoDTO{Remote: remote, SupportsChecksum: true, Error: err.Error()}, nil
+	}
+	return RcloneRemoteInfoDTO{
+		Remote:           remote,
+		BackendType:      backendType,
+		SupportsChecksum: supportsChecksum,
+	}, nil
 }
 
 // AvailablePlugins lists the registered plugins with their capabilities.

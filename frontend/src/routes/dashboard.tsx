@@ -90,6 +90,11 @@ export function DashboardPage() {
               value={formatNumber(stats.backupQueue.pending)}
               icon={CloudArrowUpIcon}
               tone={stats.backupQueue.pending > 0 ? "accent" : "default"}
+              hint={
+                stats.backupQueue.mirrorPending > 0
+                  ? `mirror uploads pending: ${formatNumber(stats.backupQueue.mirrorPending)}`
+                  : undefined
+              }
             />
             <Stat
               label="Failed Backups"

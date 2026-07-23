@@ -112,6 +112,7 @@ func createIndexes(gdb *gorm.DB) error {
 		{"idx_assets_current_archive_path", "assets", "current_archive_path"},
 		{"idx_backup_jobs_asset_id", "backup_jobs", "asset_id"},
 		{"idx_backup_jobs_status", "backup_jobs", "status"},
+		{"idx_backup_jobs_sort_key", "backup_jobs", "sort_key"},
 		{"idx_log_entries_timestamp", "log_entries", "timestamp"},
 		{"idx_log_entries_level", "log_entries", "level"},
 		{"idx_log_entries_subsystem", "log_entries", "subsystem"},

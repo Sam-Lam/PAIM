@@ -12,7 +12,7 @@ func TestEnqueueIsIdempotent(t *testing.T) {
 	ctx := context.Background()
 	r := NewBackupRepo(newTestDB(t))
 
-	j1, created1, err := r.Enqueue(ctx, "asset-1", "localfs", "/backup/a")
+	j1, created1, err := r.Enqueue(ctx, "asset-1", "localfs", "/backup/a", 0)
 	if err != nil {
 		t.Fatalf("enqueue 1: %v", err)
 	}
@@ -20,7 +20,7 @@ func TestEnqueueIsIdempotent(t *testing.T) {
 		t.Error("first enqueue should create a job")
 	}
 
-	j2, created2, err := r.Enqueue(ctx, "asset-1", "localfs", "/backup/a")
+	j2, created2, err := r.Enqueue(ctx, "asset-1", "localfs", "/backup/a", 0)
 	if err != nil {
 		t.Fatalf("enqueue 2: %v", err)
 	}
@@ -32,7 +32,7 @@ func TestEnqueueIsIdempotent(t *testing.T) {
 	}
 
 	// A different destination is a distinct job.
-	_, created3, err := r.Enqueue(ctx, "asset-1", "localfs", "/backup/b")
+	_, created3, err := r.Enqueue(ctx, "asset-1", "localfs", "/backup/b", 0)
 	if err != nil {
 		t.Fatalf("enqueue 3: %v", err)
 	}
@@ -59,8 +59,8 @@ func TestNextPendingClaimsOldestAndTransitions(t *testing.T) {
 	ctx := context.Background()
 	r := NewBackupRepo(newTestDB(t))
 
-	first, _, _ := r.Enqueue(ctx, "a1", "localfs", "/d")
-	second, _, _ := r.Enqueue(ctx, "a2", "localfs", "/d")
+	first, _, _ := r.Enqueue(ctx, "a1", "localfs", "/d", 0)
+	second, _, _ := r.Enqueue(ctx, "a2", "localfs", "/d", 0)
 
 	claimed, err := r.NextPending(ctx)
 	if err != nil {
@@ -100,7 +100,7 @@ func TestNextPendingAtomicUnderConcurrency(t *testing.T) {
 
 	const n = 40
 	for i := 0; i < n; i++ {
-		if _, _, err := r.Enqueue(ctx, "asset", "localfs", string(rune('a'+i%26))+string(rune('0'+i/26))); err != nil {
+		if _, _, err := r.Enqueue(ctx, "asset", "localfs", string(rune('a'+i%26))+string(rune('0'+i/26)), 0); err != nil {
 			t.Fatalf("enqueue %d: %v", i, err)
 		}
 	}
@@ -151,7 +151,7 @@ func TestMarkFailedIncrementsRetriesAndRequeue(t *testing.T) {
 	ctx := context.Background()
 	r := NewBackupRepo(newTestDB(t))
 
-	job, _, _ := r.Enqueue(ctx, "a", "localfs", "/d")
+	job, _, _ := r.Enqueue(ctx, "a", "localfs", "/d", 0)
 	if _, err := r.NextPending(ctx); err != nil {
 		t.Fatalf("claim: %v", err)
 	}
@@ -189,7 +189,7 @@ func TestPauseResumeCancelAndCompleted(t *testing.T) {
 	ctx := context.Background()
 	r := NewBackupRepo(newTestDB(t))
 
-	job, _, _ := r.Enqueue(ctx, "a", "localfs", "/d")
+	job, _, _ := r.Enqueue(ctx, "a", "localfs", "/d", 0)
 
 	if err := r.Pause(ctx, job.ID); err != nil {
 		t.Fatalf("pause: %v", err)
@@ -216,7 +216,7 @@ func TestPauseResumeCancelAndCompleted(t *testing.T) {
 		t.Errorf("cancelled status = %q", got.Status)
 	}
 
-	other, _, _ := r.Enqueue(ctx, "b", "localfs", "/d")
+	other, _, _ := r.Enqueue(ctx, "b", "localfs", "/d", 0)
 	if _, err := r.NextPending(ctx); err != nil {
 		t.Fatalf("claim other: %v", err)
 	}
@@ -232,8 +232,8 @@ func TestResetRunningOnStartup(t *testing.T) {
 	ctx := context.Background()
 	r := NewBackupRepo(newTestDB(t))
 
-	a, _, _ := r.Enqueue(ctx, "a", "localfs", "/d")
-	r.Enqueue(ctx, "b", "localfs", "/d")
+	a, _, _ := r.Enqueue(ctx, "a", "localfs", "/d", 0)
+	r.Enqueue(ctx, "b", "localfs", "/d", 0)
 	if _, err := r.NextPending(ctx); err != nil { // claims a -> running
 		t.Fatalf("claim: %v", err)
 	}
@@ -256,7 +256,7 @@ func TestListJobsFilterAndPaginate(t *testing.T) {
 	r := NewBackupRepo(newTestDB(t))
 
 	for i := 0; i < 3; i++ {
-		r.Enqueue(ctx, "asset", "localfs", string(rune('a'+i)))
+		r.Enqueue(ctx, "asset", "localfs", string(rune('a'+i)), 0)
 	}
 	claimed, _ := r.NextPending(ctx)
 	_ = claimed
@@ -271,5 +271,116 @@ func TestListJobsFilterAndPaginate(t *testing.T) {
 	}
 	if len(jobs) != 1 {
 		t.Errorf("returned %d jobs, want 1 (limit)", len(jobs))
+	}
+}
+
+// TestClaimNextForProviderOldestFirst confirms that oldest-first claiming (the
+// default) returns a provider's jobs in FIFO (creation) order regardless of
+// SortKey.
+func TestClaimNextForProviderOldestFirst(t *testing.T) {
+	ctx := context.Background()
+	r := NewBackupRepo(newTestDB(t))
+
+	// Enqueue three jobs for one provider with out-of-order sort keys.
+	a, _, _ := r.Enqueue(ctx, "a1", "localfs", "prov", 300)
+	b, _, _ := r.Enqueue(ctx, "a2", "localfs", "prov", 100)
+	c, _, _ := r.Enqueue(ctx, "a3", "localfs", "prov", 200)
+
+	want := []string{a.ID, b.ID, c.ID} // creation order
+	for i, id := range want {
+		claimed, err := r.ClaimNextForProvider(ctx, "prov", false)
+		if err != nil {
+			t.Fatalf("claim %d: %v", i, err)
+		}
+		if claimed == nil || claimed.ID != id {
+			t.Fatalf("claim %d = %v, want %s (FIFO)", i, claimed, id)
+		}
+	}
+	if extra, _ := r.ClaimNextForProvider(ctx, "prov", false); extra != nil {
+		t.Fatalf("expected no more jobs, got %v", extra)
+	}
+}
+
+// TestClaimNextForProviderNewestFirst confirms that newest-first claiming returns
+// a provider's jobs in descending SortKey order (newest media first).
+func TestClaimNextForProviderNewestFirst(t *testing.T) {
+	ctx := context.Background()
+	r := NewBackupRepo(newTestDB(t))
+
+	a, _, _ := r.Enqueue(ctx, "a1", "localfs", "prov", 300)
+	_, _, _ = r.Enqueue(ctx, "a2", "localfs", "prov", 100)
+	c, _, _ := r.Enqueue(ctx, "a3", "localfs", "prov", 200)
+
+	// Expect 300 (a) -> 200 (c) -> 100 (b).
+	first, _ := r.ClaimNextForProvider(ctx, "prov", true)
+	if first == nil || first.ID != a.ID {
+		t.Fatalf("first newest claim = %v, want sortKey 300", first)
+	}
+	second, _ := r.ClaimNextForProvider(ctx, "prov", true)
+	if second == nil || second.ID != c.ID {
+		t.Fatalf("second newest claim = %v, want sortKey 200", second)
+	}
+}
+
+// TestClaimNextForProviderScopesToProvider confirms a claim never crosses into a
+// different provider's jobs.
+func TestClaimNextForProviderScopesToProvider(t *testing.T) {
+	ctx := context.Background()
+	r := NewBackupRepo(newTestDB(t))
+
+	_, _, _ = r.Enqueue(ctx, "a1", "localfs", "provA", 1)
+	b, _, _ := r.Enqueue(ctx, "a2", "localfs", "provB", 1)
+
+	claimed, err := r.ClaimNextForProvider(ctx, "provB", false)
+	if err != nil {
+		t.Fatalf("claim: %v", err)
+	}
+	if claimed == nil || claimed.ID != b.ID {
+		t.Fatalf("claim = %v, want provB job %s", claimed, b.ID)
+	}
+	// provA still has its pending job untouched.
+	if again, _ := r.ClaimNextForProvider(ctx, "provB", false); again != nil {
+		t.Fatalf("provB should be drained, got %v", again)
+	}
+}
+
+// TestRevertToPendingNoRetryIncrement confirms a running job returns to pending
+// without touching its retry counter (the cooldown path).
+func TestRevertToPendingNoRetryIncrement(t *testing.T) {
+	ctx := context.Background()
+	r := NewBackupRepo(newTestDB(t))
+
+	job, _, _ := r.Enqueue(ctx, "a1", "localfs", "prov", 0)
+	claimed, _ := r.ClaimNextForProvider(ctx, "prov", false)
+	if claimed == nil || claimed.Status != domain.JobStatusRunning {
+		t.Fatalf("claim to running failed: %v", claimed)
+	}
+	if err := r.RevertToPending(ctx, job.ID); err != nil {
+		t.Fatalf("revert: %v", err)
+	}
+	got, _ := r.GetByID(ctx, job.ID)
+	if got.Status != domain.JobStatusPending {
+		t.Fatalf("status = %q, want pending", got.Status)
+	}
+	if got.Retries != 0 {
+		t.Fatalf("retries = %d, want 0 (cooldown must not burn a retry)", got.Retries)
+	}
+}
+
+// TestMarkCompletedWithNote confirms a completed job can carry a non-fatal note.
+func TestMarkCompletedWithNote(t *testing.T) {
+	ctx := context.Background()
+	r := NewBackupRepo(newTestDB(t))
+
+	job, _, _ := r.Enqueue(ctx, "a1", "localfs", "prov", 0)
+	if err := r.MarkCompletedWithNote(ctx, job.ID, "verify unavailable (mirror)"); err != nil {
+		t.Fatalf("mark: %v", err)
+	}
+	got, _ := r.GetByID(ctx, job.ID)
+	if got.Status != domain.JobStatusCompleted {
+		t.Fatalf("status = %q, want completed", got.Status)
+	}
+	if got.ErrorMessage != "verify unavailable (mirror)" {
+		t.Fatalf("note = %q, want the mirror note", got.ErrorMessage)
 	}
 }

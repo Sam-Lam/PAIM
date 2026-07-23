@@ -26,17 +26,24 @@ import (
 // RepoJobQueue adapts *repo.BackupRepo to this interface; main.go wires it with
 // backup.NewRepoJobQueue(db).
 type JobQueue interface {
-	NextPending(ctx context.Context) (*domain.BackupJob, error)
+	// ClaimNextForProvider claims one provider's next pending job, honoring its
+	// upload order (newestFirst -> highest SortKey first). The Manager iterates
+	// eligible providers so it can round-robin and skip cooling ones.
+	ClaimNextForProvider(ctx context.Context, destination string, newestFirst bool) (*domain.BackupJob, error)
 	GetByID(ctx context.Context, id string) (*domain.BackupJob, error)
 	MarkCompleted(ctx context.Context, id string) error
+	MarkCompletedWithNote(ctx context.Context, id, note string) error
 	MarkFailed(ctx context.Context, id, errMsg string) error
 	Requeue(ctx context.Context, id string) error
+	// RevertToPending returns a running job to pending without a retry increment
+	// (used for provider cooldowns, where abandoning the attempt is not a failure).
+	RevertToPending(ctx context.Context, id string) error
 	Pause(ctx context.Context, id string) error
 	Resume(ctx context.Context, id string) error
 	Cancel(ctx context.Context, id string) error
 	ResetRunningOnStartup(ctx context.Context) (int64, error)
 	ListJobs(ctx context.Context, status *domain.JobStatus, page repo.Page) ([]domain.BackupJob, int64, error)
-	Enqueue(ctx context.Context, assetID, plugin, destination string) (*domain.BackupJob, bool, error)
+	Enqueue(ctx context.Context, assetID, plugin, destination string, sortKey int64) (*domain.BackupJob, bool, error)
 
 	// JobsForAsset returns every non-deleted job belonging to assetID.
 	JobsForAsset(ctx context.Context, assetID string) ([]domain.BackupJob, error)
@@ -60,6 +67,10 @@ type ProviderStore interface {
 	ListEnabled(ctx context.Context) ([]domain.BackupProvider, error)
 	// GetByID returns a single provider (enabled or not) by ID, or ErrNotFound.
 	GetByID(ctx context.Context, id string) (*domain.BackupProvider, error)
+	// MirrorIDs returns the set of provider IDs marked Mirror, so the Manager can
+	// exclude their jobs from the aggregate BackupStatus (mirrors never block a
+	// safety verdict).
+	MirrorIDs(ctx context.Context) (map[string]bool, error)
 	// WithTx binds the store to a transaction handle.
 	WithTx(tx *gorm.DB) ProviderStore
 }
@@ -119,6 +130,22 @@ func (s *RepoProviderStore) ListEnabled(ctx context.Context) ([]domain.BackupPro
 		return nil, fmt.Errorf("backup: list enabled providers: %w", err)
 	}
 	return providers, nil
+}
+
+// MirrorIDs returns the set of enabled-or-disabled provider IDs marked Mirror.
+func (s *RepoProviderStore) MirrorIDs(ctx context.Context) (map[string]bool, error) {
+	var ids []string
+	if err := s.db.WithContext(ctx).
+		Model(&domain.BackupProvider{}).
+		Where("mirror = ?", true).
+		Pluck("id", &ids).Error; err != nil {
+		return nil, fmt.Errorf("backup: list mirror provider ids: %w", err)
+	}
+	out := make(map[string]bool, len(ids))
+	for _, id := range ids {
+		out[id] = true
+	}
+	return out, nil
 }
 
 // GetByID returns the provider with the given ID, or repo.ErrNotFound.

@@ -61,7 +61,11 @@ func (s *BackupService) queueSummary(ctx context.Context) (QueueSummaryDTO, erro
 		statuses[i] = c.Status
 		values[i] = c.Count
 	}
-	return summaryFromCounts(statuses, values), nil
+	summary := summaryFromCounts(statuses, values)
+	if s.manager != nil {
+		summary.Cooldowns = cooldownDTOs(s.manager.Cooldowns())
+	}
+	return summary, nil
 }
 
 // SessionBackupStatusDTO is the live per-session backup progress the import
@@ -235,7 +239,10 @@ func (s *BackupService) cancelActive() {}
 // invoked (throttled) from Manager goroutines, so it must not block; a single
 // summary query plus emit is acceptable. The payload matches BackupService.mutate
 // so the frontend handles both identically.
-func NewBackupQueueChangedEmitter(emitter Emitter, jobs *repo.BackupRepo) func() {
+// cooldownsFn, when non-nil, supplies the current provider cooldowns so the
+// emitted summary carries them; it is wired in main.go/appcore after the Manager
+// exists (the Manager owns the cooldown state and invokes this emitter).
+func NewBackupQueueChangedEmitter(emitter Emitter, jobs *repo.BackupRepo, cooldownsFn func() []ProviderCooldownDTO) func() {
 	return func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
@@ -249,7 +256,11 @@ func NewBackupQueueChangedEmitter(emitter Emitter, jobs *repo.BackupRepo) func()
 			statuses[i] = c.Status
 			values[i] = c.Count
 		}
-		emitSafe(emitter, EventBackupQueueChanged, BackupQueueChanged{Summary: summaryFromCounts(statuses, values)})
+		summary := summaryFromCounts(statuses, values)
+		if cooldownsFn != nil {
+			summary.Cooldowns = cooldownsFn()
+		}
+		emitSafe(emitter, EventBackupQueueChanged, BackupQueueChanged{Summary: summary})
 	}
 }
 

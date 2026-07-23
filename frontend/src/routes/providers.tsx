@@ -3,10 +3,12 @@ import {
   ArrowPathIcon,
   CheckCircleIcon,
   CircleStackIcon,
+  ExclamationTriangleIcon,
   FolderOpenIcon,
   InformationCircleIcon,
   PlusIcon,
   ServerStackIcon,
+  TrashIcon,
 } from "@heroicons/react/24/outline";
 import { Button, Card, EmptyState, LoadingBlock, PageHeader, StatusBadge } from "../components";
 import {
@@ -14,11 +16,17 @@ import {
   ProviderService,
   type PluginDTO,
   type ProviderDTO,
+  type RcloneRemoteInfoDTO,
   type RcloneRemotesDTO,
 } from "../lib/api";
 import { useAsyncData } from "../lib/hooks";
 import { useToast } from "../lib/toast";
 import { formatBytes } from "../lib/format";
+
+const ORDER_OPTIONS: { value: string; label: string }[] = [
+  { value: "oldest_first", label: "Oldest first (FIFO)" },
+  { value: "newest_first", label: "Newest first" },
+];
 
 /** Providers — configure backup destinations (localfs and future plugins). */
 export function ProvidersPage() {
@@ -60,8 +68,9 @@ export function ProvidersPage() {
       <div className="mb-5 flex items-start gap-2 rounded-md border border-blue-500/30 bg-blue-500/5 p-3 text-[12px] text-blue-200/90">
         <InformationCircleIcon className="mt-0.5 h-4 w-4 flex-none" />
         <span>
-          Every imported asset is automatically enqueued for backup to your enabled destinations. If no destination is
-          enabled, backups will wait until one is available.
+          Every imported asset is automatically enqueued for backup to your enabled destinations. Required destinations
+          gate safety verdicts (safe-to-erase, cleanup); <span className="font-medium">mirror</span> destinations are
+          quality-of-life extras that never block those verdicts.
         </span>
       </div>
 
@@ -84,10 +93,14 @@ export function ProvidersPage() {
           )}
 
           {adding ? (
-            <AddDestination plugins={plugins.data ?? []} onCancel={() => setAdding(false)} onAdded={() => {
-              setAdding(false);
-              void refresh();
-            }} />
+            <AddDestination
+              plugins={plugins.data ?? []}
+              onCancel={() => setAdding(false)}
+              onAdded={() => {
+                setAdding(false);
+                void refresh();
+              }}
+            />
           ) : (
             <Button icon={PlusIcon} variant="secondary" onClick={() => setAdding(true)}>
               Add destination
@@ -112,11 +125,16 @@ function ProviderCard({
   const [saving, setSaving] = useState(false);
   const summary = configSummary(provider.configJson);
 
-  const toggle = async () => {
+  const save = async (patch: { enabled?: boolean; uploadOrder?: string }) => {
     setSaving(true);
     try {
-      await ProviderService.Update(provider.id, provider.configJson, !provider.enabled);
-      toast.success(provider.enabled ? "Destination disabled" : "Destination enabled");
+      await ProviderService.Update(
+        provider.id,
+        provider.configJson,
+        patch.enabled ?? provider.enabled,
+        provider.mirror,
+        patch.uploadOrder ?? provider.uploadOrder,
+      );
       onChanged();
     } catch (e) {
       toast.fromError(e, "Could not update destination");
@@ -132,7 +150,7 @@ function ProviderCard({
           <CircleStackIcon className="h-5 w-5" />
         </div>
         <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <h3 className="text-sm font-semibold text-zinc-100">{provider.pluginName}</h3>
             <StatusBadge
               status={provider.enabled ? "enabled" : "disabled"}
@@ -140,26 +158,54 @@ function ProviderCard({
               label={provider.enabled ? "Enabled" : "Disabled"}
               dot
             />
+            {provider.mirror ? (
+              <span className="rounded-full bg-amber-500/15 px-2 py-0.5 text-[10px] font-semibold tracking-wide text-amber-300 uppercase ring-1 ring-amber-500/30 ring-inset">
+                Mirror
+              </span>
+            ) : null}
           </div>
           <p className="selectable mt-0.5 truncate font-mono text-[11px] text-zinc-500" title={summary}>
             {summary}
           </p>
 
-          {plugin ? (
-            <div className="mt-2 flex flex-wrap items-center gap-1.5">
-              {plugin.supportsVerify ? <Chip label="Verify" /> : null}
-              {plugin.supportsDelete ? <Chip label="Delete" /> : null}
-              {plugin.supportsResume ? <Chip label="Resume" /> : null}
-              {plugin.maxFileSize > 0 ? <Chip label={`Max ${formatBytes(plugin.maxFileSize)}`} /> : null}
-            </div>
+          {provider.mirror ? (
+            <p className="mt-1 text-[11px] text-amber-300/80">
+              Quality-of-life mirror — excluded from safe-to-erase, cleanup, and the dashboard's headline backup counts.
+            </p>
           ) : null}
+
+          <div className="mt-2 flex flex-wrap items-center gap-3">
+            {plugin ? (
+              <div className="flex flex-wrap items-center gap-1.5">
+                {plugin.supportsVerify ? <Chip label="Verify" /> : null}
+                {plugin.supportsDelete ? <Chip label="Delete" /> : null}
+                {plugin.supportsResume ? <Chip label="Resume" /> : null}
+                {plugin.maxFileSize > 0 ? <Chip label={`Max ${formatBytes(plugin.maxFileSize)}`} /> : null}
+              </div>
+            ) : null}
+            <label className="flex items-center gap-1.5 text-[11px] text-zinc-400">
+              <span>Upload order</span>
+              <select
+                value={provider.uploadOrder || "oldest_first"}
+                disabled={saving}
+                onChange={(e) => void save({ uploadOrder: e.target.value })}
+                className="rounded-md border border-zinc-700 bg-zinc-950 px-2 py-1 text-[11px] text-zinc-200 outline-none focus:border-blue-500"
+              >
+                {ORDER_OPTIONS.map((o) => (
+                  <option key={o.value} value={o.value}>
+                    {o.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
         </div>
         <div className="flex-none">
           <Button
             size="sm"
             variant={provider.enabled ? "secondary" : "primary"}
             loading={saving}
-            onClick={() => void toggle()}
+            onClick={() => void save({ enabled: !provider.enabled })}
           >
             {provider.enabled ? "Disable" : "Enable"}
           </Button>
@@ -193,23 +239,36 @@ function AddDestination({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // Mirror + upload order (shared across plugins).
+  const [mirror, setMirror] = useState(false);
+  const [uploadOrder, setUploadOrder] = useState("oldest_first");
+
   // rclone state.
   const [rclone, setRclone] = useState<RcloneRemotesDTO | null>(null);
   const [rcloneLoading, setRcloneLoading] = useState(false);
   const [remote, setRemote] = useState("");
+  const [poolRemotes, setPoolRemotes] = useState<string[]>([]);
   const [rclonePath, setRclonePath] = useState("PAIM-Backup");
+  const [remoteInfo, setRemoteInfo] = useState<RcloneRemoteInfoDTO | null>(null);
 
   const isLocalfs = pluginName === "localfs";
   const isRclone = pluginName === "rclone";
+
+  // Toggling mirror on defaults the order to newest_first (new imports jump the
+  // queue); toggling off restores oldest_first.
+  const setMirrorAndOrder = (on: boolean) => {
+    setMirror(on);
+    setUploadOrder(on ? "newest_first" : "oldest_first");
+    if (on && isRclone && poolRemotes.length === 0 && remote) setPoolRemotes([remote]);
+  };
 
   const loadRemotes = async () => {
     setRcloneLoading(true);
     try {
       const res = await ProviderService.RcloneRemotes();
       setRclone(res);
-      // Default the remote to the first available one.
-      if (res.remotes && res.remotes.length > 0) {
-        const remotes = res.remotes ?? [];
+      const remotes = res.remotes ?? [];
+      if (remotes.length > 0) {
         setRemote((cur) => (cur && remotes.includes(cur) ? cur : (remotes[0] ?? "")));
       }
     } catch (e) {
@@ -227,6 +286,31 @@ function AddDestination({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isRclone]);
 
+  // When the single remote changes, probe its checksum support: a backend with no
+  // usable content hash (e.g. Google Photos) cannot be verified, so pre-suggest the
+  // Mirror toggle and warn.
+  useEffect(() => {
+    if (!isRclone || !remote) {
+      setRemoteInfo(null);
+      return;
+    }
+    let cancelled = false;
+    void (async () => {
+      try {
+        const info = await ProviderService.RcloneRemoteInfo(remote);
+        if (cancelled) return;
+        setRemoteInfo(info);
+        if (!info.supportsChecksum) setMirrorAndOrder(true);
+      } catch {
+        if (!cancelled) setRemoteInfo(null);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isRclone, remote]);
+
   const pick = async () => {
     try {
       const picked = await CleanupService.PickFolder();
@@ -242,7 +326,12 @@ function AddDestination({
       setError("Choose a root folder for the local filesystem destination.");
       return;
     }
-    if (isRclone && !remote.trim()) {
+    const pool = poolRemotes.filter((r) => r.trim());
+    if (isRclone && mirror && pool.length === 0) {
+      setError("Add at least one rclone remote to the mirror pool.");
+      return;
+    }
+    if (isRclone && !mirror && !remote.trim()) {
       setError("Choose an rclone remote for this destination.");
       return;
     }
@@ -250,17 +339,18 @@ function AddDestination({
     if (isLocalfs) {
       configJSON = JSON.stringify({ root: root.trim() });
     } else if (isRclone) {
-      configJSON = JSON.stringify({ remote: remote.trim(), path: rclonePath.trim() || "PAIM-Backup" });
+      configJSON = mirror
+        ? JSON.stringify({ remotes: pool, path: rclonePath.trim() || "PAIM-Backup" })
+        : JSON.stringify({ remote: remote.trim(), path: rclonePath.trim() || "PAIM-Backup" });
     } else {
       configJSON = rawConfig.trim() || "{}";
     }
     setSaving(true);
     try {
-      await ProviderService.Add(pluginName, configJSON);
+      await ProviderService.Add(pluginName, configJSON, mirror, uploadOrder);
       toast.success("Destination added");
       onAdded();
     } catch (e) {
-      // Initialize probe rejected the config — surface it inline.
       setError(errText(e));
     } finally {
       setSaving(false);
@@ -268,6 +358,7 @@ function AddDestination({
   };
 
   const rcloneReady = isRclone && rclone?.installed === true;
+  const noChecksum = isRclone && remoteInfo != null && !remoteInfo.supportsChecksum;
 
   return (
     <Card title="Add destination" subtitle="Validated against the plugin before it is saved.">
@@ -310,11 +401,15 @@ function AddDestination({
           <RcloneConfig
             status={rclone}
             loading={rcloneLoading}
+            mirror={mirror}
             remote={remote}
             onRemote={setRemote}
+            poolRemotes={poolRemotes}
+            onPoolRemotes={setPoolRemotes}
             path={rclonePath}
             onPath={setRclonePath}
             onRetry={() => void loadRemotes()}
+            remoteInfo={remoteInfo}
           />
         ) : (
           <label className="block">
@@ -327,6 +422,52 @@ function AddDestination({
             />
           </label>
         )}
+
+        {noChecksum ? (
+          <div className="flex items-start gap-2 rounded-md border border-amber-500/30 bg-amber-500/5 p-3 text-[12px] text-amber-200/90">
+            <ExclamationTriangleIcon className="mt-0.5 h-4 w-4 flex-none" />
+            <span>
+              This destination’s backend{remoteInfo?.backendType ? ` (${remoteInfo.backendType})` : ""} exposes no
+              checksum — uploads to it cannot be verified. It has been marked as a mirror (quality-of-life) destination.
+            </span>
+          </div>
+        ) : null}
+
+        {/* Mirror toggle + explanatory copy. */}
+        <label className="flex items-start gap-2 rounded-md border border-zinc-800 bg-zinc-900/40 p-3 text-[12px] text-zinc-300">
+          <input
+            type="checkbox"
+            checked={mirror}
+            onChange={(e) => setMirrorAndOrder(e.target.checked)}
+            className="mt-0.5 h-4 w-4 flex-none accent-blue-600"
+          />
+          <span>
+            <span className="font-medium text-zinc-200">Mirror (quality-of-life) provider</span>
+            <span className="mt-0.5 block text-zinc-500">
+              A mirror never blocks a safety verdict: its jobs are excluded from safe-to-erase, cleanup, the source-clear
+              gate, and the dashboard's headline backup counts. Verification is best-effort. Use it for convenience
+              destinations like Google Photos.
+            </span>
+          </span>
+        </label>
+
+        <label className="block">
+          <span className="text-xs font-medium text-zinc-400">Upload order</span>
+          <select
+            value={uploadOrder}
+            onChange={(e) => setUploadOrder(e.target.value)}
+            className="mt-1.5 w-full rounded-md border border-zinc-700 bg-zinc-950 px-3 py-1.5 text-[13px] text-zinc-200 outline-none focus:border-blue-500"
+          >
+            {ORDER_OPTIONS.map((o) => (
+              <option key={o.value} value={o.value}>
+                {o.label}
+              </option>
+            ))}
+          </select>
+          <span className="mt-1 block text-[11px] text-zinc-500">
+            Newest photos upload first — new imports jump the queue (good for a quota-limited mirror).
+          </span>
+        </label>
 
         {error ? (
           <p className="rounded-md border border-red-500/30 bg-red-500/5 px-3 py-2 text-[12px] text-red-400">{error}</p>
@@ -351,25 +492,32 @@ function AddDestination({
   );
 }
 
-/** RcloneConfig renders install status, a remotes dropdown, and a destination
- *  path field for the rclone plugin. When rclone is missing or has no remotes it
- *  shows first-time setup guidance instead. */
+/** RcloneConfig renders install status, a remotes dropdown (or an ordered mirror
+ *  pool), and a destination path field for the rclone plugin. */
 function RcloneConfig({
   status,
   loading,
+  mirror,
   remote,
   onRemote,
+  poolRemotes,
+  onPoolRemotes,
   path,
   onPath,
   onRetry,
+  remoteInfo,
 }: {
   status: RcloneRemotesDTO | null;
   loading: boolean;
+  mirror: boolean;
   remote: string;
   onRemote: (v: string) => void;
+  poolRemotes: string[];
+  onPoolRemotes: (v: string[]) => void;
   path: string;
   onPath: (v: string) => void;
   onRetry: () => void;
+  remoteInfo: RcloneRemoteInfoDTO | null;
 }) {
   if (loading || status === null) {
     return <LoadingBlock label="Checking rclone…" />;
@@ -386,10 +534,6 @@ function RcloneConfig({
         <pre className="selectable overflow-x-auto rounded bg-zinc-950/60 p-2 font-mono text-[11px] text-zinc-300">
           brew install rclone{"\n"}rclone config
         </pre>
-        <p>
-          For Google Drive choose <span className="font-mono">drive</span> in <span className="font-mono">rclone config</span>{" "}
-          and follow the browser sign-in. Then reopen this dialog.
-        </p>
         <Button icon={ArrowPathIcon} variant="secondary" size="sm" onClick={onRetry}>
           Re-check
         </Button>
@@ -399,6 +543,21 @@ function RcloneConfig({
 
   const remotes = status.remotes ?? [];
 
+  if (remotes.length === 0) {
+    return (
+      <div className="space-y-2 rounded-md border border-amber-500/30 bg-amber-500/5 p-3 text-[12px] text-amber-200/90">
+        <p className="font-medium">No rclone remotes configured</p>
+        <p>
+          Run <span className="font-mono">rclone config</span> to add one (choose <span className="font-mono">drive</span>{" "}
+          for Google Drive), then re-check.
+        </p>
+        <Button icon={ArrowPathIcon} variant="secondary" size="sm" onClick={onRetry}>
+          Re-check
+        </Button>
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-3">
       {status.error ? (
@@ -407,48 +566,100 @@ function RcloneConfig({
         </p>
       ) : null}
 
-      {remotes.length === 0 ? (
-        <div className="space-y-2 rounded-md border border-amber-500/30 bg-amber-500/5 p-3 text-[12px] text-amber-200/90">
-          <p className="font-medium">No rclone remotes configured</p>
-          <p>
-            Run <span className="font-mono">rclone config</span> to add one (choose <span className="font-mono">drive</span>{" "}
-            for Google Drive), then re-check.
-          </p>
-          <Button icon={ArrowPathIcon} variant="secondary" size="sm" onClick={onRetry}>
-            Re-check
+      {mirror ? (
+        <RclonePool remotes={remotes} pool={poolRemotes} onPool={onPoolRemotes} />
+      ) : (
+        <label className="block">
+          <span className="text-xs font-medium text-zinc-400">Remote</span>
+          <select
+            value={remote}
+            onChange={(e) => onRemote(e.target.value)}
+            className="mt-1.5 w-full rounded-md border border-zinc-700 bg-zinc-950 px-3 py-1.5 font-mono text-[12px] text-zinc-200 outline-none focus:border-blue-500"
+          >
+            {remotes.map((r) => (
+              <option key={r} value={r}>
+                {r}
+              </option>
+            ))}
+          </select>
+          {remoteInfo?.backendType ? (
+            <span className="mt-1 block text-[11px] text-zinc-500">Backend: {remoteInfo.backendType}</span>
+          ) : null}
+        </label>
+      )}
+
+      <label className="block">
+        <span className="text-xs font-medium text-zinc-400">Destination path</span>
+        <input
+          value={path}
+          onChange={(e) => onPath(e.target.value)}
+          placeholder="PAIM-Backup"
+          className="mt-1.5 w-full rounded-md border border-zinc-700 bg-zinc-950 px-3 py-1.5 font-mono text-[12px] text-zinc-200 outline-none focus:border-blue-500"
+        />
+        <span className="mt-1 block text-[11px] text-zinc-500">
+          Folder within each remote where the archive tree is mirrored.
+        </span>
+      </label>
+    </div>
+  );
+}
+
+/** RclonePool edits an ordered list of remotes for a mirror pool. Each remote —
+ *  typically backed by its own Google Cloud project — has an independent daily
+ *  quota; PAIM fails over automatically when one is exhausted. */
+function RclonePool({
+  remotes,
+  pool,
+  onPool,
+}: {
+  remotes: string[];
+  pool: string[];
+  onPool: (v: string[]) => void;
+}) {
+  const rows = pool.length > 0 ? pool : [remotes[0] ?? ""];
+  const setAt = (i: number, v: string) => {
+    const next = [...rows];
+    next[i] = v;
+    onPool(next);
+  };
+  const removeAt = (i: number) => onPool(rows.filter((_, idx) => idx !== i));
+  const add = () => onPool([...rows, remotes.find((r) => !rows.includes(r)) ?? (remotes[0] ?? "")]);
+
+  return (
+    <div className="space-y-2">
+      <span className="text-xs font-medium text-zinc-400">Remote pool (ordered)</span>
+      <p className="text-[11px] text-zinc-500">
+        Each remote backed by its own Google Cloud project has an independent daily quota — PAIM fails over automatically
+        when one is exhausted.
+      </p>
+      {rows.map((r, i) => (
+        <div key={i} className="flex items-center gap-2">
+          <span className="w-5 text-right text-[11px] text-zinc-600">{i + 1}.</span>
+          <select
+            value={r}
+            onChange={(e) => setAt(i, e.target.value)}
+            className="min-w-0 flex-1 rounded-md border border-zinc-700 bg-zinc-950 px-3 py-1.5 font-mono text-[12px] text-zinc-200 outline-none focus:border-blue-500"
+          >
+            {remotes.map((opt) => (
+              <option key={opt} value={opt}>
+                {opt}
+              </option>
+            ))}
+          </select>
+          <Button
+            size="sm"
+            variant="ghost"
+            icon={TrashIcon}
+            disabled={rows.length <= 1}
+            onClick={() => removeAt(i)}
+          >
+            Remove
           </Button>
         </div>
-      ) : (
-        <>
-          <label className="block">
-            <span className="text-xs font-medium text-zinc-400">Remote</span>
-            <select
-              value={remote}
-              onChange={(e) => onRemote(e.target.value)}
-              className="mt-1.5 w-full rounded-md border border-zinc-700 bg-zinc-950 px-3 py-1.5 font-mono text-[12px] text-zinc-200 outline-none focus:border-blue-500"
-            >
-              {remotes.map((r) => (
-                <option key={r} value={r}>
-                  {r}
-                </option>
-              ))}
-            </select>
-          </label>
-
-          <label className="block">
-            <span className="text-xs font-medium text-zinc-400">Destination path</span>
-            <input
-              value={path}
-              onChange={(e) => onPath(e.target.value)}
-              placeholder="PAIM-Backup"
-              className="mt-1.5 w-full rounded-md border border-zinc-700 bg-zinc-950 px-3 py-1.5 font-mono text-[12px] text-zinc-200 outline-none focus:border-blue-500"
-            />
-            <span className="mt-1 block text-[11px] text-zinc-500">
-              Folder within the remote where the archive tree is mirrored.
-            </span>
-          </label>
-        </>
-      )}
+      ))}
+      <Button size="sm" variant="secondary" icon={PlusIcon} onClick={add} disabled={rows.length >= remotes.length}>
+        Add remote
+      </Button>
     </div>
   );
 }
@@ -459,13 +670,18 @@ function configSummary(configJson: string): string {
   try {
     const parsed = JSON.parse(configJson) as Record<string, unknown>;
     if (typeof parsed.root === "string" && parsed.root) return parsed.root;
-    // rclone: show "remote:path" (e.g. gdrive:PAIM-Backup).
+    // rclone pool: show "gp1:, gp2: → path".
+    if (Array.isArray(parsed.remotes) && parsed.remotes.length > 0) {
+      const rems = (parsed.remotes as unknown[]).map((r) => String(r)).join(", ");
+      const p = typeof parsed.path === "string" ? parsed.path.replace(/^\/+/, "") : "";
+      return p ? `${rems} → ${p}` : rems;
+    }
     if (typeof parsed.remote === "string" && parsed.remote) {
       const rem = parsed.remote.endsWith(":") ? parsed.remote : `${parsed.remote}:`;
       const p = typeof parsed.path === "string" ? parsed.path.replace(/^\/+/, "") : "";
       return p ? `${rem}${p}` : rem;
     }
-    const entries = Object.entries(parsed);
+    const entries = Object.entries(parsed).filter(([k]) => k !== "mirror");
     if (entries.length === 0) return "No configuration";
     return entries.map(([k, v]) => `${k}: ${String(v)}`).join(" · ");
   } catch {

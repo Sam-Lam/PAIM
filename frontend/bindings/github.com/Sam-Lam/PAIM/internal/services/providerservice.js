@@ -21,13 +21,18 @@ import * as $models from "./models.js";
 
 /**
  * Add validates configJSON against the named plugin (via an Initialize probe)
- * and, on success, creates an enabled provider.
+ * and, on success, creates an enabled provider. mirror marks a quality-of-life
+ * destination (its jobs never block a safety verdict); uploadOrder controls claim
+ * order (oldest_first FIFO or newest_first). The mirror flag is also stamped into
+ * the rclone config so the plugin can enforce its multi-remote-pool rules.
  * @param {string} pluginName
  * @param {string} configJSON
+ * @param {boolean} mirror
+ * @param {string} uploadOrder
  * @returns {$CancellablePromise<$models.ProviderDTO>}
  */
-export function Add(pluginName, configJSON) {
-    return $Call.ByID(3798959424, pluginName, configJSON).then(/** @type {($result: any) => any} */(($result) => {
+export function Add(pluginName, configJSON, mirror, uploadOrder) {
+    return $Call.ByID(3798959424, pluginName, configJSON, mirror, uploadOrder).then(/** @type {($result: any) => any} */(($result) => {
         return $$createType0($result);
     }));
 }
@@ -62,6 +67,20 @@ export function List() {
 }
 
 /**
+ * RcloneRemoteInfo probes one rclone remote's backend type and checksum support.
+ * It is not gated on an open library (it inspects rclone config, not the catalog).
+ * A probe failure is returned inline (Error set) rather than as a hard error so
+ * the UI degrades to the manual Mirror toggle.
+ * @param {string} remote
+ * @returns {$CancellablePromise<$models.RcloneRemoteInfoDTO>}
+ */
+export function RcloneRemoteInfo(remote) {
+    return $Call.ByID(3792459144, remote).then(/** @type {($result: any) => any} */(($result) => {
+        return $$createType4($result);
+    }));
+}
+
+/**
  * RcloneRemotes resolves the rclone binary and lists its configured remotes so
  * the Add flow can present a dropdown. A missing binary is reported as a typed
  * "not installed" state (Installed=false) rather than an error, so the UI can
@@ -70,7 +89,7 @@ export function List() {
  */
 export function RcloneRemotes() {
     return $Call.ByID(3498411557).then(/** @type {($result: any) => any} */(($result) => {
-        return $$createType4($result);
+        return $$createType5($result);
     }));
 }
 
@@ -86,14 +105,16 @@ export function SetGate(gate) {
 
 /**
  * Update revalidates configJSON against the provider's plugin and persists the
- * new config and enabled flag.
+ * new config, enabled flag, mirror flag, and upload order.
  * @param {string} id
  * @param {string} configJSON
  * @param {boolean} enabled
+ * @param {boolean} mirror
+ * @param {string} uploadOrder
  * @returns {$CancellablePromise<$models.ProviderDTO>}
  */
-export function Update(id, configJSON, enabled) {
-    return $Call.ByID(4249247096, id, configJSON, enabled).then(/** @type {($result: any) => any} */(($result) => {
+export function Update(id, configJSON, enabled, mirror, uploadOrder) {
+    return $Call.ByID(4249247096, id, configJSON, enabled, mirror, uploadOrder).then(/** @type {($result: any) => any} */(($result) => {
         return $$createType0($result);
     }));
 }
@@ -103,4 +124,5 @@ const $$createType0 = $models.ProviderDTO.createFrom;
 const $$createType1 = $models.PluginDTO.createFrom;
 const $$createType2 = $Create.Array($$createType1);
 const $$createType3 = $Create.Array($$createType0);
-const $$createType4 = $models.RcloneRemotesDTO.createFrom;
+const $$createType4 = $models.RcloneRemoteInfoDTO.createFrom;
+const $$createType5 = $models.RcloneRemotesDTO.createFrom;

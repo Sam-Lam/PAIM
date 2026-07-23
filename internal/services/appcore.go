@@ -187,12 +187,21 @@ func BuildCore(deps CoreDeps) (*AppCore, error) {
 	layout := archive.New(deps.Root)
 	jobQueue := backup.NewRepoJobQueue(gdb)
 	providerStore := backup.NewRepoProviderStore(gdb)
-	manager := backup.NewManager(jobQueue, assets, providerStore, deps.Registry, logger, backup.Options{
-		Workers:        cfg.BackupWorkers,
-		MaxRetries:     cfg.MaxRetries,
-		LibraryRoot:    deps.Root,
-		ProgressFn:     NewBackupProgressEmitter(deps.Emitter),
-		OnQueueChanged: NewBackupQueueChangedEmitter(deps.Emitter, backups),
+	// The queue-changed emitter reads live provider cooldowns from the Manager, but
+	// the Manager needs the emitter at construction; a var captured by the closure
+	// (assigned just below) breaks the cycle — the closure only runs at emit time.
+	var manager *backup.Manager
+	manager = backup.NewManager(jobQueue, assets, providerStore, deps.Registry, logger, backup.Options{
+		Workers:     cfg.BackupWorkers,
+		MaxRetries:  cfg.MaxRetries,
+		LibraryRoot: deps.Root,
+		ProgressFn:  NewBackupProgressEmitter(deps.Emitter),
+		OnQueueChanged: NewBackupQueueChangedEmitter(deps.Emitter, backups, func() []ProviderCooldownDTO {
+			if manager == nil {
+				return nil
+			}
+			return cooldownDTOs(manager.Cooldowns())
+		}),
 	})
 
 	pipeline := importer.New(importer.Config{

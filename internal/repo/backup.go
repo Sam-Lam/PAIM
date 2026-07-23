@@ -25,8 +25,9 @@ func (r *BackupRepo) WithTx(tx *gorm.DB) *BackupRepo { return &BackupRepo{db: tx
 // Enqueue idempotently adds a backup job for an asset/plugin/destination. If a
 // pending, running, or completed job already exists for the same triple, that
 // existing job is returned and created is false; otherwise a new pending job is
-// created. This makes re-enqueuing after a crash safe.
-func (r *BackupRepo) Enqueue(ctx context.Context, assetID, plugin, destination string) (job *domain.BackupJob, created bool, err error) {
+// created with the given sortKey (the per-provider upload-order key). This makes
+// re-enqueuing after a crash safe.
+func (r *BackupRepo) Enqueue(ctx context.Context, assetID, plugin, destination string, sortKey int64) (job *domain.BackupJob, created bool, err error) {
 	err = r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var existing domain.BackupJob
 		findErr := tx.Where(
@@ -48,6 +49,7 @@ func (r *BackupRepo) Enqueue(ctx context.Context, assetID, plugin, destination s
 			Plugin:      plugin,
 			Destination: destination,
 			Status:      domain.JobStatusPending,
+			SortKey:     sortKey,
 		}
 		if createErr := tx.Create(newJob).Error; createErr != nil {
 			return createErr
@@ -62,10 +64,13 @@ func (r *BackupRepo) Enqueue(ctx context.Context, assetID, plugin, destination s
 	return job, created, nil
 }
 
-// NextPending atomically claims the oldest pending job, transitioning it to
-// running and stamping StartedAt. It returns (nil, nil) when no pending job is
-// available. The claim is a single UPDATE ... RETURNING statement, so concurrent
-// callers never claim the same job.
+// NextPending atomically claims the oldest pending job (across all providers),
+// transitioning it to running and stamping StartedAt. It returns (nil, nil) when
+// no pending job is available. The claim is a single UPDATE ... RETURNING
+// statement, so concurrent callers never claim the same job. It is retained for
+// callers that do not need per-provider ordering; the Manager uses
+// ClaimNextForProvider so it can honor each provider's UploadOrder and skip
+// providers in cooldown.
 func (r *BackupRepo) NextPending(ctx context.Context) (*domain.BackupJob, error) {
 	now := time.Now().UTC()
 	const claimSQL = `
@@ -94,6 +99,47 @@ RETURNING id`
 	return r.GetByID(ctx, claimedID)
 }
 
+// ClaimNextForProvider atomically claims the next pending job for one provider
+// (identified by destination = provider ID), transitioning it to running and
+// stamping StartedAt. Ordering honors the provider's upload order: newestFirst
+// claims the highest SortKey first (newest media), otherwise the oldest job first
+// (FIFO). It returns (nil, nil) when the provider has no pending job. Restricting
+// the claim to a single provider is what lets the Manager both round-robin across
+// providers and skip any provider currently in quota cooldown.
+func (r *BackupRepo) ClaimNextForProvider(ctx context.Context, destination string, newestFirst bool) (*domain.BackupJob, error) {
+	now := time.Now().UTC()
+	// oldest_first preserves strict FIFO (creation order); newest_first drains the
+	// highest SortKey (newest media) first, so new imports jump the queue.
+	order := "created_at ASC, id ASC"
+	if newestFirst {
+		order = "sort_key DESC, created_at DESC, id DESC"
+	}
+	claimSQL := `
+UPDATE backup_jobs
+SET status = ?, started_at = ?, updated_at = ?
+WHERE id = (
+    SELECT id FROM backup_jobs
+    WHERE status = ? AND deleted_at IS NULL AND destination = ?
+    ORDER BY ` + order + `
+    LIMIT 1
+)
+RETURNING id`
+
+	var claimedID string
+	res := r.db.WithContext(ctx).Raw(
+		claimSQL,
+		domain.JobStatusRunning, now, now,
+		domain.JobStatusPending, destination,
+	).Scan(&claimedID)
+	if res.Error != nil {
+		return nil, fmt.Errorf("repo: claim next pending backup job for provider %q: %w", destination, res.Error)
+	}
+	if claimedID == "" {
+		return nil, nil
+	}
+	return r.GetByID(ctx, claimedID)
+}
+
 // GetByID returns the non-deleted job with the given ID, or ErrNotFound.
 func (r *BackupRepo) GetByID(ctx context.Context, id string) (*domain.BackupJob, error) {
 	var j domain.BackupJob
@@ -115,6 +161,30 @@ func (r *BackupRepo) MarkCompleted(ctx context.Context, id string) error {
 		"status":        domain.JobStatusCompleted,
 		"completed_at":  now,
 		"error_message": "",
+	})
+}
+
+// MarkCompletedWithNote transitions a job to completed and stamps CompletedAt,
+// recording a non-fatal note in ErrorMessage (used for the best-effort mirror
+// verification path, where a failed/unavailable Verify still completes the job
+// with an explanatory note rather than failing it).
+func (r *BackupRepo) MarkCompletedWithNote(ctx context.Context, id, note string) error {
+	now := time.Now().UTC()
+	return r.updateJob(ctx, id, map[string]any{
+		"status":        domain.JobStatusCompleted,
+		"completed_at":  now,
+		"error_message": note,
+	})
+}
+
+// RevertToPending transitions a job from running back to pending WITHOUT
+// incrementing its retry counter, clearing StartedAt. It is used when an upload
+// attempt is abandoned for a reason that is not the job's fault — a provider
+// quota cooldown — so the job simply waits and is re-claimed once the provider's
+// cooldown expires.
+func (r *BackupRepo) RevertToPending(ctx context.Context, id string) error {
+	return r.transition(ctx, id, []domain.JobStatus{domain.JobStatusRunning}, domain.JobStatusPending, map[string]any{
+		"started_at": nil,
 	})
 }
 

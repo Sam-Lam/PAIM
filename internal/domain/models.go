@@ -158,6 +158,13 @@ type BackupJob struct {
 
 	Status JobStatus `gorm:"index" json:"status"`
 
+	// SortKey is the ordering key for per-provider upload order: unix seconds of
+	// the asset's CaptureDate (falling back to its ImportDate), stamped at enqueue.
+	// Indexed so a provider claiming newest-first (SortKey DESC) is cheap. Legacy
+	// jobs enqueued before this column existed carry 0, which sorts last under
+	// newest-first — an acceptable, documented degradation.
+	SortKey int64 `gorm:"index" json:"sortKey"`
+
 	Retries      int        `json:"retries"`
 	StartedAt    *time.Time `json:"startedAt"`
 	CompletedAt  *time.Time `json:"completedAt"`
@@ -173,6 +180,18 @@ type BackupProvider struct {
 	PluginName string `json:"pluginName"`
 	ConfigJSON string `json:"configJson"`
 	Enabled    bool   `json:"enabled"`
+
+	// Mirror marks a quality-of-life destination that must never block a safety
+	// verdict. A mirror provider's jobs are excluded from the asset's aggregate
+	// BackupStatus, safe-to-erase, cleanup gating, the source-clear gate, and the
+	// dashboard's headline pending/failed counts. Mirrors are convenience, not
+	// custody; their verification is best-effort.
+	Mirror bool `json:"mirror"`
+
+	// UploadOrder controls how this provider's pending jobs are claimed
+	// (oldest_first FIFO by default, newest_first to drain new imports first). An
+	// empty value means oldest_first.
+	UploadOrder UploadOrder `json:"uploadOrder"`
 
 	SoftDelete
 }

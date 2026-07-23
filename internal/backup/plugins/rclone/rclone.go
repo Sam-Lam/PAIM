@@ -35,6 +35,7 @@ import (
 	"path"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/Sam-Lam/PAIM/internal/backup"
@@ -66,14 +67,24 @@ var ErrNotInstalled = errors.New("rclone not installed — brew install rclone")
 // Config is the JSON configuration for an rclone provider:
 //
 //	{"remote":"gdrive:","path":"PAIM-Backup","binary":""}
+//	{"remotes":["gp1:","gp2:"],"path":"PAIM-Backup","mirror":true}
 //
-// remote is an rclone remote name (a trailing ":" is optional and normalized in).
-// path is the destination folder within the remote (default "PAIM-Backup").
+// remote is a single rclone remote name (a trailing ":" is optional). remotes is
+// an ordered POOL of remotes for a mirror provider: each remote is typically
+// backed by a different Google Cloud project (and thus an independent daily
+// quota), and the plugin fails over to the next remote when one is exhausted,
+// roughly multiplying daily upload throughput. A single remote is equivalent to a
+// one-element pool. path is the destination folder within each remote (default
+// "PAIM-Backup"). mirror marks the provider as quality-of-life; a pool (>1 remote)
+// is only permitted for a mirror provider because Google Photos' app-scoped API
+// means one remote cannot see another's uploads, so verify/delete are best-effort.
 // binary optionally pins the rclone executable; empty means auto-discover.
 type Config struct {
-	Remote string `json:"remote"`
-	Path   string `json:"path"`
-	Binary string `json:"binary"`
+	Remote  string   `json:"remote"`
+	Remotes []string `json:"remotes"`
+	Path    string   `json:"path"`
+	Mirror  bool     `json:"mirror"`
+	Binary  string   `json:"binary"`
 }
 
 // commandRunner executes an rclone subprocess. It is injected so tests never need
@@ -131,9 +142,23 @@ type Plugin struct {
 	log    *slog.Logger
 
 	// Configured state (set by Initialize).
-	binary string // resolved rclone executable
-	remote string // normalized remote, always ending in ":" (e.g. "gdrive:")
-	path   string // destination folder within the remote (may be empty = root)
+	binary  string   // resolved rclone executable
+	remotes []string // normalized remote pool, in order; each ends in ":" (>=1)
+	path    string   // destination folder within each remote (may be empty = root)
+	mirror  bool     // quality-of-life provider (required for a >1 remote pool)
+
+	// throttled marks pool remotes whose backend needs conservative transfer flags
+	// (e.g. Google Photos). Keyed by normalized remote.
+	throttled map[string]bool
+
+	// cooldownMu guards remoteCooldowns: the per-remote quota cooldown map that
+	// drives pool failover. It lives on the plugin instance, and the Manager caches
+	// one plugin instance per provider, so the cooldown state persists across a
+	// provider's uploads for the lifetime of the process.
+	cooldownMu      sync.Mutex
+	remoteCooldowns map[string]time.Time
+	// now is the clock used for cooldown bookkeeping (injectable for tests).
+	now func() time.Time
 
 	// Test seams for binary discovery; default to the real implementations.
 	lookPath   func(string) (string, error)
@@ -144,10 +169,13 @@ type Plugin struct {
 // plugin; register it with reg.Register(rclone.PluginName, rclone.New).
 func New() backup.Plugin {
 	return &Plugin{
-		runner:     execRunner{},
-		log:        slog.Default(),
-		lookPath:   exec.LookPath,
-		fileExists: defaultFileExists,
+		runner:          execRunner{},
+		log:             slog.Default(),
+		throttled:       make(map[string]bool),
+		remoteCooldowns: make(map[string]time.Time),
+		now:             time.Now,
+		lookPath:        exec.LookPath,
+		fileExists:      defaultFileExists,
 	}
 }
 
@@ -174,15 +202,23 @@ func (p *Plugin) Capabilities() backup.Capabilities {
 }
 
 // Initialize parses the config, resolves the rclone binary (a missing binary is
-// ErrNotInstalled with install guidance), and validates the remote name against
-// `rclone listremotes` so a typo is caught before any upload is attempted.
+// ErrNotInstalled with install guidance), validates every remote in the pool
+// against `rclone listremotes` so a typo is caught before any upload, rejects a
+// multi-remote pool on a non-mirror provider, and probes each remote's backend
+// type (so uploads to throttled backends like Google Photos get conservative
+// flags).
 func (p *Plugin) Initialize(ctx context.Context, configJSON string) error {
 	var cfg Config
 	if err := json.Unmarshal([]byte(configJSON), &cfg); err != nil {
 		return fmt.Errorf("rclone: parse config: %w", err)
 	}
-	if strings.TrimSpace(cfg.Remote) == "" {
+
+	pool := poolFromConfig(cfg)
+	if len(pool) == 0 {
 		return errors.New("rclone: config remote is required")
+	}
+	if len(pool) > 1 && !cfg.Mirror {
+		return errors.New("rclone: a multi-remote pool is only allowed on a mirror (quality-of-life) provider — Google Photos' app-scoped API means one remote cannot see another's uploads")
 	}
 
 	binary, err := discoverBinary(cfg.Binary, p.lookPath, p.fileExists)
@@ -190,14 +226,21 @@ func (p *Plugin) Initialize(ctx context.Context, configJSON string) error {
 		return err
 	}
 
-	remote := normalizeRemote(cfg.Remote)
-	remotes, err := listRemotes(ctx, p.runner, binary)
+	known, err := listRemotes(ctx, p.runner, binary)
 	if err != nil {
 		return fmt.Errorf("rclone: list remotes: %w", err)
 	}
-	if !containsRemote(remotes, remote) {
-		return fmt.Errorf("rclone: remote %q is not configured (run `rclone config`); known remotes: %s",
-			remote, strings.Join(remotes, ", "))
+	throttled := make(map[string]bool, len(pool))
+	for _, remote := range pool {
+		if !containsRemote(known, remote) {
+			return fmt.Errorf("rclone: remote %q is not configured (run `rclone config`); known remotes: %s",
+				remote, strings.Join(known, ", "))
+		}
+		// Best-effort backend-type probe: failure to detect just means no
+		// conservative flags (the upload still works), so it is not fatal.
+		if bt, berr := detectBackendType(ctx, p.runner, binary, remote); berr == nil && backendNeedsThrottle(bt) {
+			throttled[remote] = true
+		}
 	}
 
 	path := strings.Trim(strings.TrimSpace(cfg.Path), "/")
@@ -206,46 +249,98 @@ func (p *Plugin) Initialize(ctx context.Context, configJSON string) error {
 	}
 
 	p.binary = binary
-	p.remote = remote
+	p.remotes = pool
 	p.path = path
+	p.mirror = cfg.Mirror
+	p.throttled = throttled
 	return nil
 }
 
-// Authenticate probes the remote's credentials with `rclone about` (falling back
-// to `rclone lsd` for backends without About support). An expired OAuth token
-// (common with Google Drive) is mapped to a clear "reconnect" instruction.
+// poolFromConfig builds the ordered, normalized remote pool from a config,
+// accepting either the pool field (remotes) or the legacy single remote, and
+// de-duplicating while preserving order.
+func poolFromConfig(cfg Config) []string {
+	raw := cfg.Remotes
+	if len(raw) == 0 && strings.TrimSpace(cfg.Remote) != "" {
+		raw = []string{cfg.Remote}
+	}
+	seen := make(map[string]bool, len(raw))
+	pool := make([]string, 0, len(raw))
+	for _, r := range raw {
+		if strings.TrimSpace(r) == "" {
+			continue
+		}
+		n := normalizeRemote(r)
+		if seen[n] {
+			continue
+		}
+		seen[n] = true
+		pool = append(pool, n)
+	}
+	return pool
+}
+
+// Authenticate probes the pool's credentials, succeeding as soon as any remote
+// authenticates (a pool only needs one working remote to make progress). Each
+// remote is probed with `rclone about` (falling back to `rclone lsd` for backends
+// without About support). An expired OAuth token (common with Google Drive) is
+// mapped to a clear "reconnect" instruction on the last failing remote.
 func (p *Plugin) Authenticate(ctx context.Context) error {
-	if p.binary == "" || p.remote == "" {
+	if p.binary == "" || len(p.remotes) == 0 {
 		return errors.New("rclone: plugin not initialized")
 	}
 	actx, cancel := context.WithTimeout(ctx, authTimeout)
 	defer cancel()
 
-	_, stderr, err := p.runner.Run(actx, p.binary, []string{"about", p.remote}, nil)
+	var lastErr error
+	var lastStderr []byte
+	var lastRemote string
+	for _, remote := range p.remotes {
+		if err := p.authenticateRemote(actx, remote); err == nil {
+			return nil
+		} else {
+			lastErr, lastStderr, lastRemote = err.err, err.stderr, remote
+		}
+	}
+	if isAuthError(lastStderr) {
+		return fmt.Errorf("rclone: credentials for %s expired — run `rclone config reconnect %s`", lastRemote, lastRemote)
+	}
+	return fmt.Errorf("rclone: authenticate %s: %w: %s", lastRemote, lastErr, strings.TrimSpace(string(lastStderr)))
+}
+
+// authError carries a single remote's authentication failure detail.
+type authError struct {
+	err    error
+	stderr []byte
+}
+
+// authenticateRemote probes one remote; a nil return means it authenticated.
+func (p *Plugin) authenticateRemote(ctx context.Context, remote string) *authError {
+	_, stderr, err := p.runner.Run(ctx, p.binary, []string{"about", remote}, nil)
 	if err == nil {
 		return nil
 	}
-	// Some backends do not implement About; fall back to a cheap directory list.
 	if isAboutUnsupported(stderr) {
-		_, lsStderr, lsErr := p.runner.Run(actx, p.binary, []string{"lsd", p.remote}, nil)
+		_, lsStderr, lsErr := p.runner.Run(ctx, p.binary, []string{"lsd", remote}, nil)
 		if lsErr == nil {
 			return nil
 		}
 		err, stderr = lsErr, lsStderr
 	}
-	if isAuthError(stderr) {
-		return fmt.Errorf("rclone: credentials for %s expired — run `rclone config reconnect %s`", p.remote, p.remote)
-	}
-	return fmt.Errorf("rclone: authenticate %s: %w: %s", p.remote, err, strings.TrimSpace(string(stderr)))
+	return &authError{err: err, stderr: stderr}
 }
 
-// Upload copies localPath to the remote via `rclone copyto`, streaming per-file
-// byte progress parsed from rclone's JSON stats log. The context cancels (kills)
-// the subprocess. Progress parsing is defensive: a start (0/size) and end
-// (size/size) callback bracket the transfer so progress is reported even when no
-// stats line could be parsed.
+// Upload copies localPath to the remote pool via `rclone copyto`, streaming
+// per-file byte progress parsed from rclone's JSON stats log. It tries the pool
+// remotes in order, skipping any currently in per-remote quota cooldown; if a
+// remote returns a quota/rate error it is put into cooldown and the SAME file is
+// retried on the next remote (one failover chain per call, bounded by the pool
+// size). Only when EVERY remote is cooling does it return backup.ErrProvider
+// Cooldown (with the soonest remote's expiry) so the Manager engages the
+// provider-wide cooldown. A non-quota error fails the upload immediately. The
+// context cancels (kills) the subprocess.
 func (p *Plugin) Upload(ctx context.Context, localPath, remoteRelPath string, progressFn func(bytesDone, bytesTotal int64)) error {
-	if p.binary == "" || p.remote == "" {
+	if p.binary == "" || len(p.remotes) == 0 {
 		return errors.New("rclone: plugin not initialized")
 	}
 	info, err := os.Stat(localPath)
@@ -253,11 +348,53 @@ func (p *Plugin) Upload(ctx context.Context, localPath, remoteRelPath string, pr
 		return fmt.Errorf("rclone: stat source %q: %w", localPath, err)
 	}
 	total := info.Size()
-	dst := p.remotePath(remoteRelPath)
 
 	if progressFn != nil {
 		progressFn(0, total)
 	}
+
+	var soonest time.Time
+	for _, remote := range p.remotes {
+		if until, cooling := p.remoteCooling(remote); cooling {
+			soonest = earliest(soonest, until)
+			continue
+		}
+		stderr, err := p.uploadTo(ctx, remote, localPath, remoteRelPath, total, progressFn)
+		if err == nil {
+			if progressFn != nil {
+				progressFn(total, total)
+			}
+			return nil
+		}
+		if ctx.Err() != nil {
+			return err
+		}
+		if cd, ok := classifyCooldown(string(stderr), p.now()); ok {
+			until := p.now().Add(cd.RetryAfter)
+			p.markRemoteCooling(remote, until)
+			soonest = earliest(soonest, until)
+			p.log.Warn("rclone: remote hit quota; failing over",
+				"remote", remote, "reason", cd.Reason, "resumesAt", until.Format(time.RFC3339))
+			continue // try the next remote for the same file
+		}
+		return err // non-quota error: fail this upload
+	}
+
+	// Every remote is cooling: surface a provider-wide cooldown to the Manager so
+	// it stops claiming this provider's jobs until the soonest remote clears.
+	if !soonest.IsZero() {
+		return &backup.ErrProviderCooldown{
+			RetryAfter: soonestDuration(p.now(), soonest),
+			Reason:     "all pool remotes are in quota cooldown",
+		}
+	}
+	return errors.New("rclone: no remotes available for upload")
+}
+
+// uploadTo runs `rclone copyto` to a single remote, returning the captured stderr
+// (for cooldown classification) and any run error.
+func (p *Plugin) uploadTo(ctx context.Context, remote, localPath, remoteRelPath string, total int64, progressFn func(bytesDone, bytesTotal int64)) ([]byte, error) {
+	dst := p.remotePathFor(remote, remoteRelPath)
 
 	onLine := func(line string) {
 		if progressFn == nil {
@@ -277,17 +414,61 @@ func (p *Plugin) Upload(ctx context.Context, localPath, remoteRelPath string, pr
 		"--use-json-log",
 		"--stats", "250ms",
 		"--stats-log-level", "NOTICE",
-		localPath, dst,
 	}
+	if p.throttled[remote] {
+		// Conservative flags for tight per-second write limits (e.g. Google Photos):
+		// one transfer at a time and at most 2 transactions/second.
+		args = append(args, "--tpslimit", "2", "--transfers", "1")
+	}
+	args = append(args, localPath, dst)
+
 	_, stderr, err := p.runner.Run(ctx, p.binary, args, onLine)
 	if err != nil {
-		return fmt.Errorf("rclone: copyto %q -> %q: %w: %s", localPath, dst, err, lastLine(stderr))
+		return stderr, fmt.Errorf("rclone: copyto %q -> %q: %w: %s", localPath, dst, err, lastLine(stderr))
 	}
+	return stderr, nil
+}
 
-	if progressFn != nil {
-		progressFn(total, total)
+// earliest returns the earlier of a (possibly zero) accumulator and t.
+func earliest(acc, t time.Time) time.Time {
+	if acc.IsZero() || t.Before(acc) {
+		return t
 	}
-	return nil
+	return acc
+}
+
+// soonestDuration returns the non-negative duration from now until t.
+func soonestDuration(now, t time.Time) time.Duration {
+	d := t.Sub(now)
+	if d < 0 {
+		d = 0
+	}
+	return d
+}
+
+// remoteCooling reports whether a remote is currently in per-remote cooldown, and
+// until when. Expired entries are pruned.
+func (p *Plugin) remoteCooling(remote string) (time.Time, bool) {
+	p.cooldownMu.Lock()
+	defer p.cooldownMu.Unlock()
+	until, ok := p.remoteCooldowns[remote]
+	if !ok {
+		return time.Time{}, false
+	}
+	if !until.After(p.now()) {
+		delete(p.remoteCooldowns, remote)
+		return time.Time{}, false
+	}
+	return until, true
+}
+
+// markRemoteCooling records that a remote is cooling until the given time.
+func (p *Plugin) markRemoteCooling(remote string, until time.Time) {
+	p.cooldownMu.Lock()
+	if prev, ok := p.remoteCooldowns[remote]; !ok || until.After(prev) {
+		p.remoteCooldowns[remote] = until
+	}
+	p.cooldownMu.Unlock()
 }
 
 // Verify re-lists the uploaded object with `rclone lsjson --hash` and compares
@@ -297,10 +478,36 @@ func (p *Plugin) Upload(ctx context.Context, localPath, remoteRelPath string, pr
 // is size-only and that is logged. A mismatch returns (false, nil) per the
 // Plugin contract; a missing remote object also returns (false, nil).
 func (p *Plugin) Verify(ctx context.Context, localPath, remoteRelPath string) (bool, error) {
-	if p.binary == "" || p.remote == "" {
+	if p.binary == "" || len(p.remotes) == 0 {
 		return false, errors.New("rclone: plugin not initialized")
 	}
-	dst := p.remotePath(remoteRelPath)
+
+	// For a pool, attempt verification on each remote until one confirms the object
+	// (its own upload) or all miss. Google Photos' app-scoped API means remote B
+	// cannot see remote A's uploads, so a miss on every remote is treated as
+	// "unavailable" (false, nil) rather than a failure — the Manager's best-effort
+	// mirror path completes such jobs with a note.
+	var lastErr error
+	for _, remote := range p.remotes {
+		ok, err := p.verifyOn(ctx, remote, localPath, remoteRelPath)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		if ok {
+			return true, nil
+		}
+	}
+	if lastErr != nil && !p.mirror {
+		return false, lastErr
+	}
+	return false, nil
+}
+
+// verifyOn verifies the object on a single remote (size always, plus the backend
+// MD5 when available). A missing object returns (false, nil).
+func (p *Plugin) verifyOn(ctx context.Context, remote, localPath, remoteRelPath string) (bool, error) {
+	dst := p.remotePathFor(remote, remoteRelPath)
 
 	stdout, stderr, err := p.runner.Run(ctx, p.binary, []string{"lsjson", "--hash", dst}, nil)
 	if err != nil {
@@ -348,23 +555,32 @@ func (p *Plugin) Verify(ctx context.Context, localPath, remoteRelPath string) (b
 // consistent with PAIM's never-hard-delete ethos. A missing object is treated as
 // already deleted (no error).
 func (p *Plugin) Delete(ctx context.Context, remoteRelPath string) error {
-	if p.binary == "" || p.remote == "" {
+	if p.binary == "" || len(p.remotes) == 0 {
 		return errors.New("rclone: plugin not initialized")
 	}
-	dst := p.remotePath(remoteRelPath)
-	_, stderr, err := p.runner.Run(ctx, p.binary, []string{"deletefile", dst}, nil)
-	if err != nil {
-		if isNotFound(stderr) {
-			return nil
+	// Best-effort across the pool: the object may live on any one remote (whichever
+	// uploaded it), and a pool is only used for mirrors, so deletion is convenience.
+	// Succeed if any remote deletes it (or reports it absent); return the last error
+	// only if every remote errored.
+	var lastErr error
+	for _, remote := range p.remotes {
+		dst := p.remotePathFor(remote, remoteRelPath)
+		_, stderr, err := p.runner.Run(ctx, p.binary, []string{"deletefile", dst}, nil)
+		if err == nil || isNotFound(stderr) {
+			lastErr = nil
+			if err == nil {
+				return nil
+			}
+			continue
 		}
-		return fmt.Errorf("rclone: deletefile %q: %w: %s", dst, err, lastLine(stderr))
+		lastErr = fmt.Errorf("rclone: deletefile %q: %w: %s", dst, err, lastLine(stderr))
 	}
-	return nil
+	return lastErr
 }
 
-// remotePath joins the configured remote + path with the object's relative path
-// into an rclone "remote:folder/rel" argument (always forward-slashed).
-func (p *Plugin) remotePath(remoteRelPath string) string {
+// remotePathFor joins one remote + the configured path with the object's relative
+// path into an rclone "remote:folder/rel" argument (always forward-slashed).
+func (p *Plugin) remotePathFor(remote, remoteRelPath string) string {
 	parts := make([]string, 0, 2)
 	if p.path != "" {
 		parts = append(parts, p.path)
@@ -373,7 +589,7 @@ func (p *Plugin) remotePath(remoteRelPath string) string {
 	if rel != "" {
 		parts = append(parts, rel)
 	}
-	return p.remote + strings.Join(parts, "/")
+	return remote + strings.Join(parts, "/")
 }
 
 // ListRemotes returns the rclone remotes configured for the given binary (empty
