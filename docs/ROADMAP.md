@@ -1,32 +1,28 @@
 # PAIM Roadmap
 
-Current release: **v0.4.2** (see git tags for full release history; every release is
+Current release: **v0.5.0** (see git tags for full release history; every release is
 tagged and race-tested). This file records agreed-but-unbuilt work so any future
 session can pick up without prior conversation context. Keep it updated as items ship.
 
+## Shipped in v0.5.0 (2026-07-24) — Batches C & D complete
+
+- **Batch C — duplicate triage at scale**: checkbox multi-select + "Resolve selected"
+  as a cancellable, re-attachable background job (one typed confirm per batch);
+  folder/session grouping + size sort with "select all in filter" via server-side
+  ID lists; true total wasted bytes from SQL aggregates; live refresh on
+  import-completed. Events: `duplicates:progress` / `duplicates:completed`.
+- **Batch D — workflow loop-closers**: backup rolling jobs/min + bytes-remaining +
+  "done ~Thursday" ETA on Backup Queue header and Dashboard (suppressed while
+  paused/yielding); Cancel-all-pending/paused; macOS dock progress badge (Wails
+  dock service, activity-tracker driven); eject affordance with server-side
+  library-volume + active-operation guards and post-clear reminder; structured
+  per-file import-failure records with Retry/Dismiss (**schema migration 4** —
+  `import_failures` table; legacy sessions keep log-only view); Settings
+  "this Mac"/"this library" + applies-immediately/restart labeling.
+
 ## Next up — approved, specced, unbuilt
 
-### Batch C — duplicate triage at scale (from the QoL audit)
-The Duplicate Manager is one-pair-at-a-time with a typed confirm per delete;
-clearing the user's ~11k flagged pairs would take ~22,000 interactions.
-- Checkbox multi-select with "Resolve selected" (one confirm per batch, typed word
-  once per batch, not per pair)
-- Grouping/filters: by folder, by session, by size; "select all in folder/session"
-- True total wasted bytes from the service (today the header sums only the visible page)
-- Optional: live refresh on import-completed
-
-### Batch D — workflow loop-closers (from the QoL audit + user requests)
-- Backup rate/ETA/last-completed on Backup Queue header + Dashboard ("11,402 pending"
-  → "done ~Thursday"); rolling completed-jobs/min + bytes-remaining
-- Eject affordance: button on volume cards + clear-source completion (diskutil eject),
-  soft reminder when a cleared removable is still mounted
-- Import failed-files panel: structured per-session failure records (path, op, error)
-  with per-file Retry and **Dismiss** (resolve "file vanished before import" cases);
-  legacy sessions keep log-only view
-- Cancel all pending/paused backups (bulk mirror of Retry-all-failed)
-- macOS dock progress/badge during long imports/backfills/warm-ups
-- Settings polish: per-section "applies immediately" vs header-save labeling,
-  restart-required notes, "this Mac" vs "this library" tags per section
+(nothing queued — pick from the audit leftovers below with the user)
 
 ## Deferred by explicit decision — do not build without direction
 - **Hot catalog (SSD working copy)**: see ARCHITECTURE.md "DEFERRED" section — split-brain
@@ -41,7 +37,6 @@ clearing the user's ~11k flagged pairs would take ~22,000 interactions.
 - Sidebar count badges (pending imports / failed backups / duplicates)
 - Terminology unification across pages (verified/complete/protected/archived)
 - Context-menu discoverability hint; global keyboard shortcuts
-- Duplicates page live-refresh on background imports
 - Onboarding checklist card for first-run (providers nudge shipped in v0.4.0)
 
 ## Operating conventions (for future sessions)
@@ -54,6 +49,6 @@ clearing the user's ~11k flagged pairs would take ~22,000 interactions.
   screenshots and code.
 - Wails v3 pinned alpha2.117; wails3 CLI in ~/go/bin (PATH prefix needed for build
   subtasks). Frontend bindings arrays are `T[] | null` — always null-guard (`?? []`).
-- Schema changes go through internal/db migrations (LatestSchemaVersion currently 3);
+- Schema changes go through internal/db migrations (LatestSchemaVersion currently 4);
   additive columns via AutoMigrate + migration registration; pre-migration backups are
   automatic.
