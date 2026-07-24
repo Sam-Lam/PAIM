@@ -21,8 +21,9 @@ func newDuplicateHarness(t *testing.T) (*DuplicateService, *gorm.DB, *repo.Asset
 		t.Fatalf("open db: %v", err)
 	}
 	assets := repo.NewAssetRepo(gdb)
+	sessions := repo.NewSessionRepo(gdb)
 	settings := repo.NewSettingsRepo(gdb)
-	svc := NewDuplicateService(gdb, assets, settings, nil, nil)
+	svc := NewDuplicateService(gdb, assets, sessions, settings, nil, nil)
 	return svc, gdb, assets
 }
 

@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 
 	"github.com/Sam-Lam/PAIM/internal/domain"
@@ -28,8 +29,10 @@ const (
 // re-prompting.
 type DuplicateService struct {
 	gated
+	sleepAware
 	db       *gorm.DB
 	assets   *repo.AssetRepo
+	sessions *repo.SessionRepo
 	settings *repo.SettingsRepo
 	emitter  Emitter
 	log      *slog.Logger
@@ -37,24 +40,31 @@ type DuplicateService struct {
 	// paths to absolute for file operations and to relativize new paths for
 	// storage. Empty (tests/dev) leaves absolute paths untouched.
 	root string
+
+	// mu guards the background bulk-resolve state below.
+	mu         sync.Mutex
+	bulkActive bool
+	bulkCancel context.CancelFunc
+	bulkRun    *bulkResolveRun
 }
 
 // Bind wires the DuplicateService to an open library's catalog in place.
 func (s *DuplicateService) Bind(core *AppCore) {
 	s.db = core.DB
 	s.assets = core.Assets
+	s.sessions = core.Sessions
 	s.settings = core.Settings
 	s.root = core.Root
 }
 
 // NewDuplicateService constructs a DuplicateService. The db handle is used only
 // to update an asset's CurrentArchivePath after a move (the AssetRepo exposes no
-// setter for that column).
-func NewDuplicateService(db *gorm.DB, assets *repo.AssetRepo, settings *repo.SettingsRepo, emitter Emitter, logger *slog.Logger) *DuplicateService {
+// setter for that column). The sessions repo enriches import-session group labels.
+func NewDuplicateService(db *gorm.DB, assets *repo.AssetRepo, sessions *repo.SessionRepo, settings *repo.SettingsRepo, emitter Emitter, logger *slog.Logger) *DuplicateService {
 	if logger == nil {
 		logger = slog.Default()
 	}
-	return &DuplicateService{db: db, assets: assets, settings: settings, emitter: emitter, log: logger.With(slog.String("subsystem", "duplicate"))}
+	return &DuplicateService{db: db, assets: assets, sessions: sessions, settings: settings, emitter: emitter, log: logger.With(slog.String("subsystem", "duplicate"))}
 }
 
 // DuplicatePairDTO pairs a duplicate asset with the original it duplicates,
@@ -77,55 +87,172 @@ type DuplicatePairDTO struct {
 	OriginalFileExists bool `json:"originalFileExists"`
 }
 
-// ListDuplicates returns a page of duplicate/original pairs (newest first).
+// DuplicateStatsDTO reports the TRUE totals across all non-deleted flagged
+// duplicates (never just the visible page): the pair count and the sum of the
+// duplicate assets' FileSize (reclaimable "wasted" bytes).
+type DuplicateStatsDTO struct {
+	TotalPairs       int64 `json:"totalPairs"`
+	TotalWastedBytes int64 `json:"totalWastedBytes"`
+}
+
+// DuplicateFilterDTO selects a subset of duplicates for the listing/ID methods.
+// GroupBy ("" | "folder" | "session") plus GroupKey narrows to one folder or one
+// import session; SortBySize orders by wasted size descending. All filtering is
+// pushed into SQL.
+type DuplicateFilterDTO struct {
+	GroupBy    string `json:"groupBy"`
+	GroupKey   string `json:"groupKey"`
+	SortBySize bool   `json:"sortBySize"`
+}
+
+// toRepo maps the DTO filter to the repo filter.
+func (f DuplicateFilterDTO) toRepo() repo.DuplicateFilter {
+	rf := repo.DuplicateFilter{SortBySize: f.SortBySize}
+	switch f.GroupBy {
+	case "folder":
+		rf.HasFolder = true
+		rf.Folder = f.GroupKey
+	case "session":
+		rf.SessionID = f.GroupKey
+	}
+	return rf
+}
+
+// DuplicateGroupDTO is one group in the picker: its raw Key (folder path or
+// session ID, echoed back as GroupKey when filtering), a human Label, and the
+// flagged-duplicate Count and WastedBytes in that group.
+type DuplicateGroupDTO struct {
+	Key         string `json:"key"`
+	Label       string `json:"label"`
+	Count       int64  `json:"count"`
+	WastedBytes int64  `json:"wastedBytes"`
+}
+
+// DuplicateStats returns the archive-wide duplicate totals (pair count + wasted
+// bytes) for the header, computed in SQL across ALL flagged duplicates.
+func (s *DuplicateService) DuplicateStats(ctx context.Context) (DuplicateStatsDTO, error) {
+	if err := s.guard(); err != nil {
+		return DuplicateStatsDTO{}, err
+	}
+	count, wasted, err := s.assets.DuplicateStats(ctx, repo.DuplicateFilter{})
+	if err != nil {
+		return DuplicateStatsDTO{}, err
+	}
+	return DuplicateStatsDTO{TotalPairs: count, TotalWastedBytes: wasted}, nil
+}
+
+// ListDuplicates returns a page of duplicate/original pairs (newest first,
+// unfiltered). Retained for callers that do not filter; the Total is the true
+// archive-wide count.
 func (s *DuplicateService) ListDuplicates(ctx context.Context, page, pageSize int) (PageResult[DuplicatePairDTO], error) {
+	return s.ListDuplicatesFiltered(ctx, DuplicateFilterDTO{}, page, pageSize)
+}
+
+// ListDuplicatesFiltered returns a page of duplicate/original pairs matching the
+// filter. Total reflects the FILTERED count so pagination is correct within a
+// folder/session/sort selection.
+func (s *DuplicateService) ListDuplicatesFiltered(ctx context.Context, filter DuplicateFilterDTO, page, pageSize int) (PageResult[DuplicatePairDTO], error) {
 	if err := s.guard(); err != nil {
 		return PageResult[DuplicatePairDTO]{}, err
 	}
+	rf := filter.toRepo()
 	limit, offset := normalizePage(page, pageSize)
-	pairs, err := s.assets.ListDuplicates(ctx, repo.Page{Limit: limit, Offset: offset})
+	pairs, err := s.assets.ListDuplicatesFiltered(ctx, rf, repo.Page{Limit: limit, Offset: offset})
 	if err != nil {
 		return PageResult[DuplicatePairDTO]{}, err
 	}
 	items := make([]DuplicatePairDTO, 0, len(pairs))
 	for _, p := range pairs {
-		dup := toAssetDTO(p.Duplicate, s.root)
-		orig := toAssetDTO(p.Original, s.root)
-		hasArchive := dup.CurrentArchivePath != ""
-		// The duplicate's live location: its archive copy (adopt mode) or, for a
-		// not-copied duplicate, its original source path (e.g. an SD card).
-		dupTarget := dup.OriginalFullPath
-		if hasArchive {
-			dupTarget = dup.CurrentArchivePath
-		}
-		items = append(items, DuplicatePairDTO{
-			Duplicate:               dup,
-			Original:                orig,
-			DuplicateHasArchiveCopy: hasArchive,
-			DuplicateFileExists:     pathExists(dupTarget),
-			OriginalFileExists:      pathExists(orig.CurrentArchivePath),
-		})
+		items = append(items, s.toPairDTO(p))
 	}
-	total, err := s.countDuplicates(ctx)
+	total, _, err := s.assets.DuplicateStats(ctx, rf)
 	if err != nil {
 		return PageResult[DuplicatePairDTO]{}, err
 	}
 	return PageResult[DuplicatePairDTO]{Items: items, Total: total, Page: page, PageSize: pageSize}, nil
 }
 
-// countDuplicates returns the true number of flagged duplicate assets (ignoring
-// pagination), matching the filter used by AssetRepo.ListDuplicates. Soft-deleted
-// rows are excluded by GORM's default scope.
-func (s *DuplicateService) countDuplicates(ctx context.Context) (int64, error) {
-	var total int64
-	err := s.db.WithContext(ctx).
-		Model(&domain.Asset{}).
-		Where("duplicate_of_asset_id IS NOT NULL AND duplicate_of_asset_id <> ''").
-		Count(&total).Error
-	if err != nil {
-		return 0, fmt.Errorf("services: count duplicates: %w", err)
+// toPairDTO maps a repo pair to its DTO with per-side presence flags.
+func (s *DuplicateService) toPairDTO(p repo.DuplicatePair) DuplicatePairDTO {
+	dup := toAssetDTO(p.Duplicate, s.root)
+	orig := toAssetDTO(p.Original, s.root)
+	hasArchive := dup.CurrentArchivePath != ""
+	// The duplicate's live location: its archive copy (adopt mode) or, for a
+	// not-copied duplicate, its original source path (e.g. an SD card).
+	dupTarget := dup.OriginalFullPath
+	if hasArchive {
+		dupTarget = dup.CurrentArchivePath
 	}
-	return total, nil
+	return DuplicatePairDTO{
+		Duplicate:               dup,
+		Original:                orig,
+		DuplicateHasArchiveCopy: hasArchive,
+		DuplicateFileExists:     pathExists(dupTarget),
+		OriginalFileExists:      pathExists(orig.CurrentArchivePath),
+	}
+}
+
+// ListDuplicateGroups returns the distinct duplicate groups (with counts + wasted
+// bytes) for a group picker. groupBy is "folder" or "session". Groups are ordered
+// by wasted bytes descending.
+func (s *DuplicateService) ListDuplicateGroups(ctx context.Context, groupBy string) ([]DuplicateGroupDTO, error) {
+	if err := s.guard(); err != nil {
+		return nil, err
+	}
+	groups, err := s.assets.DuplicateGroups(ctx, groupBy)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]DuplicateGroupDTO, 0, len(groups))
+	for _, g := range groups {
+		out = append(out, DuplicateGroupDTO{
+			Key:         g.Key,
+			Label:       s.groupLabel(ctx, groupBy, g.Key),
+			Count:       g.Count,
+			WastedBytes: g.WastedBytes,
+		})
+	}
+	return out, nil
+}
+
+// groupLabel derives a human label for a group key. Folder keys become the
+// root-relative path (empty → "Library root / not copied"); session keys are
+// enriched with the session's date + source label when the session is found.
+func (s *DuplicateService) groupLabel(ctx context.Context, groupBy, key string) string {
+	switch groupBy {
+	case "folder":
+		if key == "" {
+			return "Library root / not copied"
+		}
+		return key
+	case "session":
+		if key == "" {
+			return "No import session"
+		}
+		if s.sessions != nil {
+			if sess, err := s.sessions.GetByID(ctx, key); err == nil && sess != nil {
+				dto := toSessionDTO(*sess)
+				label := dto.StartedAt.Format("Jan 2, 2006 15:04")
+				if dto.SourceLabel != "" {
+					label += " · " + dto.SourceLabel
+				}
+				return label
+			}
+		}
+		return key
+	default:
+		return key
+	}
+}
+
+// ListDuplicateIDs returns the full ID list of every flagged duplicate matching
+// the filter, so the frontend can "select all in folder/session/filter" without
+// paging thousands of rows through the UI.
+func (s *DuplicateService) ListDuplicateIDs(ctx context.Context, filter DuplicateFilterDTO) ([]string, error) {
+	if err := s.guard(); err != nil {
+		return nil, err
+	}
+	return s.assets.DuplicateIDs(ctx, filter.toRepo())
 }
 
 // ResolveDuplicate applies action to the duplicate asset. Actions (all require a
@@ -153,23 +280,30 @@ func (s *DuplicateService) ResolveDuplicate(ctx context.Context, duplicateAssetI
 	// Stored paths are relative to the library root; resolve to absolute for the
 	// filesystem operations below.
 	archiveAbs := library.ResolvePath(s.root, asset.CurrentArchivePath)
+	return s.applyResolution(ctx, duplicateAssetID, archiveAbs, action, destFolder)
+}
 
+// applyResolution performs one resolution action against an already-resolved
+// (absolute) archive path. It is the single implementation shared by the
+// per-pair ResolveDuplicate and the bulk StartBulkResolve job, so file handling
+// is never reimplemented. destFolder is used only by the move action.
+func (s *DuplicateService) applyResolution(ctx context.Context, assetID, archiveAbs, action, destFolder string) error {
 	switch action {
 	case DuplicateActionDelete:
-		return s.resolveDelete(ctx, duplicateAssetID, archiveAbs)
+		return s.resolveDelete(ctx, assetID, archiveAbs)
 	case DuplicateActionMove:
-		return s.resolveMove(ctx, duplicateAssetID, archiveAbs, destFolder)
+		return s.resolveMove(ctx, assetID, archiveAbs, destFolder)
 	case DuplicateActionIgnore:
-		if err := s.assets.MarkDuplicateOf(ctx, duplicateAssetID, ""); err != nil {
+		if err := s.assets.MarkDuplicateOf(ctx, assetID, ""); err != nil {
 			return err
 		}
-		s.log.Info("duplicate ignored", "assetId", duplicateAssetID, "note", "kept as-is, flag cleared by user")
+		s.log.Info("duplicate ignored", "assetId", assetID, "note", "kept as-is, flag cleared by user")
 		return nil
 	case DuplicateActionKeepBoth:
-		if err := s.assets.MarkDuplicateOf(ctx, duplicateAssetID, ""); err != nil {
+		if err := s.assets.MarkDuplicateOf(ctx, assetID, ""); err != nil {
 			return err
 		}
-		s.log.Info("duplicate resolved keep-both", "assetId", duplicateAssetID, "note", "both copies kept intentionally")
+		s.log.Info("duplicate resolved keep-both", "assetId", assetID, "note", "both copies kept intentionally")
 		return nil
 	default:
 		return fmt.Errorf("services: unknown duplicate action %q", action)

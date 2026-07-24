@@ -40,6 +40,8 @@ const (
 	EventReorganizePlan           = "reorganize:plan-progress"
 	EventLogExportProgress        = "log:export-progress"
 	EventDuplicateProgress        = "duplicate:progress"
+	EventBulkResolveProgress      = "duplicates:progress"
+	EventBulkResolveCompleted     = "duplicates:completed"
 	EventLibraryProgress          = "library:progress"
 	EventQuitRequested            = "app:quit-requested"
 	EventThumbsProgress           = "thumbs:progress"
@@ -270,6 +272,43 @@ type DuplicateProgress struct {
 	AssetID    string `json:"assetId"`
 	BytesDone  int64  `json:"bytesDone"`
 	BytesTotal int64  `json:"bytesTotal"`
+}
+
+// BulkResolveProgress is the payload for duplicates:progress, emitted (throttled)
+// while a StartBulkResolve job works through the selected duplicates. Done/Total
+// count items processed; Succeeded/Failed accumulate outcomes; CurrentFile is the
+// duplicate being resolved. Done == Total marks the final tick (paired with a
+// duplicates:completed carrying the summary).
+type BulkResolveProgress struct {
+	Action      string `json:"action"`
+	Done        int    `json:"done"`
+	Total       int    `json:"total"`
+	Succeeded   int    `json:"succeeded"`
+	Failed      int    `json:"failed"`
+	CurrentFile string `json:"currentFile"`
+}
+
+// BulkResolveFailure records one duplicate the bulk job could not resolve: the
+// asset ID, its display filename and resolved path (best effort), and the error.
+// One bad pair never aborts the batch — every failure is collected here.
+type BulkResolveFailure struct {
+	AssetID  string `json:"assetId"`
+	Filename string `json:"filename"`
+	Path     string `json:"path"`
+	Error    string `json:"error"`
+}
+
+// BulkResolveSummaryDTO is the payload for duplicates:completed and the terminal
+// snapshot ActiveBulkResolve returns. It totals the batch outcome and lists every
+// per-item failure. Cancelled is true when the run was stopped early (items
+// already resolved stay resolved; the remainder are left flagged for a later run).
+type BulkResolveSummaryDTO struct {
+	Action    string               `json:"action"`
+	Total     int                  `json:"total"`
+	Succeeded int                  `json:"succeeded"`
+	Failed    int                  `json:"failed"`
+	Cancelled bool                 `json:"cancelled"`
+	Failures  []BulkResolveFailure `json:"failures"`
 }
 
 // LibraryProgress is the payload for library:progress, emitted during a library

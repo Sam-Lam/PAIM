@@ -14,15 +14,16 @@ import (
 // AllOperationKinds, and categorize it in foregroundKinds (or deliberately leave
 // it out).
 const (
-	OpKindImport          = "import"
-	OpKindAnalyze         = "analyze"
-	OpKindReorganize      = "reorganize"
-	OpKindSafeToErase     = "safe_to_erase"
-	OpKindCleanup         = "cleanup"
-	OpKindClearSource     = "clear_source"
-	OpKindBackupUpload    = "backup_upload"
-	OpKindBackupBackfill  = "backup_backfill"
-	OpKindThumbnailWarmup = "thumbnail_warmup"
+	OpKindImport           = "import"
+	OpKindAnalyze          = "analyze"
+	OpKindReorganize       = "reorganize"
+	OpKindSafeToErase      = "safe_to_erase"
+	OpKindCleanup          = "cleanup"
+	OpKindClearSource      = "clear_source"
+	OpKindDuplicateResolve = "duplicate_resolve"
+	OpKindBackupUpload     = "backup_upload"
+	OpKindBackupBackfill   = "backup_backfill"
+	OpKindThumbnailWarmup  = "thumbnail_warmup"
 )
 
 // AllOperationKinds enumerates every defined OperationInfo.Kind. It is held
@@ -30,7 +31,7 @@ const (
 // is classified as either foreground (yield-triggering) or background.
 var AllOperationKinds = []string{
 	OpKindImport, OpKindAnalyze, OpKindReorganize, OpKindSafeToErase,
-	OpKindCleanup, OpKindClearSource,
+	OpKindCleanup, OpKindClearSource, OpKindDuplicateResolve,
 	OpKindBackupUpload, OpKindBackupBackfill, OpKindThumbnailWarmup,
 }
 
@@ -50,6 +51,9 @@ var foregroundKinds = map[string]bool{
 	OpKindSafeToErase: true,
 	OpKindCleanup:     true,
 	OpKindClearSource: true,
+	// A bulk duplicate resolve moves/trashes archive files, so it competes for the
+	// same spindle as a backup upload — yield backups while it runs.
+	OpKindDuplicateResolve: true,
 }
 
 // IsForegroundKind reports whether an operation kind should trigger backup
