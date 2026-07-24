@@ -120,6 +120,26 @@ func createIndexes(gdb *gorm.DB) error {
 		{"idx_log_entries_level", "log_entries", "level"},
 		{"idx_log_entries_subsystem", "log_entries", "subsystem"},
 	}
+	if err := createIndexSpecs(gdb, specs); err != nil {
+		return err
+	}
+	return createImportFailureIndexes(gdb)
+}
+
+// createImportFailureIndexes creates the explicit indexes the import_failures
+// table relies on (per-session listing and status filtering). It is called both
+// from createIndexes (every Open) and from migration 4 (which creates the table
+// on an upgraded catalog), so an upgraded library ends up index-identical to a
+// fresh one.
+func createImportFailureIndexes(gdb *gorm.DB) error {
+	return createIndexSpecs(gdb, []indexSpec{
+		{"idx_import_failures_session_id", "import_failures", "session_id"},
+		{"idx_import_failures_status", "import_failures", "status"},
+	})
+}
+
+// createIndexSpecs issues a CREATE INDEX IF NOT EXISTS for each spec.
+func createIndexSpecs(gdb *gorm.DB, specs []indexSpec) error {
 	for _, s := range specs {
 		stmt := fmt.Sprintf(
 			"CREATE INDEX IF NOT EXISTS %s ON %s(%s)",

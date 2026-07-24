@@ -85,6 +85,16 @@ type activitySource interface {
 	cancelActive()
 }
 
+// activePather is optionally implemented by an activity source to report the
+// filesystem paths its running operations are currently touching. The eject
+// guard uses it to refuse ejecting a volume ONLY when a live operation is on
+// that volume, rather than blocking every eject while any work runs. Sources
+// that do not implement it contribute no paths (the eject still relies on the
+// library-volume guard and the OS's own busy-volume refusal as backstops).
+type activePather interface {
+	activePaths() []string
+}
+
 // ActivityTracker aggregates the running long operations across all registered
 // services for the quit guard. Services register themselves once at startup (the
 // same shape as SleepGuard wiring); Snapshot pulls a fresh view on demand and
@@ -119,6 +129,22 @@ func (t *ActivityTracker) Snapshot() []OperationInfo {
 	var out []OperationInfo
 	for _, s := range srcs {
 		out = append(out, s.activeOps()...)
+	}
+	return out
+}
+
+// ActivePaths collects the filesystem paths every activity source that
+// implements activePather reports as currently in use. It is freshly built per
+// call. The eject guard cross-references these against a target volume.
+func (t *ActivityTracker) ActivePaths() []string {
+	t.mu.Lock()
+	srcs := append([]activitySource(nil), t.sources...)
+	t.mu.Unlock()
+	var out []string
+	for _, s := range srcs {
+		if ap, ok := s.(activePather); ok {
+			out = append(out, ap.activePaths()...)
+		}
 	}
 	return out
 }

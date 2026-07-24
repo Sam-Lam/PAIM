@@ -96,6 +96,58 @@ func TestMigrateBehindRunsPendingAndBacksUp(t *testing.T) {
 	}
 }
 
+// TestMigrateV3ToV4CreatesImportFailures simulates a v3 catalog that lacks the
+// import_failures table (dropped after Open auto-created it) and asserts
+// migration 4 recreates the table and its indexes, advances the schema version,
+// backs up first, and leaves a usable table.
+func TestMigrateV3ToV4CreatesImportFailures(t *testing.T) {
+	root := t.TempDir()
+	gdb, dbPath := openAt(t, root)
+
+	// Drop the table Open auto-created so this looks like a genuine pre-v4 catalog.
+	if err := gdb.Migrator().DropTable(&domain.ImportFailure{}); err != nil {
+		t.Fatalf("drop import_failures: %v", err)
+	}
+	if gdb.Migrator().HasTable(&domain.ImportFailure{}) {
+		t.Fatal("import_failures should not exist before migration 4")
+	}
+	setVersion(t, gdb, 3) // one behind latest (4)
+
+	backup, err := Migrate(gdb, dbPath, root, LibraryMigrations(root))
+	if err != nil {
+		t.Fatalf("Migrate: %v", err)
+	}
+	if backup == "" {
+		t.Fatal("expected a pre-migration backup when behind")
+	}
+
+	if v, _, _ := readSchemaVersion(gdb); v != LatestSchemaVersion() {
+		t.Fatalf("schema version = %d, want %d", v, LatestSchemaVersion())
+	}
+	if LatestSchemaVersion() != 4 {
+		t.Fatalf("LatestSchemaVersion = %d, want 4", LatestSchemaVersion())
+	}
+	if !gdb.Migrator().HasTable(&domain.ImportFailure{}) {
+		t.Fatal("migration 4 did not create import_failures")
+	}
+
+	// The recreated table is usable.
+	f := &domain.ImportFailure{
+		SessionID: "sess-1", Path: "/x/y.jpg", Op: domain.ImportFailureOpStat,
+		Status: domain.ImportFailureStatusOpen,
+	}
+	if err := gdb.Create(f).Error; err != nil {
+		t.Fatalf("insert into migrated import_failures: %v", err)
+	}
+	var n int64
+	if err := gdb.Model(&domain.ImportFailure{}).Where("session_id = ?", "sess-1").Count(&n).Error; err != nil {
+		t.Fatalf("count: %v", err)
+	}
+	if n != 1 {
+		t.Fatalf("count = %d, want 1", n)
+	}
+}
+
 func TestMigrateAheadRefuses(t *testing.T) {
 	root := t.TempDir()
 	gdb, dbPath := openAt(t, root)

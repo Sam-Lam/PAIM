@@ -113,6 +113,35 @@ type ImportSession struct {
 	SoftDelete
 }
 
+// ImportFailure is a structured record of a single file that failed to import
+// during one ImportSession. It exists so per-file failures — most importantly a
+// "source file vanished before import" — become first-class, resolvable rows
+// (Retry or Dismiss) instead of ephemeral session counters and log lines.
+// Recording a failure never aborts the import; a failure to record is logged and
+// skipped. Like every model it is soft-deleted only.
+type ImportFailure struct {
+	UUIDModel
+
+	SessionID string `gorm:"index" json:"sessionId"` // FK -> ImportSession.ID
+
+	// Path is the source file path the pipeline was importing when it failed.
+	Path string `json:"path"`
+	// Op is the pipeline stage that failed (see ImportFailureOp), stored as the
+	// importer's own op token.
+	Op ImportFailureOp `gorm:"index" json:"op"`
+	// ErrorMessage is the human-readable, path+op-wrapped error the stage returned.
+	ErrorMessage string `json:"errorMessage"`
+
+	// Status is the resolution state: open, retried, or dismissed.
+	Status ImportFailureStatus `gorm:"index" json:"status"`
+	// ResolvedAt is when the failure left the open state (retried or dismissed).
+	ResolvedAt *time.Time `json:"resolvedAt"`
+	// DismissReason is the optional note the user supplied when dismissing.
+	DismissReason string `json:"dismissReason"`
+
+	SoftDelete
+}
+
 // ImportSource is a physical or logical origin of media, identified by hardware
 // and volume metadata plus a content fingerprint (never by volume label).
 type ImportSource struct {
@@ -241,6 +270,7 @@ func AllModels() []any {
 		&ImportSource{},
 		&ImportSession{},
 		&Asset{},
+		&ImportFailure{},
 		&BackupProvider{},
 		&BackupJob{},
 		&Setting{},

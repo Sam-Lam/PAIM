@@ -56,6 +56,31 @@ export class BackupRepo {
 }
 
 /**
+ * ImportFailureRepo persists and queries ImportFailure rows — the structured,
+ * resolvable per-file failure records produced during an import.
+ */
+export class ImportFailureRepo {
+    /**
+     * Creates a new ImportFailureRepo instance.
+     * @param {Partial<ImportFailureRepo>} [$$source = {}] - The source object to create the ImportFailureRepo.
+     */
+    constructor($$source = {}) {
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new ImportFailureRepo instance from a string or object.
+     * @param {any} [$$source = {}]
+     * @returns {ImportFailureRepo}
+     */
+    static createFrom($$source = {}) {
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        return new ImportFailureRepo(/** @type {Partial<ImportFailureRepo>} */($$parsedSource));
+    }
+}
+
+/**
  * LogRepo persists and queries LogEntry rows for the Logs page.
  */
 export class LogRepo {

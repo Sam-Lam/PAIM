@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { TrashIcon, CheckCircleIcon } from "@heroicons/react/24/outline";
+import { TrashIcon, CheckCircleIcon, ArrowUpTrayIcon } from "@heroicons/react/24/outline";
 import { Button } from "./Button";
 import { ConfirmDialog } from "./ConfirmDialog";
 import {
@@ -104,6 +104,21 @@ export function ClearSourceControl({
     void SourcesService.CancelClearSource().catch(() => undefined);
   };
 
+  const [ejecting, setEjecting] = useState(false);
+  // Offer to eject the just-cleared source. The backend resolves the volume from
+  // the root and re-checks every safety guard; the OS refuses a busy disk.
+  const eject = async () => {
+    setEjecting(true);
+    try {
+      await SourcesService.EjectVolume(root);
+      toast.success("Ejected", "The source is safe to unplug.");
+    } catch (e) {
+      toast.fromError(e, "Could not eject");
+    } finally {
+      setEjecting(false);
+    }
+  };
+
   return (
     <div className="mt-3">
       {!running && clear?.state !== "completed" ? (
@@ -115,7 +130,7 @@ export function ClearSourceControl({
       {running ? <ClearProgress progress={clear?.progress ?? null} onCancel={cancelClear} /> : null}
 
       {clear?.state === "completed" && clear.result ? (
-        <ClearSummary result={clear.result} />
+        <ClearSummary result={clear.result} onEject={() => void eject()} ejecting={ejecting} />
       ) : null}
 
       <ConfirmDialog
@@ -187,8 +202,12 @@ function ClearProgress({ progress, onCancel }: { progress: SourceProgress | null
 
 function ClearSummary({
   result,
+  onEject,
+  ejecting,
 }: {
   result: NonNullable<ActiveClearSourceDTO["result"]>;
+  onEject: () => void;
+  ejecting: boolean;
 }) {
   return (
     <div className="rounded-lg border border-emerald-800/40 bg-emerald-950/20 p-3">
@@ -210,6 +229,13 @@ function ClearSummary({
       <p className="mt-1 text-[11px] text-zinc-500">
         You can now format the card or empty <span className="font-mono">{result.trashDir}</span> yourself.
       </p>
+      {!result.cancelled ? (
+        <div className="mt-2">
+          <Button icon={ArrowUpTrayIcon} size="sm" variant="secondary" onClick={onEject} loading={ejecting}>
+            Eject now
+          </Button>
+        </div>
+      ) : null}
     </div>
   );
 }

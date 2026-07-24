@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -41,6 +42,7 @@ type ImportService struct {
 	sleepAware
 	pipeline *importer.Pipeline
 	sessions *repo.SessionRepo
+	failures *repo.ImportFailureRepo
 	dialog   Dialoger
 	emitter  Emitter
 	settings *repo.SettingsRepo
@@ -76,6 +78,12 @@ type ImportService struct {
 	sessionID string
 	current   *ImportProgress
 	cache     map[string]scanEntry
+
+	// activeSourceRoot/activeDestRoot record the source tree and destination the
+	// running operation reads/writes, for the eject guard (activePaths). Set under
+	// s.mu when the active slot is taken; cleared when it is released.
+	activeSourceRoot string
+	activeDestRoot   string
 
 	// analyze holds the state of the most recent background analyze (scan +
 	// dry run). It is running while the goroutine is live, then retained as a
@@ -153,6 +161,7 @@ func NewImportService(pipeline *importer.Pipeline, sessions *repo.SessionRepo, s
 func (s *ImportService) Bind(core *AppCore) {
 	s.pipeline = core.Pipeline
 	s.sessions = core.Sessions
+	s.failures = core.Failures
 	s.settings = core.Settings
 	s.sources = core.Sources
 	s.identifier = core.Identifier
@@ -387,6 +396,8 @@ func (s *ImportService) StartAnalyze(ctx context.Context, opts ImportOptions) (S
 	}
 	s.active = true
 	s.opKind = OpKindAnalyze
+	s.activeSourceRoot = absRoot
+	s.activeDestRoot = iopts.DestinationRoot
 	runCtx, cancel := context.WithCancel(context.Background())
 	s.cancel = cancel
 	s.sessionID = ""
@@ -407,6 +418,8 @@ func (s *ImportService) runAnalyze(ctx context.Context, absRoot string, echo Imp
 		s.mu.Lock()
 		s.active = false
 		s.cancel = nil
+		s.activeSourceRoot = ""
+		s.activeDestRoot = ""
 		s.mu.Unlock()
 		s.sleep.Release()
 	}()
@@ -671,8 +684,11 @@ func (s *ImportService) ResumeSession(ctx context.Context, sessionID string) (St
 		s.mu.Unlock()
 		return StartImportResult{}, ErrImportInProgress
 	}
+	rst, _ := decodeResumeState(session.Notes)
 	s.active = true
 	s.opKind = OpKindImport
+	s.activeSourceRoot = rst.SourceRoot
+	s.activeDestRoot = session.DestinationRoot
 	runCtx, cancel := context.WithCancel(context.Background())
 	s.cancel = cancel
 	s.sessionID = session.ID
@@ -701,6 +717,8 @@ func (s *ImportService) launch(ctx context.Context, state resumeState, precomput
 	// slips in; release it if creation fails.
 	s.active = true
 	s.opKind = OpKindImport
+	s.activeSourceRoot = state.SourceRoot
+	s.activeDestRoot = state.DestinationRoot
 	s.mu.Unlock()
 
 	session, err := s.newSession(ctx, state)
@@ -732,6 +750,8 @@ func (s *ImportService) run(ctx context.Context, sessionID string, precomputed *
 		s.mu.Lock()
 		s.active = false
 		s.cancel = nil
+		s.activeSourceRoot = ""
+		s.activeDestRoot = ""
 		s.mu.Unlock()
 		s.sleep.Release()
 	}()
@@ -799,6 +819,128 @@ func (s *ImportService) emitCompleted(sessionID string) {
 	}
 }
 
+// ErrRetrySourceMissing is returned by RetryFailedFile when the failed file no
+// longer exists at its source path — it can never be re-imported, so the UI
+// steers the user to Dismiss instead.
+var ErrRetrySourceMissing = errors.New("services: file no longer exists — dismiss the failure instead")
+
+// RetryFailedFileResult reports the outcome of a single-file retry. Success is
+// true when the file was re-imported (AssetID set when a new asset row was
+// created — a duplicate/already-imported resolution leaves it empty). On a
+// re-failure Success is false and Op/Error name the stage and message; the
+// underlying failure record stays open so it can be retried or dismissed again.
+type RetryFailedFileResult struct {
+	FailureID string `json:"failureId"`
+	Success   bool   `json:"success"`
+	AssetID   string `json:"assetId"`
+	Op        string `json:"op"`
+	Error     string `json:"error"`
+}
+
+// RetryFailedFile re-attempts one previously-failed file through the real import
+// pipeline (hash → duplicate detection → copy → fsync → BLAKE3 verify → atomic
+// rename → record for copy mode, or the in-place baseline for adopt mode) — every
+// hard rule honored, verification never bypassed. It:
+//   - refuses (ErrFailureAlreadyResolved) a record that is not open;
+//   - refuses (ErrRetrySourceMissing) when the source file has vanished, steering
+//     the UI to Dismiss instead;
+//   - respects the one-active-operation guard (ErrImportInProgress while an
+//     import/analyze/reorganize runs), holding the slot + sleep assertion for the
+//     brief single-file run;
+//   - on success marks the failure retried, stamps ResolvedAt, and decrements the
+//     session Failures counter by one so the counters stay coherent;
+//   - on a re-failure refreshes the record's op/error and leaves it open.
+func (s *ImportService) RetryFailedFile(ctx context.Context, failureID string) (RetryFailedFileResult, error) {
+	if err := s.guard(); err != nil {
+		return RetryFailedFileResult{}, err
+	}
+	if s.failures == nil {
+		return RetryFailedFileResult{}, ErrNoLibrary
+	}
+	f, err := s.failures.GetByID(ctx, failureID)
+	if err != nil {
+		return RetryFailedFileResult{}, err
+	}
+	if f.Status != domain.ImportFailureStatusOpen {
+		return RetryFailedFileResult{}, ErrFailureAlreadyResolved
+	}
+	if _, statErr := os.Stat(f.Path); statErr != nil {
+		return RetryFailedFileResult{}, ErrRetrySourceMissing
+	}
+
+	session, err := s.sessions.GetByID(ctx, f.SessionID)
+	if err != nil {
+		return RetryFailedFileResult{}, err
+	}
+	state, err := decodeResumeState(session.Notes)
+	if err != nil {
+		return RetryFailedFileResult{}, fmt.Errorf("services: retry: decode session state: %w", err)
+	}
+	iopts := importer.Options{
+		Mode:            importer.Mode(state.Mode),
+		SourceRoot:      state.SourceRoot,
+		DestinationRoot: state.DestinationRoot,
+		EventName:       state.EventName,
+		SourceID:        state.SourceID,
+		Reorganize:      state.Reorganize,
+		Concurrency:     state.Concurrency,
+		SkipProviderIDs: state.SkipProviderIDs,
+	}
+
+	// Reserve the single active-operation slot so a retry cannot run concurrently
+	// with an import/analyze/reorganize (or another retry).
+	s.mu.Lock()
+	if s.active {
+		s.mu.Unlock()
+		return RetryFailedFileResult{}, ErrImportInProgress
+	}
+	s.active = true
+	s.opKind = OpKindImport
+	s.activeSourceRoot = iopts.SourceRoot
+	s.activeDestRoot = iopts.DestinationRoot
+	runCtx, cancel := context.WithCancel(context.Background())
+	s.cancel = cancel
+	s.mu.Unlock()
+
+	s.sleep.Acquire()
+	defer func() {
+		s.mu.Lock()
+		s.active = false
+		s.cancel = nil
+		s.activeSourceRoot = ""
+		s.activeDestRoot = ""
+		s.mu.Unlock()
+		s.sleep.Release()
+	}()
+
+	outcome, err := s.pipeline.RetryFile(runCtx, f.SessionID, iopts, f.Path)
+	if err != nil {
+		// The file vanished between the stat and the run, or another unrecoverable
+		// pre-processing error — surface it as a missing-source steer.
+		s.log.Warn("retry failed file: pipeline error", "failureId", failureID, "path", f.Path, "error", err.Error())
+		return RetryFailedFileResult{}, ErrRetrySourceMissing
+	}
+	if outcome.Failed {
+		if e := s.failures.RecordRetryFailure(context.Background(), failureID, outcome.FailOp, outcome.FailErr); e != nil {
+			s.log.Warn("retry failed file: refresh record", "failureId", failureID, "error", e.Error())
+		}
+		s.log.Info("retry failed file: re-failed", "failureId", failureID, "path", f.Path, "op", outcome.FailOp)
+		return RetryFailedFileResult{FailureID: failureID, Success: false, Op: outcome.FailOp, Error: outcome.FailErr}, nil
+	}
+
+	now := timeNow()
+	if err := s.failures.MarkRetried(context.Background(), failureID, now); err != nil {
+		return RetryFailedFileResult{}, err
+	}
+	// The originally-counted failure is resolved: remove it from the session tally
+	// (the successful re-import already incremented Imported/Duplicates/Skipped).
+	if err := s.sessions.IncFailures(context.Background(), f.SessionID, -1); err != nil {
+		s.log.Warn("retry failed file: decrement failures counter", "sessionId", f.SessionID, "error", err.Error())
+	}
+	s.log.Info("retry failed file: succeeded", "failureId", failureID, "path", f.Path, "assetId", outcome.AssetID)
+	return RetryFailedFileResult{FailureID: failureID, Success: true, AssetID: outcome.AssetID}, nil
+}
+
 // CancelImport cancels the active import (if any). The pipeline finalizes the
 // session as cancelled. It is a no-op when nothing is running.
 func (s *ImportService) CancelImport(ctx context.Context) error {
@@ -862,6 +1004,28 @@ func (s *ImportService) activeOps() []OperationInfo {
 // cancelActive cancels a running import/analyze/reorganize via the existing
 // CancelImport path. It is a no-op when nothing is running.
 func (s *ImportService) cancelActive() { _ = s.CancelImport(context.Background()) }
+
+// activePaths reports the source tree and destination the running
+// import/analyze/reorganize/retry is reading/writing, plus the file currently in
+// flight, so the eject guard refuses to eject a volume any of them sits on.
+func (s *ImportService) activePaths() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if !s.active {
+		return nil
+	}
+	var paths []string
+	if s.activeSourceRoot != "" {
+		paths = append(paths, s.activeSourceRoot)
+	}
+	if s.activeDestRoot != "" {
+		paths = append(paths, s.activeDestRoot)
+	}
+	if s.current != nil && s.current.CurrentFile != "" {
+		paths = append(paths, s.current.CurrentFile)
+	}
+	return paths
+}
 
 // newSession creates the ImportSession row that ResumeSession will drive,
 // stamping the resume-state notes so the run can reload its options.

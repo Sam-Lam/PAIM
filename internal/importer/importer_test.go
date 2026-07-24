@@ -79,6 +79,7 @@ type harness struct {
 	db        *gorm.DB
 	assets    *repo.AssetRepo
 	sessions  *repo.SessionRepo
+	failures  *repo.ImportFailureRepo
 	extractor *fakeExtractor
 	enqueuer  *countingEnqueuer
 	pipe      *Pipeline
@@ -95,6 +96,7 @@ func newHarness(t *testing.T) *harness {
 	}
 	assets := repo.NewAssetRepo(gdb)
 	sessions := repo.NewSessionRepo(gdb)
+	failures := repo.NewImportFailureRepo(gdb)
 	ext := newFakeExtractor()
 	enq := &countingEnqueuer{perAsset: 1}
 
@@ -105,12 +107,13 @@ func newHarness(t *testing.T) *harness {
 		DB:        gdb,
 		Assets:    assets,
 		Sessions:  sessions,
+		Failures:  failures,
 		Extractor: ext,
 		Layout:    archive.New(dest),
 		Backup:    enq,
 	})
 	return &harness{
-		t: t, db: gdb, assets: assets, sessions: sessions,
+		t: t, db: gdb, assets: assets, sessions: sessions, failures: failures,
 		extractor: ext, enqueuer: enq, pipe: pipe, srcRoot: src, destRoot: dest,
 	}
 }

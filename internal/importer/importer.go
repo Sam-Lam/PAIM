@@ -185,10 +185,19 @@ type Pipeline struct {
 	db        *gorm.DB
 	assets    *repo.AssetRepo
 	sessions  *repo.SessionRepo
+	failures  *repo.ImportFailureRepo
 	extractor metadata.Extractor
 	layout    *archive.Layout
 	log       *slog.Logger
 	backup    BackupEnqueuer
+
+	// failSink records a per-file failure. The default (recordFailure) inserts a
+	// structured ImportFailure row and increments the session Failures counter in
+	// one transaction. RetryFile swaps in a capturing sink for the duration of a
+	// single-file retry so the retry reconciles counters and the pre-existing
+	// record itself instead of creating a new one. Only ever reassigned while the
+	// pipeline holds the caller's one-active-operation guard (one op at a time).
+	failSink func(sessionID, path, op string, wrapped error)
 
 	// libraryRoot, when set, is the portable-library root against which archive
 	// paths are stored relative (forward slashes) and resolved back to absolute.
@@ -217,6 +226,7 @@ type Config struct {
 	DB        *gorm.DB
 	Assets    *repo.AssetRepo
 	Sessions  *repo.SessionRepo
+	Failures  *repo.ImportFailureRepo
 	Extractor metadata.Extractor
 	Layout    *archive.Layout
 	Logger    *slog.Logger
@@ -240,10 +250,11 @@ func New(cfg Config) *Pipeline {
 		backup = NoopBackupEnqueuer{}
 	}
 
-	return &Pipeline{
+	p := &Pipeline{
 		db:          cfg.DB,
 		assets:      cfg.Assets,
 		sessions:    cfg.Sessions,
+		failures:    cfg.Failures,
 		extractor:   cfg.Extractor,
 		layout:      cfg.Layout,
 		log:         log,
@@ -252,6 +263,8 @@ func New(cfg Config) *Pipeline {
 		quickHash:   hashing.QuickHash,
 		fullHash:    hashing.FullHash,
 	}
+	p.failSink = p.recordFailure
+	return p
 }
 
 // effectiveLayout returns a Layout rooted at destinationRoot but preserving the
