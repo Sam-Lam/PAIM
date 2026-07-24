@@ -1,8 +1,21 @@
 # PAIM Roadmap
 
-Current release: **v0.5.0** (see git tags for full release history; every release is
+Current release: **v0.6.0** (see git tags for full release history; every release is
 tagged and race-tested). This file records agreed-but-unbuilt work so any future
 session can pick up without prior conversation context. Keep it updated as items ship.
+
+## Shipped in v0.6.0 (2026-07-24) — already-imported semantics
+
+- Copy-mode re-imports of already-archived content no longer create placeholder
+  duplicate rows or count as duplicates: they are counted/labeled **"Already
+  imported"** (new ImportSession.AlreadyImported counter, **schema migration 5**)
+  in dry-run, progress, completion, and History. Adopt-mode in-library duplicates
+  are unchanged. Import-resume idempotency now resolves content matches to the
+  real archived asset (the placeholder rows were load-bearing there; fixed at the
+  classify level). Safe-to-erase/clear-source/Cleanup match by hash — unaffected.
+- Duplicate Manager is scoped to in-library duplicates (archive copy present);
+  wasted-bytes totals now equal genuinely reclaimable space. A one-time banner
+  offers bulk soft-delete of legacy source-only placeholder records.
 
 ## Shipped in v0.5.0 (2026-07-24) — Batches C & D complete
 
@@ -49,6 +62,6 @@ session can pick up without prior conversation context. Keep it updated as items
   screenshots and code.
 - Wails v3 pinned alpha2.117; wails3 CLI in ~/go/bin (PATH prefix needed for build
   subtasks). Frontend bindings arrays are `T[] | null` — always null-guard (`?? []`).
-- Schema changes go through internal/db migrations (LatestSchemaVersion currently 4);
+- Schema changes go through internal/db migrations (LatestSchemaVersion currently 5);
   additive columns via AutoMigrate + migration registration; pre-migration backups are
   automatic.
