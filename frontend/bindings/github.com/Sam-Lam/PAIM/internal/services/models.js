@@ -1803,6 +1803,54 @@ export class BackupSummaryDTO {
              */
             this["mirrorFailed"] = 0;
         }
+        if (!("jobsPerMinute" in $$source)) {
+            /**
+             * Live rate/ETA for the dashboard backup card ("11,402 pending → done
+             * ~Thursday"). JobsPerMinute is the rolling completion rate; BytesRemaining is
+             * the outstanding upload workload; EtaSeconds/EtaAt estimate when the whole
+             * active queue (all providers, pending+running) drains; LastCompletedAt is the
+             * most recent completion; Paused is true when backups are yielding to foreground
+             * work or a provider is cooling (the card shows the paused state, not an ETA).
+             * @member
+             * @type {number}
+             */
+            this["jobsPerMinute"] = 0;
+        }
+        if (!("bytesRemaining" in $$source)) {
+            /**
+             * @member
+             * @type {number}
+             */
+            this["bytesRemaining"] = 0;
+        }
+        if (!("etaSeconds" in $$source)) {
+            /**
+             * @member
+             * @type {number}
+             */
+            this["etaSeconds"] = 0;
+        }
+        if (!("etaAt" in $$source)) {
+            /**
+             * @member
+             * @type {string | null}
+             */
+            this["etaAt"] = null;
+        }
+        if (!("lastCompletedAt" in $$source)) {
+            /**
+             * @member
+             * @type {string | null}
+             */
+            this["lastCompletedAt"] = null;
+        }
+        if (!("paused" in $$source)) {
+            /**
+             * @member
+             * @type {boolean}
+             */
+            this["paused"] = false;
+        }
 
         Object.assign(this, $$source);
     }
@@ -4459,6 +4507,54 @@ export class QueueSummaryDTO {
              * @type {ProviderCooldownDTO[]}
              */
             this["cooldowns"] = [];
+        }
+        if (!("jobsPerMinute" in $$source)) {
+            /**
+             * JobsPerMinute is the rolling backup completion rate (completed jobs per
+             * minute) over a recent trailing window; 0 when there is not enough recent
+             * activity to estimate. It drives the queue header's rate line.
+             * @member
+             * @type {number}
+             */
+            this["jobsPerMinute"] = 0;
+        }
+        if (!("bytesRemaining" in $$source)) {
+            /**
+             * BytesRemaining is the outstanding upload workload in bytes — the summed file
+             * size of assets behind pending/paused/running jobs (per provider). SQL
+             * aggregate; never a full row scan.
+             * @member
+             * @type {number}
+             */
+            this["bytesRemaining"] = 0;
+        }
+        if (!("lastCompletedAt" in $$source)) {
+            /**
+             * LastCompletedAt is the most recent backup-job completion, or nil when nothing
+             * has completed yet (the UI shows a relative "last backup 2m ago").
+             * @member
+             * @type {string | null}
+             */
+            this["lastCompletedAt"] = null;
+        }
+        if (!("etaSeconds" in $$source)) {
+            /**
+             * EtaSeconds estimates how many seconds until the active queue (pending+running)
+             * drains at the current rate; EtaAt is the corresponding wall-clock instant.
+             * Both are zero/nil when the rate is 0, the queue is empty, or backups are
+             * paused/yielding/cooling — the frontend then renders "—" and surfaces the
+             * paused state instead of a stale ETA, never "done ~Infinity".
+             * @member
+             * @type {number}
+             */
+            this["etaSeconds"] = 0;
+        }
+        if (!("etaAt" in $$source)) {
+            /**
+             * @member
+             * @type {string | null}
+             */
+            this["etaAt"] = null;
         }
         if (!("yielding" in $$source)) {
             /**

@@ -93,6 +93,27 @@ export function formatRelative(value: string | Date | null | undefined): string 
   return `${Math.round(mo / 12)}y ago`;
 }
 
+/**
+ * Human-friendly completion clock for an ETA timestamp:
+ *   - same calendar day -> the time only ("3:40 PM")
+ *   - within the next 7 days -> weekday + time ("Thursday 3:40 PM")
+ *   - otherwise -> short date + time ("Jul 30, 3:40 PM")
+ * Returns "—" for a missing/invalid/zero time, so callers never render
+ * "done ~Infinity".
+ */
+export function formatEtaClock(value: string | Date | null | undefined): string {
+  const d = toDate(value);
+  if (!d) return "—";
+  const now = new Date();
+  const time = d.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+  if (d.toDateString() === now.toDateString()) return time;
+  const diffDays = (d.getTime() - now.getTime()) / 86_400_000;
+  if (diffDays >= 0 && diffDays < 7) {
+    return `${d.toLocaleDateString(undefined, { weekday: "long" })} ${time}`;
+  }
+  return `${d.toLocaleDateString(undefined, { month: "short", day: "numeric" })}, ${time}`;
+}
+
 /** Turn "2026-07" (MonthCountDTO.month) into "Jul". */
 export function formatMonthLabel(month: string): string {
   const m = /^(\d{4})-(\d{2})$/.exec(month);

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"math"
 	"sync"
 	"time"
 
@@ -90,11 +91,61 @@ func (s *BackupService) queueSummary(ctx context.Context) (QueueSummaryDTO, erro
 		values[i] = c.Count
 	}
 	summary := summaryFromCounts(statuses, values)
+	var jpm float64
+	var last time.Time
 	if s.manager != nil {
 		summary.Cooldowns = cooldownDTOs(s.manager.Cooldowns())
 		summary.Yielding = s.manager.Yielding()
+		jpm, last = s.manager.CompletionStats()
 	}
+	summary = enrichQueueSummary(ctx, s.jobs, summary, time.Now(), jpm, last)
 	return summary, nil
+}
+
+// enrichQueueSummary fills the live rate/ETA fields on a base QueueSummaryDTO
+// (already carrying status counts, cooldowns, and the yielding flag): the
+// outstanding byte workload (SQL aggregate), the rolling completion rate and
+// last-completed time, and the derived ETA. It is shared by
+// BackupService.queueSummary and the OnQueueChanged emitter so the polled and
+// event-pushed summaries carry identical numbers. jobsPerMinute/lastCompleted come
+// from the Manager's CompletionStats; a nil jobs repo (tests) skips the byte query.
+func enrichQueueSummary(ctx context.Context, jobs *repo.BackupRepo, base QueueSummaryDTO, now time.Time, jobsPerMinute float64, lastCompleted time.Time) QueueSummaryDTO {
+	base.JobsPerMinute = jobsPerMinute
+	if !lastCompleted.IsZero() {
+		lc := lastCompleted
+		base.LastCompletedAt = &lc
+	}
+	if jobs != nil {
+		if br, err := jobs.BytesRemaining(ctx); err == nil {
+			base.BytesRemaining = br
+		}
+	}
+	// A paused, yielding, or cooling queue has no honest ETA: suppress it so the UI
+	// shows the paused state instead of a stale "done ~…".
+	paused := base.Yielding || len(base.Cooldowns) > 0
+	if secs, at, ok := backupETA(now, base.Pending+base.Running, jobsPerMinute, paused); ok {
+		base.EtaSeconds = secs
+		ea := at
+		base.EtaAt = &ea
+	}
+	return base
+}
+
+// backupETA estimates the seconds until remainingJobs drain at jobsPerMinute and
+// the corresponding wall-clock completion instant (now + eta). It returns
+// ok=false (and zero values) when backups are paused, there is no remaining work,
+// or the rate is non-positive/degenerate — so callers render "—" and never
+// "done ~Infinity".
+func backupETA(now time.Time, remainingJobs int64, jobsPerMinute float64, paused bool) (etaSeconds int64, etaAt time.Time, ok bool) {
+	if paused || remainingJobs <= 0 || jobsPerMinute <= 0 || math.IsInf(jobsPerMinute, 0) || math.IsNaN(jobsPerMinute) {
+		return 0, time.Time{}, false
+	}
+	secs := float64(remainingJobs) / jobsPerMinute * 60.0
+	if secs <= 0 || math.IsInf(secs, 0) || math.IsNaN(secs) {
+		return 0, time.Time{}, false
+	}
+	etaSeconds = int64(math.Ceil(secs))
+	return etaSeconds, now.Add(time.Duration(etaSeconds) * time.Second), true
 }
 
 // PauseBackupsDuringForeground reports the per-machine "Pause backups while
@@ -252,6 +303,27 @@ func (s *BackupService) RetryAllFailed(ctx context.Context) (int, error) {
 	return n, nil
 }
 
+// CancelAllPending cancels every pending or paused backup job in one transition
+// and returns the number cancelled, mirroring RetryAllFailed's shape. Jobs
+// currently running (uploading) are NOT touched — an in-flight upload finishes
+// normally. It emits backup:queue-changed on success. Cancellation is a soft status
+// flip (rows are never hard-deleted); the archived originals are untouched and
+// backups can be re-queued later.
+func (s *BackupService) CancelAllPending(ctx context.Context) (int, error) {
+	if err := s.guard(); err != nil {
+		return 0, err
+	}
+	n, err := s.manager.CancelAllPending(ctx)
+	if err != nil {
+		return 0, err
+	}
+	if summary, sErr := s.queueSummary(ctx); sErr == nil {
+		emitSafe(s.emitter, EventBackupQueueChanged, BackupQueueChanged{Summary: summary})
+	}
+	s.log.Info("cancelled all pending/paused backup jobs", "count", n)
+	return n, nil
+}
+
 // RequeueOptedOut reverses a per-import provider opt-out: it flips opted-out
 // backup jobs for the given provider back to pending so they upload ("Queue
 // anyway"). When sessionID is non-empty the reversal is scoped to the assets
@@ -385,9 +457,11 @@ func (s *BackupService) cancelActive() {
 // so the frontend handles both identically.
 // cooldownsFn, when non-nil, supplies the current provider cooldowns so the
 // emitted summary carries them; yieldingFn, when non-nil, supplies the current
-// foreground-yield state. Both are wired in main.go/appcore after the Manager
+// foreground-yield state; statsFn, when non-nil, supplies the Manager's rolling
+// completion rate and last-completed time so the pushed summary carries the same
+// live rate/ETA the poll does. All are wired in main.go/appcore after the Manager
 // exists (the Manager owns that state and invokes this emitter).
-func NewBackupQueueChangedEmitter(emitter Emitter, jobs *repo.BackupRepo, cooldownsFn func() []ProviderCooldownDTO, yieldingFn func() bool) func() {
+func NewBackupQueueChangedEmitter(emitter Emitter, jobs *repo.BackupRepo, cooldownsFn func() []ProviderCooldownDTO, yieldingFn func() bool, statsFn func() (float64, time.Time)) func() {
 	return func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
@@ -408,6 +482,12 @@ func NewBackupQueueChangedEmitter(emitter Emitter, jobs *repo.BackupRepo, cooldo
 		if yieldingFn != nil {
 			summary.Yielding = yieldingFn()
 		}
+		var jpm float64
+		var last time.Time
+		if statsFn != nil {
+			jpm, last = statsFn()
+		}
+		summary = enrichQueueSummary(ctx, jobs, summary, time.Now(), jpm, last)
 		emitSafe(emitter, EventBackupQueueChanged, BackupQueueChanged{Summary: summary})
 	}
 }

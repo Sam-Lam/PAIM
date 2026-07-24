@@ -36,6 +36,7 @@ import (
 	"github.com/Sam-Lam/PAIM/internal/volumes"
 
 	"github.com/wailsapp/wails/v3/pkg/application"
+	"github.com/wailsapp/wails/v3/pkg/services/dock"
 )
 
 //go:embed all:frontend/dist
@@ -127,6 +128,7 @@ type composition struct {
 	sleep      *services.SleepGuard
 	tracker    *services.ActivityTracker
 	yield      *services.ForegroundYield
+	badge      *services.BadgeController
 	config     *library.ConfigStore
 	appVersion string
 	rootCtx    context.Context
@@ -197,6 +199,14 @@ func run() error {
 	}
 	yield := services.NewForegroundYield(tracker, pausePref)
 
+	// macOS dock badge: reflect the primary running long operation's progress as a
+	// dock badge (e.g. "42%"), cleared when nothing runs. Wails v3's built-in dock
+	// service wraps NSDockTile setBadgeLabel:; the controller observes the same
+	// activity tracker the quit guard uses and throttles updates. If the dock icon
+	// is unavailable the setter's calls simply error and the controller no-ops.
+	dockService := dock.New()
+	badgeCtrl := services.NewBadgeController(tracker, dockService, logger)
+
 	rootCtx, rootCancel := context.WithCancel(context.Background())
 
 	comp := &composition{
@@ -211,6 +221,7 @@ func run() error {
 		sleep:      sleep,
 		tracker:    tracker,
 		yield:      yield,
+		badge:      badgeCtrl,
 		config:     configStore,
 		appVersion: appVersion,
 		rootCtx:    rootCtx,
@@ -298,6 +309,7 @@ func run() error {
 			application.NewService(comp.thumbnailSvc),
 			application.NewService(comp.snapshotSvc),
 			application.NewService(comp.appSvc),
+			application.NewService(dockService),
 		},
 		Assets: application.AssetOptions{
 			Handler:    application.AssetFileServerFS(assets),
@@ -372,6 +384,10 @@ func run() error {
 		BackgroundColour: application.NewRGB(9, 9, 11),
 		URL:              "/",
 	})
+
+	// Reflect long-operation progress on the dock badge for the life of the app
+	// (throttled; clears itself when idle and on rootCtx cancellation at shutdown).
+	go comp.badge.Run(rootCtx)
 
 	return app.Run()
 }

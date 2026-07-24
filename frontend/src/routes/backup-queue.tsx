@@ -31,7 +31,7 @@ import {
 } from "../lib/api";
 import { useAsyncData, usePoll, useWailsEvent } from "../lib/hooks";
 import { useToast } from "../lib/toast";
-import { baseName, formatNumber } from "../lib/format";
+import { baseName, formatBytes, formatEtaClock, formatNumber, formatRelative } from "../lib/format";
 
 const PAGE_SIZE = 25;
 
@@ -57,6 +57,8 @@ export function BackupQueuePage() {
   const [busyAll, setBusyAll] = useState(false);
   const [retryAllOpen, setRetryAllOpen] = useState(false);
   const [retryingAll, setRetryingAll] = useState(false);
+  const [cancelAllOpen, setCancelAllOpen] = useState(false);
+  const [cancellingAll, setCancellingAll] = useState(false);
   // Whether any enabled destination exists — drives the empty-state hint that
   // points at the Providers page's "Queue missing backups" when a destination was
   // added after importing.
@@ -130,6 +132,20 @@ export function BackupQueuePage() {
       toast.fromError(e, "Could not cancel job");
     } finally {
       setCancelling(false);
+    }
+  };
+
+  const confirmCancelAll = async () => {
+    setCancellingAll(true);
+    try {
+      const n = await BackupService.CancelAllPending();
+      toast.success(`Cancelled ${formatNumber(n)} pending job${n === 1 ? "" : "s"}`);
+      setCancelAllOpen(false);
+      refreshAll(true);
+    } catch (e) {
+      toast.fromError(e, "Could not cancel pending jobs");
+    } finally {
+      setCancellingAll(false);
     }
   };
 
@@ -320,9 +336,26 @@ export function BackupQueuePage() {
             <Button icon={ArrowUturnLeftIcon} variant="secondary" onClick={resumeAll} loading={busyAll}>
               Resume all
             </Button>
+            {((s?.pending ?? 0) + (s?.paused ?? 0)) > 0 ? (
+              <Button icon={XMarkIcon} variant="secondary" onClick={() => setCancelAllOpen(true)} loading={cancellingAll}>
+                Cancel all pending
+              </Button>
+            ) : null}
           </>
         }
       />
+
+      {s && (s.pending > 0 || s.running > 0) ? (
+        <div className="mb-4 flex flex-wrap items-center gap-x-4 gap-y-1 rounded-md border border-zinc-800 bg-zinc-900/40 px-3 py-2 text-[12px] text-zinc-400">
+          <span className="font-medium text-zinc-200">{formatNumber(s.pending)} pending</span>
+          {s.bytesRemaining > 0 ? <span>{formatBytes(s.bytesRemaining)} remaining</span> : null}
+          {s.jobsPerMinute > 0 ? <span>{formatNumber(Math.round(s.jobsPerMinute))}/min</span> : null}
+          <span className="text-zinc-300">{etaText(s)}</span>
+          {s.lastCompletedAt ? (
+            <span className="text-zinc-500">last backup {formatRelative(s.lastCompletedAt)}</span>
+          ) : null}
+        </div>
+      ) : null}
 
       {s?.yielding ? (
         <div className="mb-4">
@@ -413,6 +446,17 @@ export function BackupQueuePage() {
       />
 
       <ConfirmDialog
+        open={cancelAllOpen}
+        title={`Cancel all ${formatNumber((s?.pending ?? 0) + (s?.paused ?? 0))} pending backups?`}
+        description="Every pending and paused backup job is cancelled. Jobs currently uploading finish normally, and your archived originals are never touched — you can re-queue backups later from the Providers page."
+        confirmLabel="Cancel all"
+        cancelLabel="Keep them"
+        loading={cancellingAll}
+        onConfirm={() => void confirmCancelAll()}
+        onCancel={() => (cancellingAll ? undefined : setCancelAllOpen(false))}
+      />
+
+      <ConfirmDialog
         open={retryAllOpen}
         title={`Retry all ${formatNumber(s?.failed ?? 0)} failed jobs?`}
         description="Every failed backup job returns to pending and uploads again in the background. Jobs already paused or cancelled are untouched."
@@ -424,6 +468,16 @@ export function BackupQueuePage() {
       />
     </div>
   );
+}
+
+/** etaText phrases the queue's drain estimate honestly: paused states win over any
+ *  ETA (never a stale "done ~…"); otherwise a live ETA renders as "done ~Thursday
+ *  3:40 PM", falling back to "estimating…" until a rate is known. */
+function etaText(s: QueueSummaryDTO): string {
+  if (s.yielding) return "paused while an import runs";
+  if ((s.cooldowns ?? []).length > 0) return "paused — provider cooling down";
+  if (s.etaAt && s.etaSeconds > 0) return `done ~${formatEtaClock(s.etaAt)}`;
+  return "estimating…";
 }
 
 /** formatResume renders a cooldown resume time as a local HH:MM (with the day when

@@ -214,6 +214,11 @@ type Manager struct {
 	// queue.
 	uploads map[string]*JobInfo
 
+	// completions tracks recent job completions to derive a rolling
+	// completed-jobs-per-minute rate and the last-completed time for the queue's
+	// ETA. It has its own lock and never contends with mu.
+	completions *completionTracker
+
 	cancel context.CancelFunc
 	wg     sync.WaitGroup
 }
@@ -248,6 +253,7 @@ func NewManager(jobs JobQueue, assets AssetStore, providers ProviderStore, regis
 		uploads:           make(map[string]*JobInfo),
 		providerFailing:   make(map[string]bool),
 		lastFailingNotify: make(map[string]time.Time),
+		completions:       newCompletionTracker(),
 	}
 }
 
@@ -671,6 +677,7 @@ func (m *Manager) process(ctx context.Context, job *domain.BackupJob) (terminal 
 	if markErr != nil {
 		return false, fmt.Errorf("mark job %q completed: %w", job.ID, markErr)
 	}
+	m.completions.record(m.opts.Now())
 	m.recomputeAsset(recCtx, job.AssetID)
 	m.clearProviderFailing(job.Destination)
 	m.notifyQueueChanged()
@@ -727,6 +734,32 @@ func (m *Manager) RetryAllFailed(ctx context.Context) (int, error) {
 	n, err := m.jobs.RequeueAllFailed(ctx)
 	if err != nil {
 		return 0, fmt.Errorf("backup: retry all failed: %w", err)
+	}
+	if n > 0 {
+		m.notifyQueueChanged()
+	}
+	return int(n), nil
+}
+
+// CompletionStats returns the rolling completed-jobs-per-minute rate over the
+// recent window and the most-recent completion time (zero when nothing has
+// completed yet). The services layer folds these into the queue summary so the
+// Backup Queue and Dashboard can show a live rate and a "done ~Thursday" ETA.
+func (m *Manager) CompletionStats() (jobsPerMinute float64, lastCompletedAt time.Time) {
+	return m.completions.stats(m.opts.Now())
+}
+
+// CancelAllPending flips every pending OR paused job to cancelled in a single
+// UPDATE and returns the number cancelled. Jobs currently running (uploading) are
+// NOT touched — an in-flight upload finishes normally and is recorded through its
+// own path. It is the bulk mirror of Cancel used by "Cancel all pending"; a
+// cancelled job is a soft status flip (rows are never hard-deleted) and is excluded
+// from an asset's aggregate BackupStatus. It emits a queue-changed notification
+// when any row moved.
+func (m *Manager) CancelAllPending(ctx context.Context) (int, error) {
+	n, err := m.jobs.CancelAllPendingPaused(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("backup: cancel all pending: %w", err)
 	}
 	if n > 0 {
 		m.notifyQueueChanged()

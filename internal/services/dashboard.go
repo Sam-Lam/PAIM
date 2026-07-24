@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/Sam-Lam/PAIM/internal/backup"
 	"github.com/Sam-Lam/PAIM/internal/domain"
 	"github.com/Sam-Lam/PAIM/internal/repo"
 	"gorm.io/gorm"
@@ -22,6 +23,7 @@ type DashboardService struct {
 	assets  *repo.AssetRepo
 	backups *repo.BackupRepo
 	sources *repo.SourceRepo
+	manager *backup.Manager
 	log     *slog.Logger
 }
 
@@ -31,6 +33,7 @@ func (s *DashboardService) Bind(core *AppCore) {
 	s.assets = core.Assets
 	s.backups = core.Backups
 	s.sources = core.Sources
+	s.manager = core.Manager
 }
 
 // NewDashboardService constructs a DashboardService.
@@ -85,6 +88,19 @@ type BackupSummaryDTO struct {
 	Failed        int64 `json:"failed"`
 	MirrorPending int64 `json:"mirrorPending"`
 	MirrorFailed  int64 `json:"mirrorFailed"`
+
+	// Live rate/ETA for the dashboard backup card ("11,402 pending → done
+	// ~Thursday"). JobsPerMinute is the rolling completion rate; BytesRemaining is
+	// the outstanding upload workload; EtaSeconds/EtaAt estimate when the whole
+	// active queue (all providers, pending+running) drains; LastCompletedAt is the
+	// most recent completion; Paused is true when backups are yielding to foreground
+	// work or a provider is cooling (the card shows the paused state, not an ETA).
+	JobsPerMinute   float64    `json:"jobsPerMinute"`
+	BytesRemaining  int64      `json:"bytesRemaining"`
+	EtaSeconds      int64      `json:"etaSeconds"`
+	EtaAt           *time.Time `json:"etaAt"`
+	LastCompletedAt *time.Time `json:"lastCompletedAt"`
+	Paused          bool       `json:"paused"`
 }
 
 // DashboardStats is the full dashboard payload.
@@ -143,6 +159,7 @@ func (s *DashboardService) GetStats(ctx context.Context) (DashboardStats, error)
 	if out.BackupQueue, err = s.backupSummary(ctx); err != nil {
 		return DashboardStats{}, err
 	}
+	s.fillBackupEta(ctx, &out.BackupQueue)
 
 	// Enabled required (non-mirror) backup destinations. Zero with assets present
 	// means the archive has only one copy — the dashboard warns prominently.
@@ -238,6 +255,48 @@ func (s *DashboardService) backupSummary(ctx context.Context) (BackupSummaryDTO,
 		return BackupSummaryDTO{}, err
 	}
 	return out, nil
+}
+
+// fillBackupEta populates the live rate/ETA fields on the dashboard backup card
+// from the Manager's rolling completion stats and the repo's byte/queue
+// aggregates, so the card can show "N pending → done ~Thursday". The ETA covers
+// the whole active queue (all providers, pending+running); it is suppressed when
+// backups are paused (yielding to foreground work) or a provider is cooling. A nil
+// Manager (before a library binds) leaves the fields zero. Best-effort: any query
+// error simply leaves the corresponding field unset.
+func (s *DashboardService) fillBackupEta(ctx context.Context, sum *BackupSummaryDTO) {
+	if s.manager == nil || s.backups == nil {
+		return
+	}
+	counts, err := s.backups.QueueSummary(ctx)
+	if err != nil {
+		return
+	}
+	var pending, running int64
+	for _, c := range counts {
+		switch c.Status {
+		case domain.JobStatusPending:
+			pending = c.Count
+		case domain.JobStatusRunning:
+			running = c.Count
+		}
+	}
+	jpm, last := s.manager.CompletionStats()
+	sum.JobsPerMinute = jpm
+	if !last.IsZero() {
+		lc := last
+		sum.LastCompletedAt = &lc
+	}
+	if br, berr := s.backups.BytesRemaining(ctx); berr == nil {
+		sum.BytesRemaining = br
+	}
+	paused := s.manager.Yielding() || len(s.manager.Cooldowns()) > 0
+	sum.Paused = paused
+	if secs, at, ok := backupETA(time.Now(), pending+running, jpm, paused); ok {
+		sum.EtaSeconds = secs
+		ea := at
+		sum.EtaAt = &ea
+	}
 }
 
 // AssetsOverTime chart tuning constants.

@@ -27,11 +27,12 @@ import {
   WailsEvents,
   type AssetsOverTimeBucketDTO,
   type AssetsOverTimeDTO,
+  type BackupSummaryDTO,
   type SourceDTO,
 } from "../lib/api";
 import { useAsyncData, usePoll, useWailsEvent } from "../lib/hooks";
 import { useToast } from "../lib/toast";
-import { formatBytes, formatNumber, formatRelative } from "../lib/format";
+import { formatBytes, formatEtaClock, formatNumber, formatRelative } from "../lib/format";
 
 // interruptedImportToastShown latches the once-per-app-run "resume interrupted
 // import" nudge. Module-scoped so returning to the Dashboard does not re-toast.
@@ -147,11 +148,7 @@ export function DashboardPage() {
               value={formatNumber(stats.backupQueue.pending)}
               icon={CloudArrowUpIcon}
               tone={stats.backupQueue.pending > 0 ? "accent" : "default"}
-              hint={
-                stats.backupQueue.mirrorPending > 0
-                  ? `mirror uploads pending: ${formatNumber(stats.backupQueue.mirrorPending)}`
-                  : undefined
-              }
+              hint={backupEtaHint(stats.backupQueue)}
             />
             <Stat
               label="Failed Backups"
@@ -225,6 +222,18 @@ export function DashboardPage() {
       ) : null}
     </div>
   );
+}
+
+/** backupEtaHint gives the Pending Backups stat its "done ~Thursday" subtitle:
+ *  a live ETA when the queue is draining, a paused note when yielding/cooling, and
+ *  otherwise the existing mirror-pending hint (or nothing). */
+function backupEtaHint(b: BackupSummaryDTO): string | undefined {
+  if (b.pending > 0) {
+    if (b.paused) return "paused";
+    if (b.etaAt && b.etaSeconds > 0) return `done ~${formatEtaClock(b.etaAt)}`;
+  }
+  if (b.mirrorPending > 0) return `mirror uploads pending: ${formatNumber(b.mirrorPending)}`;
+  return undefined;
 }
 
 function levelDot(level: string): string {

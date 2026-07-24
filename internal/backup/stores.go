@@ -38,6 +38,10 @@ type JobQueue interface {
 	// RequeueAllFailed transitions every failed job to pending in one UPDATE,
 	// returning the count (the bulk form used by "Retry all failed").
 	RequeueAllFailed(ctx context.Context) (int64, error)
+	// CancelAllPendingPaused transitions every pending or paused job to cancelled in
+	// one UPDATE, returning the count (the bulk form used by "Cancel all pending").
+	// Running jobs are untouched.
+	CancelAllPendingPaused(ctx context.Context) (int64, error)
 	// RevertToPending returns a running job to pending without a retry increment
 	// (used for provider cooldowns, where abandoning the attempt is not a failure).
 	RevertToPending(ctx context.Context, id string) error

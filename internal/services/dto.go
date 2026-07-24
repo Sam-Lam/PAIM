@@ -263,6 +263,25 @@ type QueueSummaryDTO struct {
 
 	Cooldowns []ProviderCooldownDTO `json:"cooldowns"`
 
+	// JobsPerMinute is the rolling backup completion rate (completed jobs per
+	// minute) over a recent trailing window; 0 when there is not enough recent
+	// activity to estimate. It drives the queue header's rate line.
+	JobsPerMinute float64 `json:"jobsPerMinute"`
+	// BytesRemaining is the outstanding upload workload in bytes — the summed file
+	// size of assets behind pending/paused/running jobs (per provider). SQL
+	// aggregate; never a full row scan.
+	BytesRemaining int64 `json:"bytesRemaining"`
+	// LastCompletedAt is the most recent backup-job completion, or nil when nothing
+	// has completed yet (the UI shows a relative "last backup 2m ago").
+	LastCompletedAt *time.Time `json:"lastCompletedAt"`
+	// EtaSeconds estimates how many seconds until the active queue (pending+running)
+	// drains at the current rate; EtaAt is the corresponding wall-clock instant.
+	// Both are zero/nil when the rate is 0, the queue is empty, or backups are
+	// paused/yielding/cooling — the frontend then renders "—" and surfaces the
+	// paused state instead of a stale ETA, never "done ~Infinity".
+	EtaSeconds int64      `json:"etaSeconds"`
+	EtaAt      *time.Time `json:"etaAt"`
+
 	// Yielding is true when the backup manager is currently withholding new job
 	// claims because a foreground operation (import/analyze/reorganize/…) is
 	// running; in-flight uploads still finish and pending jobs resume

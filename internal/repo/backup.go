@@ -255,6 +255,45 @@ func (r *BackupRepo) RequeueAllFailed(ctx context.Context) (int64, error) {
 	return res.RowsAffected, nil
 }
 
+// CancelAllPendingPaused transitions every pending or paused backup job to
+// cancelled in a single UPDATE and returns the number cancelled. Jobs currently
+// running are untouched (an in-flight upload finishes and is recorded through its
+// own path). It is the bulk mirror of Cancel used by "Cancel all pending"; the
+// status guard keeps it a valid pending|paused -> cancelled transition for every
+// row. A cancelled job is a soft status flip (rows are never hard-deleted) and is
+// excluded from an asset's aggregate BackupStatus.
+func (r *BackupRepo) CancelAllPendingPaused(ctx context.Context) (int64, error) {
+	res := r.db.WithContext(ctx).
+		Model(&domain.BackupJob{}).
+		Where("status IN ?", []domain.JobStatus{domain.JobStatusPending, domain.JobStatusPaused}).
+		Updates(map[string]any{"status": domain.JobStatusCancelled})
+	if res.Error != nil {
+		return 0, fmt.Errorf("repo: cancel all pending/paused backup jobs: %w", res.Error)
+	}
+	return res.RowsAffected, nil
+}
+
+// BytesRemaining sums the file size of the assets behind still-active backup jobs
+// (pending, paused, or running) — the outstanding upload workload in bytes. A file
+// with jobs for multiple providers counts once per provider, since each is a
+// separate upload. Soft-deleted jobs (GORM's default scope) and soft-deleted
+// assets are excluded. It is a SQL aggregate; rows are never loaded.
+func (r *BackupRepo) BytesRemaining(ctx context.Context) (int64, error) {
+	var total int64
+	err := r.db.WithContext(ctx).
+		Model(&domain.BackupJob{}).
+		Joins("JOIN assets ON assets.id = backup_jobs.asset_id AND assets.deleted_at IS NULL").
+		Where("backup_jobs.status IN ?", []domain.JobStatus{
+			domain.JobStatusPending, domain.JobStatusPaused, domain.JobStatusRunning,
+		}).
+		Select("COALESCE(SUM(assets.file_size), 0)").
+		Scan(&total).Error
+	if err != nil {
+		return 0, fmt.Errorf("repo: backup bytes remaining: %w", err)
+	}
+	return total, nil
+}
+
 // RequeueOptedOut flips opted-out jobs for one destination (provider ID) back to
 // pending so they upload — the reversal of a per-import opt-out ("Queue anyway").
 // When sessionID is non-empty the flip is scoped to the assets imported under

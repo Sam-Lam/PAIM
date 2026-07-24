@@ -5,6 +5,7 @@ import (
 	"errors"
 	"log/slog"
 	"sync"
+	"time"
 
 	"github.com/Sam-Lam/PAIM/internal/archive"
 	"github.com/Sam-Lam/PAIM/internal/backup"
@@ -222,6 +223,11 @@ func BuildCore(deps CoreDeps) (*AppCore, error) {
 			return cooldownDTOs(manager.Cooldowns())
 		}, func() bool {
 			return manager != nil && manager.Yielding()
+		}, func() (float64, time.Time) {
+			if manager == nil {
+				return 0, time.Time{}
+			}
+			return manager.CompletionStats()
 		}),
 	})
 

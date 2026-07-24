@@ -48,6 +48,19 @@ export function Cancel(jobID) {
 }
 
 /**
+ * CancelAllPending cancels every pending or paused backup job in one transition
+ * and returns the number cancelled, mirroring RetryAllFailed's shape. Jobs
+ * currently running (uploading) are NOT touched — an in-flight upload finishes
+ * normally. It emits backup:queue-changed on success. Cancellation is a soft status
+ * flip (rows are never hard-deleted); the archived originals are untouched and
+ * backups can be re-queued later.
+ * @returns {$CancellablePromise<number>}
+ */
+export function CancelAllPending() {
+    return $Call.ByID(3440620150);
+}
+
+/**
  * CancelBackfill cancels the active backfill (if any). It is a no-op when nothing
  * is running. The partially-enqueued jobs are kept (they are valid work); a later
  * StartBackfill enqueues the remainder.
