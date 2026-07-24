@@ -62,6 +62,10 @@ session can pick up without prior conversation context. Keep it updated as items
   screenshots and code.
 - Wails v3 pinned alpha2.117; wails3 CLI in ~/go/bin (PATH prefix needed for build
   subtasks). Frontend bindings arrays are `T[] | null` — always null-guard (`?? []`).
+  Bindings regen MUST use the Taskfile-matching flags:
+  `wails3 generate bindings -f '' -clean=true -ts -i` (TS output; a bare regen
+  emits JS with looser types and hides null-guard violations until `wails3 build`
+  regenerates on the user's machine — the v0.6.1 lesson).
 - Schema changes go through internal/db migrations (LatestSchemaVersion currently 5);
   additive columns via AutoMigrate + migration registration; pre-migration backups are
   automatic.

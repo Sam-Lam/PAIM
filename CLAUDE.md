@@ -11,7 +11,10 @@ for package layout, database schema, hashing strategy, and all conventions. Do n
 - Go: `go build ./...` (root), tests: `go test ./...`
 - Frontend: `cd frontend && npm run build` (tsc + vite)
 - Regenerate Wails bindings after changing service method signatures:
-  `wails3 generate bindings` (wails3 is in `~/go/bin`)
+  `wails3 generate bindings -f '' -clean=true -ts -i` (wails3 is in `~/go/bin`).
+  ALWAYS use exactly these flags — they match the Taskfile's build-time regen
+  (TypeScript output, arrays typed `T[] | null`), so tsc catches missing
+  null-guards that a bare `wails3 generate bindings` (JS output) would hide.
 - exiftool is installed at `/opt/homebrew/bin/exiftool`
 
 ## Hard rules
