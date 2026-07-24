@@ -21,7 +21,16 @@ export interface ConfirmDialogProps {
   /** Optional content rendered under the description while loading (e.g. a byte
    * progress bar for a long copy). */
   loadingContent?: ReactNode;
-  onConfirm: () => void;
+  /**
+   * When set, renders an optional free-text reason field; its value is passed to
+   * onConfirm. Used for Dismiss ("why are you dismissing this failure?"). Unlike
+   * requireWord the field is optional — the confirm button stays enabled.
+   */
+  reasonLabel?: string;
+  /** Placeholder for the optional reason field. */
+  reasonPlaceholder?: string;
+  /** Receives the optional reason text (empty string when none was entered). */
+  onConfirm: (reason?: string) => void;
   onCancel: () => void;
 }
 
@@ -35,14 +44,20 @@ export function ConfirmDialog({
   requireWord,
   loading = false,
   loadingContent,
+  reasonLabel,
+  reasonPlaceholder,
   onConfirm,
   onCancel,
 }: ConfirmDialogProps) {
   const [typed, setTyped] = useState("");
+  const [reason, setReason] = useState("");
 
-  // Reset the typed confirmation whenever the dialog opens/closes.
+  // Reset the typed confirmation and reason whenever the dialog opens/closes.
   useEffect(() => {
-    if (!open) setTyped("");
+    if (!open) {
+      setTyped("");
+      setReason("");
+    }
   }, [open]);
 
   // Close on Escape.
@@ -98,6 +113,19 @@ export function ConfirmDialog({
                 />
               </div>
             ) : null}
+
+            {reasonLabel ? (
+              <div className="mt-3">
+                <label className="mb-1 block text-xs text-zinc-500">{reasonLabel}</label>
+                <input
+                  value={reason}
+                  onChange={(e) => setReason(e.target.value)}
+                  disabled={loading}
+                  className="w-full rounded-md border border-zinc-700 bg-zinc-950 px-2.5 py-1.5 text-[13px] text-zinc-100 outline-none focus:border-blue-500"
+                  placeholder={reasonPlaceholder ?? "Optional"}
+                />
+              </div>
+            ) : null}
           </div>
         </div>
 
@@ -107,7 +135,7 @@ export function ConfirmDialog({
           </Button>
           <Button
             variant={variant === "danger" ? "danger" : "primary"}
-            onClick={onConfirm}
+            onClick={() => onConfirm(reason.trim())}
             disabled={!wordOk}
             loading={loading}
           >

@@ -2,10 +2,12 @@ package services
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"time"
 
+	"github.com/Sam-Lam/PAIM/internal/domain"
 	"github.com/Sam-Lam/PAIM/internal/importer"
 	"github.com/Sam-Lam/PAIM/internal/repo"
 )
@@ -16,6 +18,7 @@ type HistoryService struct {
 	sessions *repo.SessionRepo
 	logs     *repo.LogRepo
 	sources  *repo.SourceRepo
+	failures *repo.ImportFailureRepo
 	log      *slog.Logger
 }
 
@@ -24,6 +27,7 @@ func (s *HistoryService) Bind(core *AppCore) {
 	s.sessions = core.Sessions
 	s.logs = core.Logs
 	s.sources = core.Sources
+	s.failures = core.Failures
 }
 
 // NewHistoryService constructs a HistoryService.
@@ -200,4 +204,62 @@ func (s *HistoryService) SessionEvents(ctx context.Context, sessionID string) (S
 		}
 	}
 	return SessionDetail{Session: dto, Events: events, Truncated: truncated, Approximate: approximate}, nil
+}
+
+// ErrFailureAlreadyResolved is returned by DismissFailure when the record is not
+// open (already retried or dismissed) — the UI should refresh rather than act on
+// stale state.
+var ErrFailureAlreadyResolved = errors.New("services: import failure is already resolved")
+
+// ListSessionFailures returns a page of the structured per-file failure records
+// for a session (oldest first, so the list reads in import order). Total is the
+// count of ALL failure records for the session (any status); a session whose
+// Failures counter is > 0 but whose Total here is 0 is a legacy session imported
+// before structured records existed, and the UI keeps the log-only view for it.
+func (s *HistoryService) ListSessionFailures(ctx context.Context, sessionID string, page, pageSize int) (PageResult[ImportFailureDTO], error) {
+	if err := s.guard(); err != nil {
+		return PageResult[ImportFailureDTO]{}, err
+	}
+	if s.failures == nil {
+		return PageResult[ImportFailureDTO]{Items: []ImportFailureDTO{}, Page: page, PageSize: pageSize}, nil
+	}
+	limit, offset := normalizePage(page, pageSize)
+	rows, total, err := s.failures.ListForSession(ctx, sessionID, repo.Page{Limit: limit, Offset: offset})
+	if err != nil {
+		return PageResult[ImportFailureDTO]{}, err
+	}
+	items := make([]ImportFailureDTO, 0, len(rows))
+	for _, r := range rows {
+		items = append(items, toImportFailureDTO(r))
+	}
+	return PageResult[ImportFailureDTO]{Items: items, Total: total, Page: page, PageSize: pageSize}, nil
+}
+
+// DismissFailure resolves a failure by marking it dismissed (with an optional
+// reason) and stamping ResolvedAt. It is a soft state change — the row is never
+// hard-deleted — used for the "file vanished before import" cases that can never
+// be retried. It refuses (ErrFailureAlreadyResolved) a record that is not open.
+func (s *HistoryService) DismissFailure(ctx context.Context, failureID, reason string) (ImportFailureDTO, error) {
+	if err := s.guard(); err != nil {
+		return ImportFailureDTO{}, err
+	}
+	if s.failures == nil {
+		return ImportFailureDTO{}, ErrNoLibrary
+	}
+	f, err := s.failures.GetByID(ctx, failureID)
+	if err != nil {
+		return ImportFailureDTO{}, err
+	}
+	if f.Status != domain.ImportFailureStatusOpen {
+		return ImportFailureDTO{}, ErrFailureAlreadyResolved
+	}
+	if err := s.failures.Dismiss(ctx, failureID, reason, timeNow()); err != nil {
+		return ImportFailureDTO{}, err
+	}
+	s.log.Info("import failure dismissed", "failureId", failureID, "sessionId", f.SessionID, "path", f.Path)
+	updated, err := s.failures.GetByID(ctx, failureID)
+	if err != nil {
+		return ImportFailureDTO{}, err
+	}
+	return toImportFailureDTO(*updated), nil
 }

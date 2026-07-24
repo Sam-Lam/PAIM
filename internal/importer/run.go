@@ -491,15 +491,54 @@ func (p *Pipeline) recordAsset(ctx context.Context, asset *domain.Asset, counter
 	})
 }
 
-// fail records a per-file failure: increments the session Failures counter and
-// logs a wrapped, path+op error. It never aborts the pipeline.
+// fail records a per-file failure through the pipeline's failSink (which by
+// default increments the session Failures counter and inserts a structured
+// ImportFailure row in one transaction) and logs a wrapped, path+op error. It
+// never aborts the pipeline.
 func (p *Pipeline) fail(ctx context.Context, sessionID, path, op string, err error) fileOutcome {
 	wrapped := fmt.Errorf("import %s %q: %w", op, path, err)
-	if e := p.sessions.IncFailures(context.Background(), sessionID, 1); e != nil {
-		p.log.Warn("fail: inc failures", "sessionId", sessionID, "error", e.Error())
-	}
+	p.failSink(sessionID, path, op, wrapped)
 	p.log.Error("import file failed", "sessionId", sessionID, "path", path, "op", op, "error", wrapped.Error())
 	return fileOutcome{failed: true}
+}
+
+// recordFailure is the default failSink: it increments the session Failures
+// counter AND inserts a structured ImportFailure row in one transaction, so the
+// accounting and the record can never diverge. Recording must never abort the
+// import — a transaction failure is logged and, as a fallback, the counter is
+// incremented on its own so the Failures tally is never lost. A background
+// context is used so finalization survives cancellation of the import context.
+func (p *Pipeline) recordFailure(sessionID, path, op string, wrapped error) {
+	ctx := context.Background()
+	txErr := p.db.Transaction(func(tx *gorm.DB) error {
+		if err := p.sessions.WithTx(tx).IncFailures(ctx, sessionID, 1); err != nil {
+			return err
+		}
+		if p.failures != nil {
+			rec := &domain.ImportFailure{
+				SessionID:    sessionID,
+				Path:         path,
+				Op:           domain.ImportFailureOp(op),
+				ErrorMessage: wrapped.Error(),
+				Status:       domain.ImportFailureStatusOpen,
+			}
+			if err := p.failures.WithTx(tx).Create(ctx, rec); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	if txErr == nil {
+		return
+	}
+	// Recording is best-effort: log and skip, but preserve the counter increment
+	// on its own so the Failures tally stays correct even when the structured
+	// record could not be written.
+	p.log.Warn("recordFailure: could not record structured failure; counting only",
+		"sessionId", sessionID, "path", path, "op", op, "error", txErr.Error())
+	if e := p.sessions.IncFailures(ctx, sessionID, 1); e != nil {
+		p.log.Warn("recordFailure: inc failures fallback", "sessionId", sessionID, "error", e.Error())
+	}
 }
 
 // finishSession finalizes a session's status and persists the accumulated notes

@@ -15,7 +15,7 @@ import {
   Squares2X2Icon,
   StopIcon,
 } from "@heroicons/react/24/outline";
-import { Button, Card, ClearSourceControl, ConfirmDialog, LoadingBlock, PageHeader, ProgressBar, StatusBadge } from "../components";
+import { Button, Card, ClearSourceControl, ConfirmDialog, FailedFilesPanel, LoadingBlock, PageHeader, ProgressBar, StatusBadge } from "../components";
 import {
   BackupService,
   HistoryService,
@@ -970,6 +970,12 @@ function ImportStep({
           <CounterCard label="Failures" value={completed.failures} tone={completed.failures > 0 ? "danger" : "default"} />
           <CounterCard label="Skipped" value={completed.skipped} />
         </div>
+
+        {completed.failures > 0 ? (
+          <div className="mt-4">
+            <FailedFilesPanel sessionId={completed.sessionId} sessionFailures={completed.failures} />
+          </div>
+        ) : null}
 
         <div className="mt-5 flex items-center justify-center gap-2">
           {interrupted ? (

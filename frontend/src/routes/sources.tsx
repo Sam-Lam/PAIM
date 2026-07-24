@@ -3,6 +3,7 @@ import { Link, useNavigate } from "@tanstack/react-router";
 import {
   ArrowDownTrayIcon,
   ArrowPathIcon,
+  ArrowUpTrayIcon,
   CheckBadgeIcon,
   ExclamationTriangleIcon,
   FingerPrintIcon,
@@ -172,6 +173,7 @@ function VolumeCard({
   const navigate = useNavigate();
   const [match, setMatch] = useState<MatchDTO | null>(null);
   const [identifying, setIdentifying] = useState(false);
+  const [ejecting, setEjecting] = useState(false);
 
   const Icon = connectionIcon(volume);
   const usedPct =
@@ -204,6 +206,21 @@ function VolumeCard({
 
   const cancelEvaluate = () => {
     void SourcesService.CancelSafeToErase().catch(() => undefined);
+  };
+
+  // Eject: the server re-checks the safety guards (library volume, in-flight
+  // operations, OS busy-volume) regardless of UI state; the volume:unmounted
+  // watcher event refreshes the list when the disk disappears.
+  const eject = async () => {
+    setEjecting(true);
+    try {
+      await SourcesService.EjectVolume(volume.mountPoint);
+      toast.success("Ejected", `${volume.volumeName || volume.mountPoint} — safe to unplug`);
+    } catch (e) {
+      toast.fromError(e, "Could not eject");
+    } finally {
+      setEjecting(false);
+    }
   };
 
   return (
@@ -276,6 +293,17 @@ function VolumeCard({
         >
           Import from this volume
         </Button>
+        {volume.ejectable || volume.removable ? (
+          <Button
+            icon={ArrowUpTrayIcon}
+            variant="ghost"
+            onClick={() => void eject()}
+            loading={ejecting}
+            title="Eject this volume before unplugging it"
+          >
+            Eject
+          </Button>
+        ) : null}
       </div>
 
       {match ? <MatchPanel match={match} /> : null}

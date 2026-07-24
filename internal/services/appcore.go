@@ -101,6 +101,7 @@ type AppCore struct {
 	DB       *gorm.DB
 	Assets   *repo.AssetRepo
 	Sessions *repo.SessionRepo
+	Failures *repo.ImportFailureRepo
 	Sources  *repo.SourceRepo
 	Backups  *repo.BackupRepo
 	Logs     *repo.LogRepo
@@ -182,6 +183,7 @@ func BuildCore(deps CoreDeps) (*AppCore, error) {
 
 	assets := repo.NewAssetRepo(gdb)
 	sessions := repo.NewSessionRepo(gdb)
+	failures := repo.NewImportFailureRepo(gdb)
 	sources := repo.NewSourceRepo(gdb)
 	backups := repo.NewBackupRepo(gdb)
 	logs := repo.NewLogRepo(gdb)
@@ -229,6 +231,7 @@ func BuildCore(deps CoreDeps) (*AppCore, error) {
 		DB:          gdb,
 		Assets:      assets,
 		Sessions:    sessions,
+		Failures:    failures,
 		Extractor:   deps.Extractor,
 		Layout:      layout,
 		Logger:      logger,
@@ -263,6 +266,7 @@ func BuildCore(deps CoreDeps) (*AppCore, error) {
 		DB:         gdb,
 		Assets:     assets,
 		Sessions:   sessions,
+		Failures:   failures,
 		Sources:    sources,
 		Backups:    backups,
 		Logs:       logs,

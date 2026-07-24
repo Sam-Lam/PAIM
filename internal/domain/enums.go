@@ -107,6 +107,39 @@ const (
 	SourceTypeSMBShare       SourceType = "smb_share"
 )
 
+// ImportFailureStatus is the resolution state of a structured per-file import
+// failure record. A freshly recorded failure is open; the user may retry it (a
+// successful retry marks it retried) or dismiss it (dismissed) — PAIM never
+// hard-deletes the record, so the history of what went wrong is preserved.
+type ImportFailureStatus string
+
+// ImportFailureStatus values.
+const (
+	ImportFailureStatusOpen      ImportFailureStatus = "open"
+	ImportFailureStatusRetried   ImportFailureStatus = "retried"
+	ImportFailureStatusDismissed ImportFailureStatus = "dismissed"
+)
+
+// ImportFailureOp names the import-pipeline stage at which a per-file failure
+// occurred. The values are exactly the op tokens the importer's fail() path
+// already uses, so a recorded failure names the true stage that broke rather
+// than a lossy re-classification.
+type ImportFailureOp string
+
+// ImportFailureOp values — the pipeline stages that can fail per file.
+const (
+	ImportFailureOpStat            ImportFailureOp = "stat"             // source file vanished before import
+	ImportFailureOpClassify        ImportFailureOp = "classify"         // quick/full hash + duplicate detection
+	ImportFailureOpCopy            ImportFailureOp = "copy"             // copy to destination partial
+	ImportFailureOpVerify          ImportFailureOp = "verify"           // BLAKE3 verify of the destination copy
+	ImportFailureOpPublish         ImportFailureOp = "publish"          // atomic link into the final name
+	ImportFailureOpFsyncDir        ImportFailureOp = "fsync-dir"        // durability fsync of the destination dir
+	ImportFailureOpRecord          ImportFailureOp = "record"           // DB insert of the verified asset
+	ImportFailureOpBaselineHash    ImportFailureOp = "baseline-hash"    // adopt-mode full-hash baseline
+	ImportFailureOpReorganize      ImportFailureOp = "reorganize"       // adopt-mode same-volume move
+	ImportFailureOpRecordDuplicate ImportFailureOp = "record-duplicate" // DB insert of a flagged duplicate
+)
+
 // LogLevel string constants matching slog.Level.String() output, used for the
 // LogEntry.Level column and for filtering in the Logs page.
 const (

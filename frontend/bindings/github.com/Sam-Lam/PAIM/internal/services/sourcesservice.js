@@ -92,6 +92,29 @@ export function ClearSourcePreview(root) {
 }
 
 /**
+ * EjectVolume ejects the volume mounted at mountPoint via `diskutil eject`, with
+ * two server-side safety guards it NEVER delegates to the frontend:
+ * 
+ *  1. it refuses to eject the volume the open library lives on
+ *     (ErrEjectLibraryVolume); and
+ *  2. it refuses when any tracked long operation (import/analyze/reorganize/
+ *     safe-to-erase/clear/cleanup) is currently touching a path on that volume,
+ *     naming the reason.
+ * 
+ * The OS is the final backstop: `diskutil eject` itself fails (surfaced here as a
+ * readable message) if the volume has open files, so a case the path guards do
+ * not cover — e.g. a backup writing to a destination on this volume — still can
+ * never eject a busy disk. On success the volume unmounts and the existing
+ * volume:unmounted watcher event refreshes the UI. Logged under the source
+ * subsystem.
+ * @param {string} mountPoint
+ * @returns {$CancellablePromise<void>}
+ */
+export function EjectVolume(mountPoint) {
+    return $Call.ByID(1159049947, mountPoint);
+}
+
+/**
  * IdentifyVolume identifies the volume at mountPoint, persists the resulting
  * source (creating a new record or updating the matched one and its LastSeen),
  * emits source:identified, and returns the match with confidence and reasons.
@@ -122,6 +145,16 @@ export function ListVolumes() {
     return $Call.ByID(2030789603).then(/** @type {($result: any) => any} */(($result) => {
         return $$createType7($result);
     }));
+}
+
+/**
+ * SetActivity injects the shared activity tracker so EjectVolume can refuse
+ * ejecting a volume an in-flight operation is using. Called once from main.go.
+ * @param {$models.ejectActivity} a
+ * @returns {$CancellablePromise<void>}
+ */
+export function SetActivity(a) {
+    return $Call.ByID(2806359957, a);
 }
 
 /**

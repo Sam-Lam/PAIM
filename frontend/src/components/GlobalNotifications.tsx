@@ -4,9 +4,11 @@ import { useWailsEvent } from "../lib/hooks";
 import { useToast } from "../lib/toast";
 import {
   AppService,
+  SourcesService,
   WailsEvents,
   type BackupBackfillCompleted,
   type BackupProviderFailing,
+  type SourceCleared,
   type VolumeEvent,
 } from "../lib/api";
 
@@ -67,6 +69,32 @@ export function GlobalNotifications() {
         label: "Import…",
         onClick: () => void navigate({ to: "/import", search: { root: ev.mountPoint } }),
       });
+    })();
+  });
+
+  // Source clear completed: if the cleared source's removable volume is still
+  // mounted, gently offer to eject it — once per clear (no nagging loop).
+  useWailsEvent<SourceCleared>(WailsEvents.SourceCleared, (ev) => {
+    if (!ev || ev.cancelled || !ev.root) return;
+    void (async () => {
+      try {
+        const vols = (await SourcesService.ListVolumes()) ?? [];
+        const onVol = vols.find(
+          (v) => v != null && v.mountPoint && (ev.root === v.mountPoint || ev.root.startsWith(v.mountPoint + "/")),
+        );
+        if (!onVol || !(onVol.removable || onVol.ejectable)) return;
+        const name = onVol.volumeName?.trim() || "the source";
+        toast.info(`Source cleared — eject ${name}?`, "It is safe to unplug once ejected.", {
+          label: "Eject",
+          onClick: () => {
+            void SourcesService.EjectVolume(ev.root)
+              .then(() => toast.success("Ejected", "Safe to unplug."))
+              .catch((e) => toast.fromError(e, "Could not eject"));
+          },
+        });
+      } catch {
+        // Best-effort reminder — if volumes cannot be listed, simply do nothing.
+      }
     })();
   });
 

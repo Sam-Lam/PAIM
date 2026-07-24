@@ -61,6 +61,22 @@ func LibraryMigrations(root string) []Migration {
 				return nil
 			},
 		},
+		{
+			ID:          4,
+			Description: "add import_failures table (structured per-file import failures)",
+			Run: func(tx *gorm.DB) error {
+				// Additive and idempotent: AutoMigrate creates the import_failures table
+				// on existing catalogs (fresh ones already have it from migration 1,
+				// which migrates domain.AllModels()). Sessions that predate this table
+				// carry a Failures counter but no rows — the UI keeps the log-only view
+				// for them. Recreate the explicit indexes so an upgraded catalog matches
+				// a fresh one regardless of struct-tag drift.
+				if err := tx.AutoMigrate(&domain.ImportFailure{}); err != nil {
+					return wrap("add import_failures table", err)
+				}
+				return createImportFailureIndexes(tx)
+			},
+		},
 	}
 }
 

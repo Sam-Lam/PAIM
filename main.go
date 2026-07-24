@@ -266,6 +266,10 @@ func run() error {
 	// activity tracker the quit guard uses.
 	comp.browserSvc.SetActivity(tracker)
 
+	// EjectVolume refuses to eject a volume a live operation is touching, so it
+	// reads the same activity tracker (via ActivePaths).
+	comp.sourcesSvc.SetActivity(tracker)
+
 	// The coverage view's bulk "Queue N to <provider>" action emits
 	// backup:queue-changed so the Backup Queue and provider cards refresh.
 	comp.browserSvc.SetEmitter(emitter)

@@ -123,6 +123,9 @@ type SourcesService struct {
 	// root is the open library root, used to refuse clearing the archive itself
 	// and to detect the library's own volume when enriching mount events.
 	root string
+	// activity, when set, lets EjectVolume refuse ejecting a volume a live
+	// operation is touching. Injected once from main.go (SetActivity).
+	activity ejectActivity
 
 	mu             sync.Mutex
 	active         bool
@@ -567,6 +570,23 @@ func (s *SourcesService) activeOps() []OperationInfo {
 func (s *SourcesService) cancelActive() {
 	_ = s.CancelSafeToErase(context.Background())
 	_ = s.CancelClearSource(context.Background())
+}
+
+// activePaths reports the mount point being evaluated for safe-to-erase and the
+// root being cleared, so the eject guard refuses to eject a volume one of them
+// is touching (exactly the source-side operations most likely to run against a
+// removable card/drive).
+func (s *SourcesService) activePaths() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var paths []string
+	if s.active && s.run != nil && s.run.mountPoint != "" {
+		paths = append(paths, s.run.mountPoint)
+	}
+	if s.clearing && s.clearRun != nil && s.clearRun.root != "" {
+		paths = append(paths, s.clearRun.root)
+	}
+	return paths
 }
 
 // StartWatching runs the volume watcher until ctx is cancelled, emitting

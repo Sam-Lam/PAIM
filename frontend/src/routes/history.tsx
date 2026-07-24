@@ -4,6 +4,7 @@ import {
   Button,
   Card,
   DataTable,
+  FailedFilesPanel,
   PageHeader,
   Spinner,
   StatusBadge,
@@ -260,6 +261,10 @@ function SessionDetailPanel({ session, cache }: { session: SessionDTO; cache: Ma
           </div>
         </div>
       </div>
+
+      {s.failures > 0 ? (
+        <FailedFilesPanel sessionId={s.id} sessionFailures={s.failures} />
+      ) : null}
 
       <div>
         <h4 className="mb-2 text-[11px] font-semibold tracking-wide text-zinc-500 uppercase">

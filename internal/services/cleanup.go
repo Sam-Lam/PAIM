@@ -339,3 +339,14 @@ func (s *CleanupService) activeOps() []OperationInfo {
 // cancelActive cancels a running cleanup analysis via the existing
 // CancelCleanupAnalyze path. It is a no-op when nothing is running.
 func (s *CleanupService) cancelActive() { _ = s.CancelCleanupAnalyze(context.Background()) }
+
+// activePaths reports the folder a running cleanup analysis is reading, so the
+// eject guard refuses to eject the volume it lives on.
+func (s *CleanupService) activePaths() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if !s.active || s.run == nil || s.run.root == "" {
+		return nil
+	}
+	return []string{s.run.root}
+}

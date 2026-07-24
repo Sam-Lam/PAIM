@@ -5,6 +5,7 @@
 export {
     AssetRepo,
     BackupRepo,
+    ImportFailureRepo,
     LogRepo,
     SessionRepo,
     SettingsRepo,

@@ -143,6 +143,37 @@ func defaultSourceLabel(mode, sourceRoot string) string {
 	return ""
 }
 
+// ImportFailureDTO is the JSON-friendly projection of a structured per-file
+// import failure. Op names the pipeline stage that failed; Status is open,
+// retried, or dismissed. It backs the Import completion panel and Import History
+// "Failed files" panel, whose per-file Retry/Dismiss actions resolve it.
+type ImportFailureDTO struct {
+	ID            string     `json:"id"`
+	SessionID     string     `json:"sessionId"`
+	Path          string     `json:"path"`
+	Op            string     `json:"op"`
+	ErrorMessage  string     `json:"errorMessage"`
+	Status        string     `json:"status"`
+	ResolvedAt    *time.Time `json:"resolvedAt"`
+	DismissReason string     `json:"dismissReason"`
+	CreatedAt     time.Time  `json:"createdAt"`
+}
+
+// toImportFailureDTO maps a domain.ImportFailure to its DTO.
+func toImportFailureDTO(f domain.ImportFailure) ImportFailureDTO {
+	return ImportFailureDTO{
+		ID:            f.ID,
+		SessionID:     f.SessionID,
+		Path:          f.Path,
+		Op:            string(f.Op),
+		ErrorMessage:  f.ErrorMessage,
+		Status:        string(f.Status),
+		ResolvedAt:    f.ResolvedAt,
+		DismissReason: f.DismissReason,
+		CreatedAt:     f.CreatedAt,
+	}
+}
+
 // SourceDTO is the JSON-friendly projection of an ImportSource.
 type SourceDTO struct {
 	ID                string    `json:"id"`

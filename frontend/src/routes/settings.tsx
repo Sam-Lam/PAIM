@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import {
   ArrowPathIcon,
   ArrowsRightLeftIcon,
@@ -234,7 +234,7 @@ export function SettingsPage() {
     <div>
       <PageHeader
         title="Settings"
-        description="Configure your Master Library location and how PAIM imports and backs up. Worker, retry, and concurrency changes take effect on the next launch."
+        description="Import and Backup counts are saved with the Save changes button; other sections save as you edit them. Each card is tagged This library (stored in the catalog, travels with your photos) or This Mac (per-machine), with a note on when changes apply."
         actions={
           <Button variant="primary" icon={CheckCircleIcon} onClick={() => void save()} loading={saving}>
             Save changes
@@ -246,7 +246,12 @@ export function SettingsPage() {
         <Card
           title="Library"
           subtitle="The library root is your Master Library — the catalog lives inside it and travels with your photos."
+          actions={<ScopeTag scope="library" />}
         >
+          <ApplyNote>
+            Which library is open is remembered per Mac; everything inside the catalog travels with the photos. Switching
+            libraries takes effect after you quit and reopen PAIM.
+          </ApplyNote>
           <dl className="grid gap-3 sm:grid-cols-2">
             <div className="sm:col-span-2 flex items-start justify-between gap-3">
               <dt className="flex items-center gap-1.5 text-[12px] text-zinc-500">
@@ -322,7 +327,11 @@ export function SettingsPage() {
           <ReorganizeSection />
         </Card>
 
-        <Card title="Import">
+        <Card title="Import" actions={<ScopeTag scope="library" />}>
+          <ApplyNote>
+            Saved with the <span className="text-zinc-300">Save changes</span> button above and stored in this library's
+            catalog. New values apply to your next import (no restart needed).
+          </ApplyNote>
           <div className="grid gap-4 sm:grid-cols-2">
             <NumberField
               label="Import concurrency"
@@ -360,7 +369,12 @@ export function SettingsPage() {
 
         <SnapshotsCard />
 
-        <Card title="Backup">
+        <Card title="Backup" actions={<ScopeTag scope="library" />}>
+          <ApplyNote>
+            Worker and retry counts live in this library's catalog and are saved with{" "}
+            <span className="text-zinc-300">Save changes</span>. The pause toggle below is a per-Mac preference that
+            applies immediately.
+          </ApplyNote>
           <div className="grid gap-4 sm:grid-cols-2">
             <NumberField
               label="Backup workers"
@@ -391,15 +405,19 @@ export function SettingsPage() {
               className="mt-0.5 h-4 w-4 flex-none rounded border-zinc-600 bg-zinc-950 text-blue-500 focus:ring-blue-500 disabled:opacity-60"
             />
             <span>
-              <span className="text-[13px] text-zinc-200">Pause backups while imports run</span>
+              <span className="flex items-center gap-2">
+                <span className="text-[13px] text-zinc-200">Pause backups while imports run</span>
+                <ScopeTag scope="mac" />
+              </span>
               <span className="mt-0.5 block text-[11px] text-zinc-500">
-                Recommended for libraries on hard drives — backups resume automatically when the import finishes.
+                Per-Mac preference, applied immediately (no Save needed). Recommended for libraries on hard drives —
+                backups resume automatically when the import finishes.
               </span>
             </span>
           </label>
         </Card>
 
-        <Card title="About">
+        <Card title="About" actions={<ScopeTag scope="mac" />}>
           <dl className="grid gap-3 sm:grid-cols-2">
             <AboutRow label="Application" value="Photo Archive Integrity Manager (PAIM)" />
             <AboutRow label="Version" value={versionFull || APP_VERSION} />
@@ -871,7 +889,12 @@ function ThumbnailsCard() {
     <Card
       title="Thumbnails"
       subtitle="Thumbnails are a disposable cache — clearing or moving them never touches your photos."
+      actions={<ScopeTag scope="mac" />}
     >
+      <ApplyNote>
+        Per-Mac preferences saved as you change them (no header Save). Generation parallelism applies immediately; the
+        cache location applies after you reopen the library.
+      </ApplyNote>
       <div className="space-y-3">
         <RadioRow
           checked={cache?.location === "library"}
@@ -1072,7 +1095,12 @@ function SnapshotsCard() {
     <Card
       title="Catalog snapshots"
       subtitle="One-way, disaster-recovery copies of your catalog database. Insurance only — a snapshot is never opened as the live library."
+      actions={<ScopeTag scope="mac" />}
     >
+      <ApplyNote>
+        Per-Mac settings saved with <span className="text-zinc-300">Save snapshot settings</span>; the timer re-arms
+        immediately when you save.
+      </ApplyNote>
       <div className="space-y-3">
         <div>
           <span className="mb-1 block text-[11px] font-medium text-zinc-500">Destination folder</span>
@@ -1235,5 +1263,28 @@ function AboutRow({ label, value }: { label: string; value: string }) {
       <dt className="text-[12px] text-zinc-500">{label}</dt>
       <dd className="text-[12px] text-zinc-300">{value}</dd>
     </div>
+  );
+}
+
+// ScopeTag marks where a section's values are stored: on THIS Mac (per-machine
+// config.json / localStorage-equivalent service state) or in THIS library's
+// catalog (the Setting table, which travels with the photos). The classification
+// is derived from how each setting's consumer reads it, not assumed.
+function ScopeTag({ scope }: { scope: "mac" | "library" }) {
+  return scope === "mac" ? (
+    <StatusBadge status="this-mac" tone="info" label="This Mac" />
+  ) : (
+    <StatusBadge status="this-library" tone="neutral" label="This library" />
+  );
+}
+
+// ApplyNote is a one-line explanation of WHEN a section's changes take effect
+// (immediately, on the header Save, or after a restart/reopen).
+function ApplyNote({ children }: { children: ReactNode }) {
+  return (
+    <p className="mb-3 flex items-start gap-1.5 text-[11px] text-zinc-500">
+      <InformationCircleIcon className="mt-0.5 h-3.5 w-3.5 flex-none" />
+      <span>{children}</span>
+    </p>
   );
 }

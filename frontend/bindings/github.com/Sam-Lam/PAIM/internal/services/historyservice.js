@@ -25,6 +25,38 @@ export function Bind(core) {
 }
 
 /**
+ * DismissFailure resolves a failure by marking it dismissed (with an optional
+ * reason) and stamping ResolvedAt. It is a soft state change — the row is never
+ * hard-deleted — used for the "file vanished before import" cases that can never
+ * be retried. It refuses (ErrFailureAlreadyResolved) a record that is not open.
+ * @param {string} failureID
+ * @param {string} reason
+ * @returns {$CancellablePromise<$models.ImportFailureDTO>}
+ */
+export function DismissFailure(failureID, reason) {
+    return $Call.ByID(2153037436, failureID, reason).then(/** @type {($result: any) => any} */(($result) => {
+        return $$createType0($result);
+    }));
+}
+
+/**
+ * ListSessionFailures returns a page of the structured per-file failure records
+ * for a session (oldest first, so the list reads in import order). Total is the
+ * count of ALL failure records for the session (any status); a session whose
+ * Failures counter is > 0 but whose Total here is 0 is a legacy session imported
+ * before structured records existed, and the UI keeps the log-only view for it.
+ * @param {string} sessionID
+ * @param {number} page
+ * @param {number} pageSize
+ * @returns {$CancellablePromise<$models.PageResult<$models.ImportFailureDTO>>}
+ */
+export function ListSessionFailures(sessionID, page, pageSize) {
+    return $Call.ByID(1441266633, sessionID, page, pageSize).then(/** @type {($result: any) => any} */(($result) => {
+        return $$createType1($result);
+    }));
+}
+
+/**
  * ListSessions returns a page of import sessions, newest first. SessionRepo
  * exposes only a limit-based recent listing, so pagination is implemented by
  * fetching up to (offset+limit) recent rows and slicing the window; Total is the
@@ -35,7 +67,7 @@ export function Bind(core) {
  */
 export function ListSessions(page, pageSize) {
     return $Call.ByID(3210122019, page, pageSize).then(/** @type {($result: any) => any} */(($result) => {
-        return $$createType1($result);
+        return $$createType3($result);
     }));
 }
 
@@ -50,7 +82,7 @@ export function ListSessions(page, pageSize) {
  */
 export function SessionEvents(sessionID) {
     return $Call.ByID(1356593475, sessionID).then(/** @type {($result: any) => any} */(($result) => {
-        return $$createType2($result);
+        return $$createType4($result);
     }));
 }
 
@@ -65,6 +97,8 @@ export function SetGate(gate) {
 }
 
 // Private type creation functions
-const $$createType0 = $models.SessionDTO.createFrom;
+const $$createType0 = $models.ImportFailureDTO.createFrom;
 const $$createType1 = $models.PageResult.createFrom($$createType0);
-const $$createType2 = $models.SessionDetail.createFrom;
+const $$createType2 = $models.SessionDTO.createFrom;
+const $$createType3 = $models.PageResult.createFrom($$createType2);
+const $$createType4 = $models.SessionDetail.createFrom;

@@ -115,6 +115,29 @@ export function ResumeSession(sessionID) {
 }
 
 /**
+ * RetryFailedFile re-attempts one previously-failed file through the real import
+ * pipeline (hash → duplicate detection → copy → fsync → BLAKE3 verify → atomic
+ * rename → record for copy mode, or the in-place baseline for adopt mode) — every
+ * hard rule honored, verification never bypassed. It:
+ *   - refuses (ErrFailureAlreadyResolved) a record that is not open;
+ *   - refuses (ErrRetrySourceMissing) when the source file has vanished, steering
+ *     the UI to Dismiss instead;
+ *   - respects the one-active-operation guard (ErrImportInProgress while an
+ *     import/analyze/reorganize runs), holding the slot + sleep assertion for the
+ *     brief single-file run;
+ *   - on success marks the failure retried, stamps ResolvedAt, and decrements the
+ *     session Failures counter by one so the counters stay coherent;
+ *   - on a re-failure refreshes the record's op/error and leaves it open.
+ * @param {string} failureID
+ * @returns {$CancellablePromise<$models.RetryFailedFileResult>}
+ */
+export function RetryFailedFile(failureID) {
+    return $Call.ByID(1556548466, failureID).then(/** @type {($result: any) => any} */(($result) => {
+        return $$createType7($result);
+    }));
+}
+
+/**
  * ScanSource walks root, caches the scan, and returns provisional counts (no
  * hashing or duplicate detection yet).
  * @param {string} root
@@ -122,7 +145,7 @@ export function ResumeSession(sessionID) {
  */
 export function ScanSource(root) {
     return $Call.ByID(152237345, root).then(/** @type {($result: any) => any} */(($result) => {
-        return $$createType7($result);
+        return $$createType8($result);
     }));
 }
 
@@ -165,7 +188,7 @@ export function SetSleepGuard(g) {
  */
 export function StartAnalyze(opts) {
     return $Call.ByID(695965157, opts).then(/** @type {($result: any) => any} */(($result) => {
-        return $$createType8($result);
+        return $$createType9($result);
     }));
 }
 
@@ -212,5 +235,6 @@ const $$createType3 = $models.DryRunReportDTO.createFrom;
 const $$createType4 = $models.ReorganizePlanDTO.createFrom;
 const $$createType5 = $Create.Nullable($$createType4);
 const $$createType6 = $models.StartImportResult.createFrom;
-const $$createType7 = $models.ScanSummary.createFrom;
-const $$createType8 = $models.StartAnalyzeResult.createFrom;
+const $$createType7 = $models.RetryFailedFileResult.createFrom;
+const $$createType8 = $models.ScanSummary.createFrom;
+const $$createType9 = $models.StartAnalyzeResult.createFrom;
