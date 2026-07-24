@@ -1,6 +1,6 @@
 # PAIM Roadmap
 
-Current release: **v0.6.0** (see git tags for full release history; every release is
+Current release: **v0.6.1** (see git tags for full release history; every release is
 tagged and race-tested). This file records agreed-but-unbuilt work so any future
 session can pick up without prior conversation context. Keep it updated as items ship.
 

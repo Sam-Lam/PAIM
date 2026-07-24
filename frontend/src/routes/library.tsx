@@ -954,7 +954,7 @@ function CoverageView({
         </span>
       ),
       cell: ({ row }) => (
-        <CoverageChip entry={row.original.providers.find((e) => e.providerId === prov.providerId)} />
+        <CoverageChip entry={(row.original.providers ?? []).find((e) => e.providerId === prov.providerId)} />
       ),
     }));
     return [...base, ...provCols];
