@@ -111,7 +111,7 @@ func TestMigrateV3ToV4CreatesImportFailures(t *testing.T) {
 	if gdb.Migrator().HasTable(&domain.ImportFailure{}) {
 		t.Fatal("import_failures should not exist before migration 4")
 	}
-	setVersion(t, gdb, 3) // one behind latest (4)
+	setVersion(t, gdb, 3) // behind latest; migration 4 (and later) will run
 
 	backup, err := Migrate(gdb, dbPath, root, LibraryMigrations(root))
 	if err != nil {
@@ -124,8 +124,8 @@ func TestMigrateV3ToV4CreatesImportFailures(t *testing.T) {
 	if v, _, _ := readSchemaVersion(gdb); v != LatestSchemaVersion() {
 		t.Fatalf("schema version = %d, want %d", v, LatestSchemaVersion())
 	}
-	if LatestSchemaVersion() != 4 {
-		t.Fatalf("LatestSchemaVersion = %d, want 4", LatestSchemaVersion())
+	if LatestSchemaVersion() != 5 {
+		t.Fatalf("LatestSchemaVersion = %d, want 5", LatestSchemaVersion())
 	}
 	if !gdb.Migrator().HasTable(&domain.ImportFailure{}) {
 		t.Fatal("migration 4 did not create import_failures")
@@ -145,6 +145,69 @@ func TestMigrateV3ToV4CreatesImportFailures(t *testing.T) {
 	}
 	if n != 1 {
 		t.Fatalf("count = %d, want 1", n)
+	}
+}
+
+// TestMigrateV4ToV5AddsAlreadyImported drops the ImportSession.AlreadyImported
+// column to simulate a genuine v4 catalog, sets the version to 4, and asserts
+// migration 5 adds the column (additive), advances the version, backs up first,
+// and leaves the column usable with pre-existing rows defaulting to 0.
+func TestMigrateV4ToV5AddsAlreadyImported(t *testing.T) {
+	root := t.TempDir()
+	gdb, dbPath := openAt(t, root)
+
+	// Insert a legacy session BEFORE dropping the column, then drop it so the row
+	// predates migration 5 (its already_imported must read back as 0).
+	legacy := &domain.ImportSession{Duplicates: 3, FilesImported: 5}
+	if err := gdb.Create(legacy).Error; err != nil {
+		t.Fatalf("create legacy session: %v", err)
+	}
+	if gdb.Migrator().HasColumn(&domain.ImportSession{}, "AlreadyImported") {
+		if err := gdb.Migrator().DropColumn(&domain.ImportSession{}, "AlreadyImported"); err != nil {
+			t.Fatalf("drop already_imported: %v", err)
+		}
+	}
+	if gdb.Migrator().HasColumn(&domain.ImportSession{}, "AlreadyImported") {
+		t.Fatal("already_imported should not exist before migration 5")
+	}
+	setVersion(t, gdb, 4) // one behind latest (5)
+
+	backup, err := Migrate(gdb, dbPath, root, LibraryMigrations(root))
+	if err != nil {
+		t.Fatalf("Migrate: %v", err)
+	}
+	if backup == "" {
+		t.Fatal("expected a pre-migration backup when behind")
+	}
+	if v, _, _ := readSchemaVersion(gdb); v != LatestSchemaVersion() {
+		t.Fatalf("schema version = %d, want %d", v, LatestSchemaVersion())
+	}
+	if !gdb.Migrator().HasColumn(&domain.ImportSession{}, "AlreadyImported") {
+		t.Fatal("migration 5 did not add already_imported column")
+	}
+
+	// The legacy row keeps its historical counters and defaults AlreadyImported to 0.
+	var reloaded domain.ImportSession
+	if err := gdb.First(&reloaded, "id = ?", legacy.ID).Error; err != nil {
+		t.Fatalf("reload legacy session: %v", err)
+	}
+	if reloaded.AlreadyImported != 0 {
+		t.Fatalf("legacy AlreadyImported = %d, want 0", reloaded.AlreadyImported)
+	}
+	if reloaded.Duplicates != 3 {
+		t.Fatalf("legacy Duplicates = %d, want 3 (historical count preserved)", reloaded.Duplicates)
+	}
+
+	// The column is writable on new/updated rows.
+	if err := gdb.Model(&domain.ImportSession{}).Where("id = ?", legacy.ID).
+		Update("already_imported", 7).Error; err != nil {
+		t.Fatalf("update already_imported: %v", err)
+	}
+	if err := gdb.First(&reloaded, "id = ?", legacy.ID).Error; err != nil {
+		t.Fatalf("reload after update: %v", err)
+	}
+	if reloaded.AlreadyImported != 7 {
+		t.Fatalf("AlreadyImported after update = %d, want 7", reloaded.AlreadyImported)
 	}
 }
 

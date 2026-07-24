@@ -14,12 +14,13 @@ import (
 // per-file quick (and any computed full) hashes forward so a subsequent import
 // need not recompute them.
 //
-// Duplicates counts both files whose content already exists in the asset DB AND
-// intra-batch duplicates: content that appears two or more times within the very
-// same scan. The DB cannot see the batch itself, so the first occurrence of a
-// repeated content is predicted New (it imports) and every later occurrence is
-// predicted Duplicate — exactly what the import records — making the dry run an
-// exact predictor of the subsequent session's New/Duplicates counters.
+// In ADOPT mode, Duplicates counts flagged in-library duplicates — content that
+// already exists in the asset DB AND intra-batch repeats (the first occurrence of
+// a repeated content is predicted New and imports; later occurrences are flagged
+// duplicates). In COPY mode a content match is never a duplicate: nothing is
+// copied, so it is predicted AlreadyImported (both DB matches and intra-batch
+// repeats). Either way the dry run is an exact predictor of the subsequent
+// session's New/Duplicates/AlreadyImported counters.
 type DryRunReport struct {
 	Files            int
 	Photos           int // photo + raw_photo files
@@ -110,7 +111,7 @@ func (p *Pipeline) DryRun(ctx context.Context, scan *ScanResult, opts Options, p
 			report.Videos++
 		}
 
-		cls, err := p.classify(ctx, fi.Path, quick[fi.Path], "")
+		cls, err := p.classify(ctx, fi.Path, quick[fi.Path], "", opts.mode())
 		if err != nil {
 			// A read failure during dry run is non-fatal to the prediction; treat
 			// the file as new and note it.
@@ -220,13 +221,15 @@ func (p *Pipeline) predictIntraBatchDuplicates(ctx context.Context, scan *ScanRe
 				firstByFull[fh] = fi.Path
 				continue // first occurrence of this content: it imports, stays New
 			}
-			// A later occurrence of identical content: the import records it as a
-			// duplicate row (not copied/adopted anew).
-			report.Dispositions[fi.Path] = DispositionDuplicate
+			// A later occurrence of identical content within the batch. In adopt mode
+			// the import records it as a flagged in-library duplicate; in copy mode it
+			// is skipped as already-imported (the first occurrence became the archived
+			// asset, so the rest match it — no second copy, no placeholder row).
 			report.New--
-			report.Duplicates++
 			report.TotalImportBytes -= fi.Size
 			if opts.mode() == ModeAdopt {
+				report.Dispositions[fi.Path] = DispositionDuplicate
+				report.Duplicates++
 				report.PlannedAdoptions--
 				if opts.Reorganize {
 					dest := computeDestination(res, time.Unix(fi.ModTime, 0), opts.EventName, fi)
@@ -234,6 +237,9 @@ func (p *Pipeline) predictIntraBatchDuplicates(ctx context.Context, scan *ScanRe
 						report.PlannedMoves--
 					}
 				}
+			} else {
+				report.Dispositions[fi.Path] = DispositionAlreadyImported
+				report.AlreadyImported++
 			}
 		}
 	}

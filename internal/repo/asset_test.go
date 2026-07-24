@@ -170,6 +170,11 @@ func TestListDuplicatesAndList(t *testing.T) {
 
 	orig := mustCreateAsset(t, r, "o", 10, domain.MediaTypePhoto)
 	dup := mustCreateAsset(t, r, "o", 10, domain.MediaTypePhoto)
+	// A managed duplicate has its OWN physical archive copy (that is what makes it
+	// reclaimable); duplicate queries exclude source-only rows with an empty path.
+	if err := r.UpdateArchivePath(ctx, dup.ID, "2026/IMG_o (2).jpg"); err != nil {
+		t.Fatalf("set dup archive path: %v", err)
+	}
 	if err := r.MarkDuplicateOf(ctx, dup.ID, orig.ID); err != nil {
 		t.Fatalf("mark duplicate: %v", err)
 	}

@@ -67,20 +67,16 @@ func NewDuplicateService(db *gorm.DB, assets *repo.AssetRepo, sessions *repo.Ses
 	return &DuplicateService{db: db, assets: assets, sessions: sessions, settings: settings, emitter: emitter, log: logger.With(slog.String("subsystem", "duplicate"))}
 }
 
-// DuplicatePairDTO pairs a duplicate asset with the original it duplicates,
-// plus per-side presence flags so the UI can label a copy-mode duplicate ("on
-// source only — never copied") and disable reveal actions for files that are not
-// reachable right now (e.g. the source SD card was ejected).
+// DuplicatePairDTO pairs a duplicate asset with the original it duplicates, plus
+// per-side presence flags so the UI can disable reveal actions for files that are
+// not reachable right now (e.g. the archive volume is offline). Every duplicate
+// managed here has its OWN physical archive copy (that is what makes it a genuine,
+// reclaimable duplicate); source-only placeholder rows are excluded upstream.
 type DuplicatePairDTO struct {
 	Duplicate AssetDTO `json:"duplicate"`
 	Original  AssetDTO `json:"original"`
-	// DuplicateHasArchiveCopy reports whether the duplicate has its OWN archive
-	// copy. Copy-mode duplicates never do — they were flagged without re-copying,
-	// so the file lives only at the duplicate's OriginalFullPath (its source).
-	DuplicateHasArchiveCopy bool `json:"duplicateHasArchiveCopy"`
-	// DuplicateFileExists reports whether the duplicate's file exists on disk right
-	// now, checked at its archive copy when it has one (adopt mode) or otherwise at
-	// its original source path (copy mode). Computed with os.Stat at list time.
+	// DuplicateFileExists reports whether the duplicate's archived file exists on
+	// disk right now (os.Stat of its resolved archive path).
 	DuplicateFileExists bool `json:"duplicateFileExists"`
 	// OriginalFileExists reports whether the original's archived file exists right
 	// now (os.Stat of its resolved archive path).
@@ -141,6 +137,38 @@ func (s *DuplicateService) DuplicateStats(ctx context.Context) (DuplicateStatsDT
 	return DuplicateStatsDTO{TotalPairs: count, TotalWastedBytes: wasted}, nil
 }
 
+// CountSourceOnlyRecords returns how many legacy source-only placeholder duplicate
+// rows exist (flagged duplicates with an empty archive path). These came from
+// pre-v5 copy-mode re-imports of already-archived sources: nothing was copied, so
+// they are "already imported", not duplicates. A non-zero count drives the
+// Duplicate Manager's one-time cleanup banner.
+func (s *DuplicateService) CountSourceOnlyRecords(ctx context.Context) (int64, error) {
+	if err := s.guard(); err != nil {
+		return 0, err
+	}
+	return s.assets.CountSourceOnlyDuplicates(ctx)
+}
+
+// RemoveSourceOnlyRecords soft-deletes ALL source-only placeholder duplicate rows
+// (flagged duplicates with an empty archive path) in one transaction and returns
+// the count removed. It is record-only and reversible (soft delete): it NEVER
+// touches any file — there is no library copy, and the source file on the card
+// must never be touched. Archive-copy duplicates (the Duplicate Manager's real
+// workload) are untouched.
+func (s *DuplicateService) RemoveSourceOnlyRecords(ctx context.Context) (int64, error) {
+	if err := s.guard(); err != nil {
+		return 0, err
+	}
+	n, err := s.assets.SoftDeleteSourceOnlyDuplicates(ctx)
+	if err != nil {
+		return 0, err
+	}
+	if n > 0 {
+		s.log.Info("removed source-only duplicate records (already-imported re-imports)", "count", n)
+	}
+	return n, nil
+}
+
 // ListDuplicates returns a page of duplicate/original pairs (newest first,
 // unfiltered). Retained for callers that do not filter; the Total is the true
 // archive-wide count.
@@ -172,23 +200,17 @@ func (s *DuplicateService) ListDuplicatesFiltered(ctx context.Context, filter Du
 	return PageResult[DuplicatePairDTO]{Items: items, Total: total, Page: page, PageSize: pageSize}, nil
 }
 
-// toPairDTO maps a repo pair to its DTO with per-side presence flags.
+// toPairDTO maps a repo pair to its DTO with per-side presence flags. Both sides
+// have an archived file (source-only rows are excluded upstream), so existence is
+// always checked at the resolved archive path.
 func (s *DuplicateService) toPairDTO(p repo.DuplicatePair) DuplicatePairDTO {
 	dup := toAssetDTO(p.Duplicate, s.root)
 	orig := toAssetDTO(p.Original, s.root)
-	hasArchive := dup.CurrentArchivePath != ""
-	// The duplicate's live location: its archive copy (adopt mode) or, for a
-	// not-copied duplicate, its original source path (e.g. an SD card).
-	dupTarget := dup.OriginalFullPath
-	if hasArchive {
-		dupTarget = dup.CurrentArchivePath
-	}
 	return DuplicatePairDTO{
-		Duplicate:               dup,
-		Original:                orig,
-		DuplicateHasArchiveCopy: hasArchive,
-		DuplicateFileExists:     pathExists(dupTarget),
-		OriginalFileExists:      pathExists(orig.CurrentArchivePath),
+		Duplicate:           dup,
+		Original:            orig,
+		DuplicateFileExists: pathExists(dup.CurrentArchivePath),
+		OriginalFileExists:  pathExists(orig.CurrentArchivePath),
 	}
 }
 
@@ -222,7 +244,7 @@ func (s *DuplicateService) groupLabel(ctx context.Context, groupBy, key string) 
 	switch groupBy {
 	case "folder":
 		if key == "" {
-			return "Library root / not copied"
+			return "Library root"
 		}
 		return key
 	case "session":

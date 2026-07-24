@@ -252,6 +252,8 @@ function SessionDetailPanel({ session, cache }: { session: SessionDTO; cache: Ma
         <DetailField label="Mode" value={isAdopt(s) ? "Adopt in place" : "Copy"} />
         <DetailField label="Scanned" value={formatNumber(s.filesScanned)} />
         <DetailField label="Imported" value={formatNumber(s.filesImported)} />
+        <DetailField label="Already imported" value={formatNumber(s.alreadyImported)} />
+        <DetailField label="Duplicates" value={formatNumber(s.duplicates)} />
         <DetailField label="Skipped" value={formatNumber(s.skipped)} />
         <DetailField label="Failures" value={formatNumber(s.failures)} />
         <div className="col-span-2 sm:col-span-4">

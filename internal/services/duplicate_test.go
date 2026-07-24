@@ -145,7 +145,9 @@ func TestListDuplicatesTotalIsTrueCount(t *testing.T) {
 
 	orig := seedAsset(t, assets, "orig.jpg", "/x/orig.jpg", nil)
 	for i := 0; i < 3; i++ {
-		seedAsset(t, assets, "dup.jpg", "", &orig.ID)
+		// Archive-copy duplicates (the Duplicate Manager's real workload) each have
+		// their own non-empty archive path.
+		seedAsset(t, assets, "dup.jpg", filepath.Join("/x", "dup", string(rune('a'+i))+".jpg"), &orig.ID)
 	}
 
 	// Page size 1 returns one item but the total must reflect all three duplicates.
@@ -179,26 +181,14 @@ func TestListDuplicatesPopulatesPresenceFlags(t *testing.T) {
 	}
 	orig := seedAsset(t, assets, "orig.jpg", filepath.ToSlash(origRel), nil)
 
-	// Copy-mode duplicate: no archive copy; file lives only at its source path,
-	// which here exists (source still attached).
-	srcAbs := filepath.Join(t.TempDir(), "card", "orig.jpg")
-	if err := os.MkdirAll(filepath.Dir(srcAbs), 0o755); err != nil {
-		t.Fatalf("mkdir src: %v", err)
+	// Archive-copy duplicate (adopt-mode style): it has its OWN archived file that
+	// exists on disk. This is the only kind the Duplicate Manager now handles.
+	dupRel := filepath.Join("2026", "orig (2).jpg")
+	dupAbs := filepath.Join(root, dupRel)
+	if err := os.WriteFile(dupAbs, []byte("bytes"), 0o644); err != nil {
+		t.Fatalf("write dup: %v", err)
 	}
-	if err := os.WriteFile(srcAbs, []byte("bytes"), 0o644); err != nil {
-		t.Fatalf("write src: %v", err)
-	}
-	dup := &domain.Asset{
-		OriginalFilename:   "orig.jpg",
-		QuickHash:          "qh-dup",
-		CurrentArchivePath: "", // never copied
-		OriginalFullPath:   srcAbs,
-		VerificationStatus: domain.VerificationStatusVerified,
-		DuplicateOfAssetID: &orig.ID,
-	}
-	if err := assets.Create(ctx, dup); err != nil {
-		t.Fatalf("create dup: %v", err)
-	}
+	dup := seedAsset(t, assets, "orig.jpg", filepath.ToSlash(dupRel), &orig.ID)
 
 	res, err := svc.ListDuplicates(ctx, 1, 20)
 	if err != nil {
@@ -208,30 +198,104 @@ func TestListDuplicatesPopulatesPresenceFlags(t *testing.T) {
 		t.Fatalf("items = %d, want 1", len(res.Items))
 	}
 	it := res.Items[0]
-	if it.DuplicateHasArchiveCopy {
-		t.Error("copy-mode duplicate must report DuplicateHasArchiveCopy=false")
-	}
 	if !it.DuplicateFileExists {
-		t.Error("duplicate source file exists; want DuplicateFileExists=true")
+		t.Error("duplicate archive file exists; want DuplicateFileExists=true")
 	}
 	if !it.OriginalFileExists {
 		t.Error("original archive file exists; want OriginalFileExists=true")
 	}
 
-	// Now remove the source file: the duplicate becomes unreachable.
-	if err := os.Remove(srcAbs); err != nil {
-		t.Fatalf("remove src: %v", err)
+	// Now remove the duplicate's archive file: it becomes unreachable.
+	if err := os.Remove(dupAbs); err != nil {
+		t.Fatalf("remove dup file: %v", err)
 	}
 	res, err = svc.ListDuplicates(ctx, 1, 20)
 	if err != nil {
 		t.Fatalf("list 2: %v", err)
 	}
 	if res.Items[0].DuplicateFileExists {
-		t.Error("source removed; want DuplicateFileExists=false")
+		t.Error("dup archive removed; want DuplicateFileExists=false")
 	}
 	if !res.Items[0].OriginalFileExists {
 		t.Error("original still present; want OriginalFileExists=true")
 	}
+	_ = dup
 }
+
+// TestSourceOnlyRecordsExcludedAndRemovable proves that legacy source-only
+// placeholder duplicates (empty archive path) are excluded from every duplicate
+// query and are removed — record-only, without touching files — by
+// RemoveSourceOnlyRecords, while archive-copy duplicates are untouched.
+func TestSourceOnlyRecordsExcludedAndRemovable(t *testing.T) {
+	svc, gdb, assets := newDuplicateHarness(t)
+	ctx := context.Background()
+
+	orig := seedAsset(t, assets, "orig.jpg", "/x/orig.jpg", nil)
+	// A genuine archive-copy duplicate (kept).
+	archiveDup := seedAsset(t, assets, "dup.jpg", "/x/2026/dup.jpg", &orig.ID)
+	// Two legacy source-only placeholders (empty archive path) whose file lives
+	// only on a card at OriginalFullPath.
+	for i := 0; i < 2; i++ {
+		so := &domain.Asset{
+			OriginalFilename:   "card.jpg",
+			QuickHash:          "qh-so",
+			CurrentArchivePath: "",
+			OriginalFullPath:   "/Volumes/CARD/card.jpg",
+			VerificationStatus: domain.VerificationStatusVerified,
+			DuplicateOfAssetID: &orig.ID,
+		}
+		if err := assets.Create(ctx, so); err != nil {
+			t.Fatalf("create source-only %d: %v", i, err)
+		}
+	}
+
+	// Duplicate queries see only the archive-copy duplicate.
+	stats, err := svc.DuplicateStats(ctx)
+	if err != nil {
+		t.Fatalf("stats: %v", err)
+	}
+	if stats.TotalPairs != 1 {
+		t.Fatalf("TotalPairs = %d, want 1 (source-only excluded)", stats.TotalPairs)
+	}
+
+	// The cleanup counter reports exactly the source-only rows.
+	n, err := svc.CountSourceOnlyRecords(ctx)
+	if err != nil {
+		t.Fatalf("count source-only: %v", err)
+	}
+	if n != 2 {
+		t.Fatalf("CountSourceOnlyRecords = %d, want 2", n)
+	}
+
+	removed, err := svc.RemoveSourceOnlyRecords(ctx)
+	if err != nil {
+		t.Fatalf("remove source-only: %v", err)
+	}
+	if removed != 2 {
+		t.Fatalf("RemoveSourceOnlyRecords = %d, want 2", removed)
+	}
+
+	// Idempotent: nothing left to remove.
+	if n2, _ := svc.CountSourceOnlyRecords(ctx); n2 != 0 {
+		t.Fatalf("count after removal = %d, want 0", n2)
+	}
+
+	// The archive-copy duplicate is untouched (still live, still listed).
+	var live int64
+	gdb.Model(&domain.Asset{}).Where("id = ?", archiveDup.ID).Count(&live)
+	if live != 1 {
+		t.Fatalf("archive-copy duplicate must remain live, count = %d", live)
+	}
+	// The source-only rows are soft-deleted (recoverable via Unscoped), not gone.
+	var softDeleted int64
+	gdb.Unscoped().Model(&domain.Asset{}).Where(sourceOnlyDupWhereTest).Count(&softDeleted)
+	if softDeleted != 2 {
+		t.Fatalf("source-only rows should remain (soft-deleted), count = %d", softDeleted)
+	}
+}
+
+// sourceOnlyDupWhereTest mirrors repo.sourceOnlyDupWhere for the assertion above
+// (the repo constant is unexported).
+const sourceOnlyDupWhereTest = "duplicate_of_asset_id IS NOT NULL AND duplicate_of_asset_id <> '' AND current_archive_path = ''"
 
 func strPtr(s string) *string { return &s }

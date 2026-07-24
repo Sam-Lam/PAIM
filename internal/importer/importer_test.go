@@ -236,14 +236,19 @@ func TestDuplicateHandlingSecondRunNoCopies(t *testing.T) {
 	if session.FilesImported != 0 {
 		t.Fatalf("second run FilesImported = %d, want 0", session.FilesImported)
 	}
-	if session.Skipped != 2 {
-		t.Fatalf("second run Skipped = %d, want 2", session.Skipped)
+	if session.AlreadyImported != 2 {
+		t.Fatalf("second run AlreadyImported = %d, want 2", session.AlreadyImported)
+	}
+	if session.Skipped != 0 {
+		t.Fatalf("second run Skipped = %d, want 0 (already-imported has its own counter)", session.Skipped)
 	}
 }
 
-func TestInternalDuplicateRecordedNotCopied(t *testing.T) {
+func TestInternalDuplicateAlreadyImportedNotRecorded(t *testing.T) {
 	h := newHarness(t)
-	// Two files with identical content but different names.
+	// Two files with identical content but different names. The first imports; the
+	// second matches the just-imported asset. In copy mode nothing is copied for it
+	// and NO placeholder duplicate row is created — it counts as already-imported.
 	h.writeFile("first.jpg", "identical-bytes", testDate)
 	h.writeFile("second.jpg", "identical-bytes", testDate)
 
@@ -254,19 +259,65 @@ func TestInternalDuplicateRecordedNotCopied(t *testing.T) {
 	if session.FilesImported != 1 {
 		t.Fatalf("FilesImported = %d, want 1", session.FilesImported)
 	}
-	if session.Duplicates != 1 {
-		t.Fatalf("Duplicates = %d, want 1", session.Duplicates)
+	if session.AlreadyImported != 1 {
+		t.Fatalf("AlreadyImported = %d, want 1", session.AlreadyImported)
+	}
+	if session.Duplicates != 0 {
+		t.Fatalf("Duplicates = %d, want 0 (copy mode records no duplicates)", session.Duplicates)
 	}
 
-	var dups []domain.Asset
-	if err := h.db.Where("duplicate_of_asset_id IS NOT NULL AND duplicate_of_asset_id <> ''").Find(&dups).Error; err != nil {
-		t.Fatalf("load dups: %v", err)
+	// Exactly one asset row exists, and no duplicate/placeholder rows.
+	if got := h.countAssets(); got != 1 {
+		t.Fatalf("assets = %d, want 1 (no placeholder row for the already-imported file)", got)
 	}
-	if len(dups) != 1 {
-		t.Fatalf("duplicate rows = %d, want 1", len(dups))
+	var dupCount int64
+	h.db.Model(&domain.Asset{}).Where("duplicate_of_asset_id IS NOT NULL AND duplicate_of_asset_id <> ''").Count(&dupCount)
+	if dupCount != 0 {
+		t.Fatalf("duplicate rows = %d, want 0", dupCount)
 	}
-	if dups[0].CurrentArchivePath != "" {
-		t.Fatalf("duplicate should not be copied, got path %q", dups[0].CurrentArchivePath)
+}
+
+// TestCopyModeDuplicateFromDifferentPathIsAlreadyImported imports a file from one
+// "card", then re-imports identical content from a DIFFERENT path (a second card).
+// The content already exists in the library, so copy mode records NO new row and
+// NO duplicate — it counts as already-imported. This is the core motivating case
+// (re-importing an old SD card whose photos are already archived).
+func TestCopyModeDuplicateFromDifferentPathIsAlreadyImported(t *testing.T) {
+	h := newHarness(t)
+	h.writeFile("cardA/IMG_1.jpg", "same-photo-bytes", testDate)
+	h.writeFile("cardB/IMG_1.jpg", "same-photo-bytes", testDate)
+
+	ctx := context.Background()
+	optsA := Options{Mode: ModeCopy, SourceRoot: filepath.Join(h.srcRoot, "cardA"), DestinationRoot: h.destRoot, EventName: "Trip"}
+	if _, err := h.pipe.Run(ctx, optsA, nil); err != nil {
+		t.Fatalf("import A: %v", err)
+	}
+	if got := h.countAssets(); got != 1 {
+		t.Fatalf("after import A assets = %d, want 1", got)
+	}
+
+	optsB := Options{Mode: ModeCopy, SourceRoot: filepath.Join(h.srcRoot, "cardB"), DestinationRoot: h.destRoot, EventName: "Trip"}
+	session, err := h.pipe.Run(ctx, optsB, nil)
+	if err != nil {
+		t.Fatalf("import B: %v", err)
+	}
+	if session.FilesImported != 0 {
+		t.Fatalf("import B FilesImported = %d, want 0", session.FilesImported)
+	}
+	if session.AlreadyImported != 1 {
+		t.Fatalf("import B AlreadyImported = %d, want 1", session.AlreadyImported)
+	}
+	if session.Duplicates != 0 {
+		t.Fatalf("import B Duplicates = %d, want 0 (no placeholder duplicate row)", session.Duplicates)
+	}
+	// No new asset row; no duplicate/placeholder rows at all.
+	if got := h.countAssets(); got != 1 {
+		t.Fatalf("after import B assets = %d, want 1", got)
+	}
+	var dupCount int64
+	h.db.Model(&domain.Asset{}).Where("duplicate_of_asset_id IS NOT NULL AND duplicate_of_asset_id <> ''").Count(&dupCount)
+	if dupCount != 0 {
+		t.Fatalf("duplicate rows = %d, want 0", dupCount)
 	}
 }
 
@@ -329,10 +380,11 @@ func TestDryRunPredictsIntraBatchDuplicate(t *testing.T) {
 	if report.Files != 3 {
 		t.Fatalf("Files = %d, want 3", report.Files)
 	}
-	// First occurrence imports (New); the later copy is predicted as a Duplicate.
-	if report.New != 2 || report.Duplicates != 1 {
-		t.Fatalf("dry run New=%d Duplicates=%d, want 2/1 (intra-batch duplicate predicted)",
-			report.New, report.Duplicates)
+	// First occurrence imports (New); in copy mode the later copy is predicted as
+	// already-imported (nothing copied, no duplicate row), not a Duplicate.
+	if report.New != 2 || report.AlreadyImported != 1 || report.Duplicates != 0 {
+		t.Fatalf("dry run New=%d AlreadyImported=%d Duplicates=%d, want 2/1/0 (intra-batch already-imported predicted)",
+			report.New, report.AlreadyImported, report.Duplicates)
 	}
 	// Nothing was written by the dry run.
 	if got := h.countAssets(); got != 0 {
@@ -346,9 +398,9 @@ func TestDryRunPredictsIntraBatchDuplicate(t *testing.T) {
 	if err != nil {
 		t.Fatalf("run: %v", err)
 	}
-	if session.FilesImported != report.New || session.Duplicates != report.Duplicates {
-		t.Fatalf("import imported=%d dup=%d != dry run New=%d Duplicates=%d (prediction must be exact)",
-			session.FilesImported, session.Duplicates, report.New, report.Duplicates)
+	if session.FilesImported != report.New || session.AlreadyImported != report.AlreadyImported || session.Duplicates != report.Duplicates {
+		t.Fatalf("import imported=%d already=%d dup=%d != dry run New=%d AlreadyImported=%d Duplicates=%d (prediction must be exact)",
+			session.FilesImported, session.AlreadyImported, session.Duplicates, report.New, report.AlreadyImported, report.Duplicates)
 	}
 }
 
@@ -535,8 +587,8 @@ func TestAdoptReorganizeMovesAndSecondRunSkips(t *testing.T) {
 	if session2.FilesImported != 0 {
 		t.Fatalf("second run FilesImported = %d, want 0", session2.FilesImported)
 	}
-	if session2.Skipped != 1 {
-		t.Fatalf("second run Skipped = %d, want 1", session2.Skipped)
+	if session2.AlreadyImported != 1 {
+		t.Fatalf("second run AlreadyImported = %d, want 1", session2.AlreadyImported)
 	}
 	if got := h.countAssets(); got != 1 {
 		t.Fatalf("assets after second run = %d, want 1", got)

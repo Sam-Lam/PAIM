@@ -49,6 +49,18 @@ export function CancelBulkResolve() {
 }
 
 /**
+ * CountSourceOnlyRecords returns how many legacy source-only placeholder duplicate
+ * rows exist (flagged duplicates with an empty archive path). These came from
+ * pre-v5 copy-mode re-imports of already-archived sources: nothing was copied, so
+ * they are "already imported", not duplicates. A non-zero count drives the
+ * Duplicate Manager's one-time cleanup banner.
+ * @returns {$CancellablePromise<number>}
+ */
+export function CountSourceOnlyRecords() {
+    return $Call.ByID(479478285);
+}
+
+/**
  * DuplicateStats returns the archive-wide duplicate totals (pair count + wasted
  * bytes) for the header, computed in SQL across ALL flagged duplicates.
  * @returns {$CancellablePromise<$models.DuplicateStatsDTO>}
@@ -112,6 +124,19 @@ export function ListDuplicatesFiltered(filter, page, pageSize) {
     return $Call.ByID(20873026, filter, page, pageSize).then(/** @type {($result: any) => any} */(($result) => {
         return $$createType6($result);
     }));
+}
+
+/**
+ * RemoveSourceOnlyRecords soft-deletes ALL source-only placeholder duplicate rows
+ * (flagged duplicates with an empty archive path) in one transaction and returns
+ * the count removed. It is record-only and reversible (soft delete): it NEVER
+ * touches any file — there is no library copy, and the source file on the card
+ * must never be touched. Archive-copy duplicates (the Duplicate Manager's real
+ * workload) are untouched.
+ * @returns {$CancellablePromise<number>}
+ */
+export function RemoveSourceOnlyRecords() {
+    return $Call.ByID(3873513570);
 }
 
 /**

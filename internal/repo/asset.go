@@ -563,6 +563,54 @@ func (r *AssetRepo) SoftDeleteWithPath(ctx context.Context, id, archivePath stri
 	})
 }
 
+// sourceOnlyDupWhere identifies a legacy source-only placeholder row: a flagged
+// duplicate (references an original) that has NO physical archive copy. These were
+// created by pre-v5 copy-mode re-imports of already-archived sources; nothing was
+// ever copied, so the row points only at its source path. They are no longer
+// treated as duplicates (see dupWhere) and can be cleaned up.
+const sourceOnlyDupWhere = "duplicate_of_asset_id IS NOT NULL AND duplicate_of_asset_id <> '' AND current_archive_path = ''"
+
+// CountSourceOnlyDuplicates returns the number of non-deleted source-only
+// placeholder duplicate rows (flagged duplicates with an empty archive path).
+func (r *AssetRepo) CountSourceOnlyDuplicates(ctx context.Context) (int64, error) {
+	var n int64
+	if err := r.db.WithContext(ctx).Model(&domain.Asset{}).
+		Where(sourceOnlyDupWhere).Count(&n).Error; err != nil {
+		return 0, fmt.Errorf("repo: count source-only duplicates: %w", err)
+	}
+	return n, nil
+}
+
+// SoftDeleteSourceOnlyDuplicates soft-deletes ALL non-deleted source-only
+// placeholder duplicate rows in one transaction (a single bulk UPDATE plus GORM's
+// soft-delete stamp — no per-file I/O). It NEVER touches any file: these rows have
+// no archived copy, and their source file on the card must never be touched. Rows
+// remain recoverable with Unscoped. It returns the number of rows soft-deleted.
+func (r *AssetRepo) SoftDeleteSourceOnlyDuplicates(ctx context.Context) (int64, error) {
+	var affected int64
+	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		res := tx.Model(&domain.Asset{}).Where(sourceOnlyDupWhere).Update("deleted", true)
+		if res.Error != nil {
+			return fmt.Errorf("repo: mark source-only duplicates deleted: %w", res.Error)
+		}
+		affected = res.RowsAffected
+		if affected == 0 {
+			return nil
+		}
+		// Stamp DeletedAt (GORM soft-delete) over the same set. After the flag update
+		// above the rows still match sourceOnlyDupWhere (current_archive_path is
+		// untouched), so this deletes exactly the just-flagged rows.
+		if err := tx.Where(sourceOnlyDupWhere).Delete(&domain.Asset{}).Error; err != nil {
+			return fmt.Errorf("repo: soft delete source-only duplicates: %w", err)
+		}
+		return nil
+	})
+	if err != nil {
+		return 0, err
+	}
+	return affected, nil
+}
+
 // MediaTypeCount pairs a media type with the number of non-deleted assets of
 // that type.
 type MediaTypeCount struct {
@@ -606,18 +654,24 @@ type DuplicatePair struct {
 	Original  domain.Asset `json:"original"`
 }
 
-// dupWhere is the predicate identifying a flagged duplicate asset (references an
-// original via DuplicateOfAssetID). Soft-deleted rows are excluded by GORM's
-// default scope on domain.Asset.
-const dupWhere = "duplicate_of_asset_id IS NOT NULL AND duplicate_of_asset_id <> ''"
+// dupWhere is the predicate identifying an IN-LIBRARY flagged duplicate asset: it
+// references an original via DuplicateOfAssetID AND has its own physical archive
+// copy (CurrentArchivePath non-empty). The archive-copy requirement is what makes
+// a duplicate genuinely reclaimable — deleting its file frees real bytes. It
+// deliberately excludes any legacy source-only placeholder rows (empty archive
+// path) left by pre-v5 copy-mode re-imports; those are "already imported", not
+// duplicates, and are cleaned up via RemoveSourceOnlyDuplicates. Soft-deleted
+// rows are excluded by GORM's default scope on domain.Asset.
+const dupWhere = "duplicate_of_asset_id IS NOT NULL AND duplicate_of_asset_id <> '' AND current_archive_path <> ''"
 
 // dupParentDirExpr is a SQLite expression yielding the parent directory of
 // current_archive_path (library-root-relative, forward slashes): everything
 // before the last '/'. It uses the standard rtrim idiom — rtrim(path, <all
 // non-slash characters of path>) strips the trailing filename up to (and
 // including) the last slash, then rtrim(..., '/') drops that slash. A root-level
-// file with no slash (or a copy-mode duplicate with an empty archive path)
-// yields the empty string, which the service labels distinctly.
+// archive file with no slash yields the empty string (the library root), which
+// the service labels distinctly. (Source-only rows with an empty archive path are
+// excluded from duplicate queries entirely — see dupWhere.)
 const dupParentDirExpr = "rtrim(rtrim(current_archive_path, replace(current_archive_path, '/', '')), '/')"
 
 // DuplicateFilter constrains a duplicate listing/aggregation. The zero value

@@ -45,11 +45,12 @@ func (r *SessionRepo) GetByID(ctx context.Context, id string) (*domain.ImportSes
 // SessionCounters is a set of atomic increments to apply to a session's rolling
 // counters. Zero fields are not touched.
 type SessionCounters struct {
-	Scanned    int
-	Imported   int
-	Duplicates int
-	Failures   int
-	Skipped    int
+	Scanned         int
+	Imported        int
+	Duplicates      int
+	Failures        int
+	Skipped         int
+	AlreadyImported int
 }
 
 // AddCounters atomically adds the given deltas to a session's counters using SQL
@@ -70,6 +71,9 @@ func (r *SessionRepo) AddCounters(ctx context.Context, id string, c SessionCount
 	}
 	if c.Skipped != 0 {
 		cols["skipped"] = gorm.Expr("skipped + ?", c.Skipped)
+	}
+	if c.AlreadyImported != 0 {
+		cols["already_imported"] = gorm.Expr("already_imported + ?", c.AlreadyImported)
 	}
 	if len(cols) == 0 {
 		return nil
@@ -107,6 +111,11 @@ func (r *SessionRepo) IncFailures(ctx context.Context, id string, n int) error {
 // IncSkipped atomically increments Skipped by n.
 func (r *SessionRepo) IncSkipped(ctx context.Context, id string, n int) error {
 	return r.AddCounters(ctx, id, SessionCounters{Skipped: n})
+}
+
+// IncAlreadyImported atomically increments AlreadyImported by n.
+func (r *SessionRepo) IncAlreadyImported(ctx context.Context, id string, n int) error {
+	return r.AddCounters(ctx, id, SessionCounters{AlreadyImported: n})
 }
 
 // SetStatus updates the session status.

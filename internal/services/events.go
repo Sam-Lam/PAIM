@@ -81,13 +81,14 @@ type ImportProgress struct {
 // ImportCompleted is the payload for import:completed, emitted once when a
 // background import goroutine finishes (successfully, cancelled, or interrupted).
 type ImportCompleted struct {
-	SessionID     string `json:"sessionId"`
-	Status        string `json:"status"`
-	FilesScanned  int    `json:"filesScanned"`
-	FilesImported int    `json:"filesImported"`
-	Duplicates    int    `json:"duplicates"`
-	Failures      int    `json:"failures"`
-	Skipped       int    `json:"skipped"`
+	SessionID       string `json:"sessionId"`
+	Status          string `json:"status"`
+	FilesScanned    int    `json:"filesScanned"`
+	FilesImported   int    `json:"filesImported"`
+	Duplicates      int    `json:"duplicates"`
+	Failures        int    `json:"failures"`
+	Skipped         int    `json:"skipped"`
+	AlreadyImported int    `json:"alreadyImported"`
 }
 
 // AnalyzeCompleted is the payload for analyze:completed, emitted once when a

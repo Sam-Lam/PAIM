@@ -190,20 +190,19 @@ func (p *Pipeline) processFile(ctx context.Context, sessionID string, fi FileInf
 		return p.fail(ctx, sessionID, fi.Path, "stat", err)
 	}
 
-	cls, err := p.classify(ctx, fi.Path, quickHash, fullHash)
+	cls, err := p.classify(ctx, fi.Path, quickHash, fullHash, opts.mode())
 	if err != nil {
 		return p.fail(ctx, sessionID, fi.Path, "classify", err)
 	}
 
 	switch cls.Disposition {
 	case DispositionAlreadyImported:
-		if err := p.sessions.IncSkipped(ctx, sessionID, 1); err != nil {
-			p.log.Warn("processFile: inc skipped", "sessionId", sessionID, "error", err.Error())
-		}
-		p.log.Debug("skip already-imported file", "sessionId", sessionID, "path", fi.Path, "assetId", cls.MatchedAssetID)
-		return fileOutcome{}
+		return p.recordAlreadyImported(ctx, sessionID, fi, cls)
 	case DispositionDuplicate:
-		return p.recordDuplicate(ctx, sessionID, fi, opts, res, cls, meta, state, bytesDone)
+		// Only adopt mode produces a duplicate now: a second physical file inside
+		// the library, flagged and registered in place (the Duplicate Manager's
+		// real workload). Copy-mode content matches are DispositionAlreadyImported.
+		return p.adoptFile(ctx, sessionID, fi, opts, res, cls, meta, state, true, bytesDone)
 	default:
 		if opts.mode() == ModeAdopt {
 			return p.adoptFile(ctx, sessionID, fi, opts, res, cls, meta, state, false, bytesDone)
@@ -396,22 +395,18 @@ func (p *Pipeline) reorganizeInPlace(ctx context.Context, sessionID, src, destPa
 	return true, finalPath, nil
 }
 
-// recordDuplicate records a content duplicate. In copy mode the bytes are NOT
-// copied: a placeholder Asset with DuplicateOfAssetID and an empty archive path
-// is inserted. In adopt mode the in-place file is registered and flagged.
-func (p *Pipeline) recordDuplicate(ctx context.Context, sessionID string, fi FileInfo, opts Options, res *archive.DestinationResolver, cls classification, meta *metadata.AssetMetadata, state *sessionState, bytesDone *int64) fileOutcome {
-	if opts.mode() == ModeAdopt {
-		return p.adoptFile(ctx, sessionID, fi, opts, res, cls, meta, state, true, bytesDone)
+// recordAlreadyImported handles a scanned file whose content is already present
+// in the library as a verified archived asset: nothing is copied and NO row is
+// created (in particular, no placeholder duplicate row). It increments the
+// session's AlreadyImported counter and logs the matched asset. This covers a
+// same-source re-import (both modes) and, in copy mode, any content already
+// archived elsewhere. The source file is never touched.
+func (p *Pipeline) recordAlreadyImported(ctx context.Context, sessionID string, fi FileInfo, cls classification) fileOutcome {
+	if err := p.sessions.IncAlreadyImported(ctx, sessionID, 1); err != nil {
+		p.log.Warn("processFile: inc already-imported", "sessionId", sessionID, "error", err.Error())
 	}
-	captureDate, _ := effectiveCaptureDate(meta, fi)
-	dupOf := cls.MatchedAssetID
-	asset := p.buildAsset(sessionID, fi, cls, meta, "", captureDate, &dupOf)
-	asset.BackupStatus = domain.BackupStatusNone
-	if err := p.recordAsset(ctx, asset, repo.SessionCounters{Duplicates: 1}, false, nil); err != nil {
-		return p.fail(ctx, sessionID, fi.Path, "record-duplicate", err)
-	}
-	p.log.Info("recorded duplicate (not copied)", "sessionId", sessionID, "path", fi.Path, "duplicateOf", dupOf, "assetId", asset.ID)
-	return fileOutcome{assetID: asset.ID}
+	p.log.Info("already archived, skipped", "sessionId", sessionID, "path", fi.Path, "assetId", cls.MatchedAssetID)
+	return fileOutcome{}
 }
 
 // buildAsset constructs an Asset from a file, its classification, and metadata.

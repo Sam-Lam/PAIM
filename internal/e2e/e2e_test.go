@@ -238,19 +238,19 @@ func TestFullScenario(t *testing.T) {
 		if report.Videos != 1 {
 			t.Errorf("dry run Videos = %d, want 1", report.Videos)
 		}
-		// The dry run predicts intra-batch duplicates: although the asset DB is empty
+		// The dry run predicts intra-batch repeats: although the asset DB is empty
 		// here, the source tree contains one exact intra-batch duplicate
-		// (sub/IMG_0001_copy.JPG == IMG_0001.JPG). The dry run recognizes the repeat
-		// within the batch — first occurrence imports, the copy becomes a duplicate —
-		// exactly as the real import (below) will record it.
+		// (sub/IMG_0001_copy.JPG == IMG_0001.JPG). In copy mode the first occurrence
+		// imports and the repeat is already-imported (nothing copied, no duplicate
+		// row) — exactly as the real import (below) will record it.
 		if report.New != 6 {
-			t.Errorf("dry run New = %d, want 6 (7 files minus 1 intra-batch duplicate)", report.New)
+			t.Errorf("dry run New = %d, want 6 (7 files minus 1 intra-batch repeat)", report.New)
 		}
-		if report.Duplicates != 1 {
-			t.Errorf("dry run Duplicates = %d, want 1 (the intra-batch copy)", report.Duplicates)
+		if report.Duplicates != 0 {
+			t.Errorf("dry run Duplicates = %d, want 0 (copy mode records no duplicates)", report.Duplicates)
 		}
-		if report.AlreadyImported != 0 {
-			t.Errorf("dry run AlreadyImported = %d, want 0", report.AlreadyImported)
+		if report.AlreadyImported != 1 {
+			t.Errorf("dry run AlreadyImported = %d, want 1 (the intra-batch copy)", report.AlreadyImported)
 		}
 		// Retain the prediction so Stage 3 can assert it matched the import exactly.
 		s.dryRun = report
@@ -274,19 +274,19 @@ func TestFullScenario(t *testing.T) {
 		if sess.Status != domain.SessionStatusCompleted {
 			t.Fatalf("session status = %q, want completed", sess.Status)
 		}
-		if sess.FilesScanned != 7 || sess.FilesImported != 6 || sess.Duplicates != 1 || sess.Skipped != 0 || sess.Failures != 0 {
-			t.Errorf("session counters = scanned:%d imported:%d dup:%d skipped:%d fail:%d; want 7/6/1/0/0",
-				sess.FilesScanned, sess.FilesImported, sess.Duplicates, sess.Skipped, sess.Failures)
+		if sess.FilesScanned != 7 || sess.FilesImported != 6 || sess.AlreadyImported != 1 || sess.Duplicates != 0 || sess.Skipped != 0 || sess.Failures != 0 {
+			t.Errorf("session counters = scanned:%d imported:%d already:%d dup:%d skipped:%d fail:%d; want 7/6/1/0/0/0",
+				sess.FilesScanned, sess.FilesImported, sess.AlreadyImported, sess.Duplicates, sess.Skipped, sess.Failures)
 		}
 
 		// The Stage-2 dry run predicted the import exactly: New == the files that
-		// actually imported, and Duplicates == the files actually recorded as dups.
+		// actually imported, and AlreadyImported == the files already archived.
 		if s.dryRun != nil {
 			if s.dryRun.New != int(sess.FilesImported) {
 				t.Errorf("dry run New = %d, but import FilesImported = %d (prediction must be exact)", s.dryRun.New, sess.FilesImported)
 			}
-			if s.dryRun.Duplicates != int(sess.Duplicates) {
-				t.Errorf("dry run Duplicates = %d, but import Duplicates = %d (prediction must be exact)", s.dryRun.Duplicates, sess.Duplicates)
+			if s.dryRun.AlreadyImported != int(sess.AlreadyImported) {
+				t.Errorf("dry run AlreadyImported = %d, but import AlreadyImported = %d (prediction must be exact)", s.dryRun.AlreadyImported, sess.AlreadyImported)
 			}
 		}
 
@@ -336,22 +336,18 @@ func TestFullScenario(t *testing.T) {
 			}
 		}
 
-		// The duplicate: recorded as a row, flagged, and NOT copied.
+		// The intra-batch copy is already-imported in copy mode: NO row is recorded
+		// for it (no placeholder), and no flagged-duplicate rows exist anywhere.
 		dup := s.duplicateFile()
-		dupAsset := s.assetByOriginalPath(dup.Path)
-		if dupAsset.DuplicateOfAssetID == nil || *dupAsset.DuplicateOfAssetID == "" {
-			t.Errorf("duplicate asset has no DuplicateOfAssetID")
-		} else {
-			orig := s.assetByOriginalPath(filepath.Join(s.srcRoot, "IMG_0001.JPG"))
-			if *dupAsset.DuplicateOfAssetID != orig.ID {
-				t.Errorf("duplicate points at %q, want IMG_0001 asset %q", *dupAsset.DuplicateOfAssetID, orig.ID)
-			}
+		var dupRowCount int64
+		s.gdb.Model(&domain.Asset{}).Where("original_full_path = ?", dup.Path).Count(&dupRowCount)
+		if dupRowCount != 0 {
+			t.Errorf("already-imported file recorded %d asset rows, want 0 (no placeholder)", dupRowCount)
 		}
-		if dupAsset.CurrentArchivePath != "" {
-			t.Errorf("duplicate CurrentArchivePath = %q, want empty (not copied)", dupAsset.CurrentArchivePath)
-		}
-		if dupAsset.BackupStatus != domain.BackupStatusNone {
-			t.Errorf("duplicate BackupStatus = %q, want none", dupAsset.BackupStatus)
+		var flaggedDupCount int64
+		s.gdb.Model(&domain.Asset{}).Where("duplicate_of_asset_id IS NOT NULL AND duplicate_of_asset_id <> ''").Count(&flaggedDupCount)
+		if flaggedDupCount != 0 {
+			t.Errorf("copy-mode import created %d duplicate rows, want 0", flaggedDupCount)
 		}
 
 		// Backup jobs enqueued for the 6 imported assets (not for the duplicate).
@@ -367,10 +363,6 @@ func TestFullScenario(t *testing.T) {
 				t.Errorf("%s has %d backup jobs, want 1", filepath.Base(f.Path), len(jobs))
 			}
 		}
-		if jobs := s.jobsForAsset(dupAsset.ID); len(jobs) != 0 {
-			t.Errorf("duplicate asset has %d backup jobs, want 0", len(jobs))
-		}
-
 		// Six files physically present in the master library.
 		if n := countRegularFiles(t, s.masterRoot); n != 6 {
 			t.Errorf("master library has %d files, want 6", n)
@@ -434,10 +426,12 @@ func TestFullScenario(t *testing.T) {
 		if sess.Status != domain.SessionStatusCompleted {
 			t.Fatalf("re-import status = %q, want completed", sess.Status)
 		}
-		// Everything already imported -> skipped; nothing new, nothing duplicated.
-		if sess.Skipped != 7 || sess.FilesImported != 0 || sess.Duplicates != 0 {
-			t.Errorf("re-import counters = skipped:%d imported:%d dup:%d; want 7/0/0",
-				sess.Skipped, sess.FilesImported, sess.Duplicates)
+		// Everything already imported -> already-imported; nothing new, nothing
+		// duplicated, nothing skipped. All 7 source files (6 unique + the intra-batch
+		// copy) resolve to archived content by hash and record no new rows.
+		if sess.AlreadyImported != 7 || sess.FilesImported != 0 || sess.Duplicates != 0 || sess.Skipped != 0 {
+			t.Errorf("re-import counters = already:%d imported:%d dup:%d skipped:%d; want 7/0/0/0",
+				sess.AlreadyImported, sess.FilesImported, sess.Duplicates, sess.Skipped)
 		}
 		if got := countRegularFiles(t, s.masterRoot); got != filesBefore {
 			t.Errorf("master file count changed on re-import: %d -> %d", filesBefore, got)
@@ -628,9 +622,11 @@ func TestFullScenario(t *testing.T) {
 		if err != nil {
 			t.Fatalf("second adopt run: %v", err)
 		}
-		if sess2.Skipped != 4 || sess2.FilesImported != 0 || sess2.Duplicates != 0 {
-			t.Errorf("second adopt counters = skipped:%d imported:%d dup:%d; want 4/0/0",
-				sess2.Skipped, sess2.FilesImported, sess2.Duplicates)
+		// A re-adopt recognizes all 4 files (3 moved uniques + the in-place flagged
+		// duplicate) by content/path as already-imported; nothing new, no skips.
+		if sess2.AlreadyImported != 4 || sess2.FilesImported != 0 || sess2.Duplicates != 0 || sess2.Skipped != 0 {
+			t.Errorf("second adopt counters = already:%d imported:%d dup:%d skipped:%d; want 4/0/0/0",
+				sess2.AlreadyImported, sess2.FilesImported, sess2.Duplicates, sess2.Skipped)
 		}
 		if got := countRegularFiles(t, s.adoptRoot); got != filesBefore {
 			t.Errorf("second adopt changed file count: %d -> %d", filesBefore, got)

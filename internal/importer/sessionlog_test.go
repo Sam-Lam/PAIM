@@ -140,35 +140,35 @@ func TestImportFailureLogCarriesSessionID(t *testing.T) {
 	}
 }
 
-// TestImportDuplicateLogCarriesSessionID verifies the per-file duplicate line
-// (recorded on a first run when two source files share content) carries the
-// sessionId.
-func TestImportDuplicateLogCarriesSessionID(t *testing.T) {
+// TestImportAlreadyImportedLogCarriesSessionID verifies the per-file
+// already-archived line (logged on a first run when two source files share
+// content in copy mode) carries the sessionId.
+func TestImportAlreadyImportedLogCarriesSessionID(t *testing.T) {
 	h := newHarness(t)
 	recs := h.withCapturingLogger(t)
 
 	h.writeFile("a.jpg", "alpha", testDate)
-	h.writeFile("dup.jpg", "alpha", testDate) // same content, different name -> duplicate
+	h.writeFile("dup.jpg", "alpha", testDate) // same content, different name -> already imported
 
 	session, err := h.pipe.Run(context.Background(), h.copyOpts(), nil)
 	if err != nil {
 		t.Fatalf("run: %v", err)
 	}
-	if session.Duplicates != 1 {
-		t.Fatalf("Duplicates = %d, want 1", session.Duplicates)
+	if session.AlreadyImported != 1 {
+		t.Fatalf("AlreadyImported = %d, want 1", session.AlreadyImported)
 	}
 
 	found := false
 	for _, r := range *recs {
-		if r.Message == "recorded duplicate (not copied)" {
+		if r.Message == "already archived, skipped" {
 			found = true
 			if got := attrValue(r, "sessionId"); got != session.ID {
-				t.Errorf("duplicate log sessionId = %q, want %q", got, session.ID)
+				t.Errorf("already-imported log sessionId = %q, want %q", got, session.ID)
 			}
 		}
 	}
 	if !found {
-		t.Fatal("no 'recorded duplicate (not copied)' log captured")
+		t.Fatal("no 'already archived, skipped' log captured")
 	}
 }
 
@@ -191,7 +191,7 @@ func TestImportSkipLogCarriesSessionID(t *testing.T) {
 
 	found := false
 	for _, r := range *recs {
-		if r.Message == "skip already-imported file" {
+		if r.Message == "already archived, skipped" {
 			found = true
 			if !hasAttr(r, "sessionId") {
 				t.Errorf("skip log missing sessionId")
@@ -202,6 +202,6 @@ func TestImportSkipLogCarriesSessionID(t *testing.T) {
 		}
 	}
 	if !found {
-		t.Fatal("expected a 'skip already-imported file' log on the second run")
+		t.Fatal("expected an 'already archived, skipped' log on the second run")
 	}
 }

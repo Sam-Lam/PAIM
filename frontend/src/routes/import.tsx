@@ -813,13 +813,15 @@ function DryRunStep({
             <SummaryCard label="Files" value={formatNumber(report.files)} icon={Squares2X2Icon} />
             <SummaryCard label="Photos" value={formatNumber(report.photos)} icon={PhotoIcon} />
             <SummaryCard label="Videos" value={formatNumber(report.videos)} icon={FilmIcon} />
-            <SummaryCard label="Already Imported" value={formatNumber(report.alreadyImported)} />
-            <SummaryCard
-              label="Duplicates"
-              value={formatNumber(report.duplicates)}
-              icon={DocumentDuplicateIcon}
-              tone={report.duplicates > 0 ? "warn" : "default"}
-            />
+            <SummaryCard label="Already imported" value={formatNumber(report.alreadyImported)} />
+            {mode === "adopt" ? (
+              <SummaryCard
+                label="Duplicates"
+                value={formatNumber(report.duplicates)}
+                icon={DocumentDuplicateIcon}
+                tone={report.duplicates > 0 ? "warn" : "default"}
+              />
+            ) : null}
             <SummaryCard label="New" value={formatNumber(report.new)} tone="success" />
             <SummaryCard label="Import Size" value={formatBytes(report.totalImportBytes)} />
             <SummaryCard label="Estimated Time" value={formatEta(report.estimatedSeconds)} />
@@ -963,9 +965,10 @@ function ImportStep({
           </div>
         </div>
 
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-5">
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
           <CounterCard label="Scanned" value={completed.filesScanned} />
           <CounterCard label="Imported" value={completed.filesImported} tone="success" />
+          <CounterCard label="Already imported" value={completed.alreadyImported} />
           <CounterCard label="Duplicates" value={completed.duplicates} tone={completed.duplicates > 0 ? "warn" : "default"} />
           <CounterCard label="Failures" value={completed.failures} tone={completed.failures > 0 ? "danger" : "default"} />
           <CounterCard label="Skipped" value={completed.skipped} />

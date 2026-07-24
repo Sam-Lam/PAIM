@@ -3372,10 +3372,11 @@ export class DuplicateGroupDTO {
 }
 
 /**
- * DuplicatePairDTO pairs a duplicate asset with the original it duplicates,
- * plus per-side presence flags so the UI can label a copy-mode duplicate ("on
- * source only — never copied") and disable reveal actions for files that are not
- * reachable right now (e.g. the source SD card was ejected).
+ * DuplicatePairDTO pairs a duplicate asset with the original it duplicates, plus
+ * per-side presence flags so the UI can disable reveal actions for files that are
+ * not reachable right now (e.g. the archive volume is offline). Every duplicate
+ * managed here has its OWN physical archive copy (that is what makes it a genuine,
+ * reclaimable duplicate); source-only placeholder rows are excluded upstream.
  */
 export class DuplicatePairDTO {
     /**
@@ -3397,21 +3398,10 @@ export class DuplicatePairDTO {
              */
             this["original"] = (new AssetDTO());
         }
-        if (!("duplicateHasArchiveCopy" in $$source)) {
-            /**
-             * DuplicateHasArchiveCopy reports whether the duplicate has its OWN archive
-             * copy. Copy-mode duplicates never do — they were flagged without re-copying,
-             * so the file lives only at the duplicate's OriginalFullPath (its source).
-             * @member
-             * @type {boolean}
-             */
-            this["duplicateHasArchiveCopy"] = false;
-        }
         if (!("duplicateFileExists" in $$source)) {
             /**
-             * DuplicateFileExists reports whether the duplicate's file exists on disk right
-             * now, checked at its archive copy when it has one (adopt mode) or otherwise at
-             * its original source path (copy mode). Computed with os.Stat at list time.
+             * DuplicateFileExists reports whether the duplicate's archived file exists on
+             * disk right now (os.Stat of its resolved archive path).
              * @member
              * @type {boolean}
              */
@@ -3740,6 +3730,13 @@ export class ImportCompleted {
              * @type {number}
              */
             this["skipped"] = 0;
+        }
+        if (!("alreadyImported" in $$source)) {
+            /**
+             * @member
+             * @type {number}
+             */
+            this["alreadyImported"] = 0;
         }
 
         Object.assign(this, $$source);
@@ -6016,6 +6013,13 @@ export class SessionDTO {
              * @type {number}
              */
             this["skipped"] = 0;
+        }
+        if (!("alreadyImported" in $$source)) {
+            /**
+             * @member
+             * @type {number}
+             */
+            this["alreadyImported"] = 0;
         }
         if (!("status" in $$source)) {
             /**

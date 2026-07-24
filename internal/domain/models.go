@@ -106,6 +106,13 @@ type ImportSession struct {
 	Duplicates    int `json:"duplicates"`
 	Failures      int `json:"failures"`
 	Skipped       int `json:"skipped"`
+	// AlreadyImported counts scanned files whose content was already present in the
+	// library as a verified archived asset, so nothing was imported: same-source
+	// re-imports and copy-mode content matches (which previously became placeholder
+	// "duplicate" rows). These are never a second library copy and never a Duplicate
+	// Manager workload — they are simply already archived. Sessions predating schema
+	// v5 carry 0 here; their historical Duplicates counts stay as recorded.
+	AlreadyImported int `json:"alreadyImported"`
 
 	Status SessionStatus `gorm:"index" json:"status"`
 	Notes  string        `json:"notes"`

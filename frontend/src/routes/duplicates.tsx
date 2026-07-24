@@ -97,6 +97,10 @@ export function DuplicatesPage() {
   );
 
   const stats = useAsyncData(() => DuplicateService.DuplicateStats());
+  const sourceOnly = useAsyncData(() => DuplicateService.CountSourceOnlyRecords());
+  const [sourceOnlyDismissed, setSourceOnlyDismissed] = useState(false);
+  const [confirmRemoveSourceOnly, setConfirmRemoveSourceOnly] = useState(false);
+  const [removingSourceOnly, setRemovingSourceOnly] = useState(false);
   const dupes = useAsyncData(() => DuplicateService.ListDuplicatesFiltered(filterDTO, page, PAGE_SIZE));
   const groups = useAsyncData(() =>
     filter.groupBy === "none"
@@ -123,11 +127,27 @@ export function DuplicatesPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [filter.groupBy]);
 
-  // Header stats once on mount.
+  // Header stats + source-only record count once on mount.
   useEffect(() => {
     void stats.run().catch(() => {});
+    void sourceOnly.run().catch(() => {});
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  const removeSourceOnly = async () => {
+    setRemovingSourceOnly(true);
+    try {
+      const n = await DuplicateService.RemoveSourceOnlyRecords();
+      toast.success(`Removed ${formatNumber(n)} already-imported record${n === 1 ? "" : "s"}`);
+      setConfirmRemoveSourceOnly(false);
+      await sourceOnly.run({ silent: true }).catch(() => {});
+      reloadAll();
+    } catch (e) {
+      toast.fromError(e, "Could not remove records");
+    } finally {
+      setRemovingSourceOnly(false);
+    }
+  };
 
   // Re-attach to an in-flight bulk resolve on mount.
   useEffect(() => {
@@ -381,6 +401,15 @@ export function DuplicatesPage() {
         </div>
       </div>
 
+      {!sourceOnlyDismissed && (sourceOnly.data ?? 0) > 0 ? (
+        <SourceOnlyBanner
+          count={sourceOnly.data ?? 0}
+          busy={removingSourceOnly}
+          onRemove={() => setConfirmRemoveSourceOnly(true)}
+          onDismiss={() => setSourceOnlyDismissed(true)}
+        />
+      ) : null}
+
       {running || summary ? (
         <BulkRunPanel
           running={running}
@@ -464,6 +493,69 @@ export function DuplicatesPage() {
         onConfirm={() => void startBatch()}
         onCancel={() => (starting ? undefined : setPending(null))}
       />
+
+      <ConfirmDialog
+        open={confirmRemoveSourceOnly}
+        title={`Remove ${formatNumber(sourceOnly.data ?? 0)} already-imported record${(sourceOnly.data ?? 0) === 1 ? "" : "s"}?`}
+        description={
+          <span>
+            These <span className="font-medium text-zinc-200">{formatNumber(sourceOnly.data ?? 0)}</span> record
+            {(sourceOnly.data ?? 0) === 1 ? "" : "s"} came from re-imports of sources whose photos were already
+            archived. Nothing was copied, so they are not real duplicates — just already-imported entries. Removing
+            them is record-only and reversible (rows are soft-deleted); no files are ever touched.
+          </span>
+        }
+        confirmLabel="Remove records"
+        variant="primary"
+        loading={removingSourceOnly}
+        onConfirm={() => void removeSourceOnly()}
+        onCancel={() => (removingSourceOnly ? undefined : setConfirmRemoveSourceOnly(false))}
+      />
+    </div>
+  );
+}
+
+/** One-time cleanup banner for legacy source-only "duplicate" records left by
+ *  pre-v5 copy-mode re-imports of already-archived sources. */
+function SourceOnlyBanner({
+  count,
+  busy,
+  onRemove,
+  onDismiss,
+}: {
+  count: number;
+  busy: boolean;
+  onRemove: () => void;
+  onDismiss: () => void;
+}) {
+  return (
+    <div className="mb-4 rounded-lg border border-blue-500/30 bg-blue-500/[0.04] p-4">
+      <div className="flex items-start gap-3">
+        <ExclamationTriangleIcon className="mt-0.5 h-5 w-5 flex-none text-blue-400" />
+        <div className="min-w-0 flex-1">
+          <div className="text-sm font-medium text-zinc-100">
+            {formatNumber(count)} already-imported record{count === 1 ? "" : "s"} can be cleaned up
+          </div>
+          <p className="mt-1 text-xs leading-relaxed text-zinc-400">
+            These came from re-imports of sources whose photos were already archived. Nothing was copied, so they
+            are not real duplicates — the Duplicate Manager now only manages in-library copies. Removing them is
+            record-only and reversible; no files are touched.
+          </p>
+        </div>
+        <div className="flex flex-none items-center gap-2">
+          <Button size="sm" variant="secondary" icon={TrashIcon} disabled={busy} onClick={onRemove}>
+            Remove records
+          </Button>
+          <button
+            type="button"
+            onClick={onDismiss}
+            className="text-zinc-500 hover:text-zinc-300"
+            title="Dismiss"
+          >
+            <XMarkIcon className="h-4 w-4" />
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
@@ -751,11 +843,6 @@ function DuplicatePairCard({
     }
   };
 
-  // The duplicate's file lives at its archive copy (adopt mode) or — for a
-  // copy-mode duplicate that was flagged but never copied — only at its source.
-  const dupSourceOnly = !pair.duplicateHasArchiveCopy;
-  const dupWhich = pair.duplicateHasArchiveCopy ? "archive" : "original";
-
   return (
     <Card className={selected ? "ring-1 ring-blue-500/50" : undefined}>
       <div className="mb-3 flex items-center gap-2 border-b border-zinc-800 pb-3">
@@ -775,15 +862,13 @@ function DuplicatePairCard({
         <AssetColumn
           asset={pair.duplicate}
           kind="duplicate"
-          sourceOnly={dupSourceOnly}
           fileExists={pair.duplicateFileExists}
-          revealLabel={dupSourceOnly ? "Reveal at source" : "Reveal in archive"}
-          onReveal={() => void reveal(pair.duplicate.id, dupWhich)}
+          revealLabel="Reveal in archive"
+          onReveal={() => void reveal(pair.duplicate.id, "archive")}
         />
         <AssetColumn
           asset={pair.original}
           kind="original"
-          sourceOnly={false}
           fileExists={pair.originalFileExists}
           revealLabel="Reveal in archive"
           onReveal={() => void reveal(pair.original.id, "archive")}
@@ -796,20 +881,17 @@ function DuplicatePairCard({
 function AssetColumn({
   asset,
   kind,
-  sourceOnly,
   fileExists,
   revealLabel,
   onReveal,
 }: {
   asset: AssetDTO;
   kind: "duplicate" | "original";
-  sourceOnly: boolean;
   fileExists: boolean;
   revealLabel: string;
   onReveal: () => void;
 }) {
-  // The file's current location: an archive copy if one exists, otherwise the
-  // original source path (an SD card / drive for a copy-mode duplicate).
+  // Every managed duplicate/original has its own archived file.
   const path = asset.currentArchivePath || asset.originalFullPath;
   return (
     <div
@@ -824,15 +906,6 @@ function AssetColumn({
           <StatusBadge status="original" tone="success" label="Original" dot />
         )}
         {kind === "duplicate" ? <ArrowRightCircleIcon className="h-4 w-4 text-zinc-600" /> : null}
-        {sourceOnly ? (
-          <span
-            className="inline-flex items-center gap-1 rounded-full border border-amber-500/40 bg-amber-500/10 px-2 py-0.5 text-[10px] font-semibold text-amber-300"
-            title="PAIM flags duplicates without re-copying them, so this file was never written into your archive. It lives only at its source path above — which may become unreachable once that SD card or drive is ejected."
-          >
-            <ExclamationTriangleIcon className="h-3 w-3" />
-            On source only — never copied
-          </span>
-        ) : null}
         {!fileExists ? (
           <span
             className="inline-flex items-center gap-1 rounded-full border border-zinc-700 bg-zinc-800/60 px-2 py-0.5 text-[10px] font-medium text-zinc-400"
@@ -857,12 +930,6 @@ function AssetColumn({
           </div>
         </div>
       </div>
-
-      {sourceOnly ? (
-        <p className="mt-2 text-[11px] leading-relaxed text-amber-300/80">
-          Recorded as a duplicate without copying — the file above may be unreachable once its source is ejected.
-        </p>
-      ) : null}
 
       <div className="mt-2 space-y-1">
         <HashRow label="Quick" hash={asset.quickHash} />

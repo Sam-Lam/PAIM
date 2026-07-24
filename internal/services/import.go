@@ -806,13 +806,14 @@ func (s *ImportService) emitCompleted(sessionID string) {
 		return
 	}
 	emitSafe(s.emitter, EventImportCompleted, ImportCompleted{
-		SessionID:     session.ID,
-		Status:        string(session.Status),
-		FilesScanned:  session.FilesScanned,
-		FilesImported: session.FilesImported,
-		Duplicates:    session.Duplicates,
-		Failures:      session.Failures,
-		Skipped:       session.Skipped,
+		SessionID:       session.ID,
+		Status:          string(session.Status),
+		FilesScanned:    session.FilesScanned,
+		FilesImported:   session.FilesImported,
+		Duplicates:      session.Duplicates,
+		Failures:        session.Failures,
+		Skipped:         session.Skipped,
+		AlreadyImported: session.AlreadyImported,
 	})
 	if s.OnCompleted != nil {
 		s.OnCompleted(session.ID)

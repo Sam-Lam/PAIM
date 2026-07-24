@@ -87,6 +87,7 @@ type SessionDTO struct {
 	Duplicates      int        `json:"duplicates"`
 	Failures        int        `json:"failures"`
 	Skipped         int        `json:"skipped"`
+	AlreadyImported int        `json:"alreadyImported"`
 	Status          string     `json:"status"`
 	Mode            string     `json:"mode"`
 	// SourceLabel is a human-readable description of the import source for the
@@ -122,6 +123,7 @@ func toSessionDTO(s domain.ImportSession) SessionDTO {
 		Duplicates:      s.Duplicates,
 		Failures:        s.Failures,
 		Skipped:         s.Skipped,
+		AlreadyImported: s.AlreadyImported,
 		Status:          string(s.Status),
 		Mode:            mode,
 		SourceLabel:     defaultSourceLabel(mode, st.SourceRoot),

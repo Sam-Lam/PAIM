@@ -25,20 +25,25 @@
 // collision) — never filename, timestamp, or EXIF. For a source file whose
 // content matches an existing VERIFIED asset:
 //
-//   - same OriginalFullPath  -> AlreadyImported: skipped, no new row, no copy
+//   - same OriginalFullPath -> AlreadyImported: skipped, no new row, no copy
 //     (re-importing or resuming the same tree never duplicates rows).
-//   - different OriginalFullPath -> Duplicate: in COPY mode a row is recorded
-//     with DuplicateOfAssetID set and CurrentArchivePath = "" (the bytes are NOT
-//     copied); in ADOPT mode the in-place file is registered and flagged with
-//     DuplicateOfAssetID (never deleted, never skipped silently).
+//   - different OriginalFullPath, COPY mode -> AlreadyImported: the content is
+//     already archived, so nothing is copied and NO row is created. There is no
+//     second library copy to make, so this is not a duplicate — it counts toward
+//     the session's AlreadyImported tally. The source file is never touched.
+//   - different OriginalFullPath, ADOPT mode -> Duplicate: the in-place file is a
+//     second physical copy inside the library; it is registered and flagged with
+//     DuplicateOfAssetID (never deleted, never skipped silently). These flagged,
+//     archive-copy duplicates are the Duplicate Manager's entire workload.
 //
 // # Counters
 //
-// Session counters count Asset rows / files, so a dry run and its subsequent
-// import always agree file-for-file. A Live Photo pair produces two linked rows
-// (still + motion); collapsing a pair into a single logical asset for display is
-// a presentation concern handled above this layer via LivePhotoPartnerID. This
-// keeps dry-run predictions exactly reconcilable with import results.
+// New Asset rows are created only for imported (copy) / adopted files and flagged
+// adopt-mode duplicates; already-imported files create none. A dry run and its
+// subsequent import still agree file-for-file on New/Duplicates/AlreadyImported.
+// A Live Photo pair produces two linked rows (still + motion); collapsing a pair
+// into a single logical asset for display is a presentation concern handled above
+// this layer via LivePhotoPartnerID.
 package importer
 
 import (

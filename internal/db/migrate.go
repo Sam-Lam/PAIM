@@ -77,6 +77,21 @@ func LibraryMigrations(root string) []Migration {
 				return createImportFailureIndexes(tx)
 			},
 		},
+		{
+			ID:          5,
+			Description: "add import_sessions already_imported column",
+			Run: func(tx *gorm.DB) error {
+				// Additive and idempotent: AutoMigrate adds the new
+				// ImportSession.AlreadyImported column on existing catalogs (fresh ones
+				// already have it from migration 1). Sessions that predate this column
+				// default to 0 — their historical Duplicates counts are unchanged; only
+				// new imports populate the already-imported tally.
+				if err := tx.AutoMigrate(&domain.ImportSession{}); err != nil {
+					return wrap("add already_imported column", err)
+				}
+				return nil
+			},
+		},
 	}
 }
 

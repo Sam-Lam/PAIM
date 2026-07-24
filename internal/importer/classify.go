@@ -15,10 +15,15 @@ const (
 	// DispositionNew: content not present in the library; will be imported.
 	DispositionNew Disposition = "new"
 	// DispositionDuplicate: content matches an existing verified asset at a
-	// different origin path; recorded as a duplicate, not copied.
+	// different origin path AND the import is in adopt mode — i.e. a second
+	// PHYSICAL copy inside the library that the Duplicate Manager should manage.
+	// Copy mode never yields this: a content match with no new copy is
+	// AlreadyImported, not a duplicate (see classify).
 	DispositionDuplicate Disposition = "duplicate"
-	// DispositionAlreadyImported: content matches an existing verified asset that
-	// was imported from this exact source path; skipped, no new row.
+	// DispositionAlreadyImported: content matches an existing verified asset, so
+	// nothing is imported — the file is skipped and no new row is created. This
+	// covers a same-source-path re-import (both modes) and, in copy mode, any
+	// content already archived elsewhere (there is no second library copy to make).
 	DispositionAlreadyImported Disposition = "already_imported"
 )
 
@@ -42,7 +47,12 @@ type classification struct {
 // empty to compute them here. A supplied fullHash is threaded onto the returned
 // classification even for a brand-new file so adopt mode can reuse it as the
 // in-place baseline instead of re-reading the whole file.
-func (p *Pipeline) classify(ctx context.Context, path string, quickHash, fullHash string) (classification, error) {
+//
+// mode decides how a content match at a DIFFERENT path is classified: in adopt
+// mode it is a DispositionDuplicate (a second physical in-library copy to flag);
+// in copy mode nothing would be copied, so it is DispositionAlreadyImported (the
+// content is already archived — not a duplicate, and no placeholder row).
+func (p *Pipeline) classify(ctx context.Context, path string, quickHash, fullHash string, mode Mode) (classification, error) {
 	if quickHash == "" {
 		qh, err := p.quickHash(path)
 		if err != nil {
@@ -122,8 +132,16 @@ func (p *Pipeline) classify(ctx context.Context, path string, quickHash, fullHas
 	}
 
 	if duplicateOf != "" {
+		// Content already archived at a different path. In copy mode nothing is
+		// copied, so this is "already imported" (no placeholder row, no Duplicate
+		// Manager workload). In adopt mode the file is a second physical in-library
+		// copy, which is flagged as a duplicate and registered in place.
+		disp := DispositionAlreadyImported
+		if mode == ModeAdopt {
+			disp = DispositionDuplicate
+		}
 		return classification{
-			Disposition:    DispositionDuplicate,
+			Disposition:    disp,
 			QuickHash:      quickHash,
 			FullHash:       fullHash,
 			MatchedAssetID: duplicateOf,
