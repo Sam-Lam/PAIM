@@ -65,6 +65,8 @@ func init() {
 	application.RegisterEvent[services.ReorganizePlanProgress](services.EventReorganizePlan)
 	application.RegisterEvent[services.LogExportProgress](services.EventLogExportProgress)
 	application.RegisterEvent[services.DuplicateProgress](services.EventDuplicateProgress)
+	application.RegisterEvent[services.BulkResolveProgress](services.EventBulkResolveProgress)
+	application.RegisterEvent[services.BulkResolveSummaryDTO](services.EventBulkResolveCompleted)
 	application.RegisterEvent[services.LibraryProgress](services.EventLibraryProgress)
 	application.RegisterEvent[services.QuitRequested](services.EventQuitRequested)
 	application.RegisterEvent[services.ThumbsProgress](services.EventThumbsProgress)
@@ -234,7 +236,7 @@ func run() error {
 	comp.importSvc = services.NewImportService(nil, nil, nil, dialoger, emitter, logger)
 	comp.sourcesSvc = services.NewSourcesService(collector, nil, nil, nil, watcher, emitter, logger)
 	comp.historySvc = services.NewHistoryService(nil, nil, logger)
-	comp.dupSvc = services.NewDuplicateService(nil, nil, nil, emitter, logger)
+	comp.dupSvc = services.NewDuplicateService(nil, nil, nil, nil, emitter, logger)
 	comp.cleanupSvc = services.NewCleanupService(nil, dialoger, emitter, logger)
 	comp.backupSvc = services.NewBackupService(nil, nil, nil, configStore, yield, emitter, logger)
 	comp.providerSvc = services.NewProviderService(nil, registry, logger)
@@ -257,7 +259,7 @@ func run() error {
 	// unattended import/analyze/reorganize/safe-to-erase/cleanup does not stall
 	// when the Mac sleeps. Only the services that run such jobs need it.
 	for _, sa := range []interface{ SetSleepGuard(*services.SleepGuard) }{
-		comp.importSvc, comp.sourcesSvc, comp.cleanupSvc, comp.thumbnailSvc, comp.backupSvc,
+		comp.importSvc, comp.sourcesSvc, comp.cleanupSvc, comp.thumbnailSvc, comp.backupSvc, comp.dupSvc,
 	} {
 		sa.SetSleepGuard(sleep)
 	}
@@ -271,6 +273,7 @@ func run() error {
 	tracker.Register(comp.cleanupSvc)
 	tracker.Register(comp.backupSvc)
 	tracker.Register(comp.thumbnailSvc)
+	tracker.Register(comp.dupSvc)
 
 	// The browser's event-folder rename refuses while any long operation is in
 	// flight (renaming under a running move is unsafe), so it reads the same

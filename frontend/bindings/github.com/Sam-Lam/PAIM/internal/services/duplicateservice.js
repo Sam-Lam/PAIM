@@ -19,6 +19,18 @@ import { Call as $Call, CancellablePromise as $CancellablePromise, Create as $Cr
 import * as $models from "./models.js";
 
 /**
+ * ActiveBulkResolve returns the current bulk-resolve state for re-attachment:
+ * "running" with the latest progress snapshot, "completed" with the summary (or a
+ * cancelled marker), or "none". A completed snapshot lapses after safeEraseReportTTL.
+ * @returns {$CancellablePromise<$models.ActiveBulkResolveDTO>}
+ */
+export function ActiveBulkResolve() {
+    return $Call.ByID(2562701671).then(/** @type {($result: any) => any} */(($result) => {
+        return $$createType0($result);
+    }));
+}
+
+/**
  * Bind wires the DuplicateService to an open library's catalog in place.
  * @param {$models.AppCore | null} core
  * @returns {$CancellablePromise<void>}
@@ -28,14 +40,77 @@ export function Bind(core) {
 }
 
 /**
- * ListDuplicates returns a page of duplicate/original pairs (newest first).
+ * CancelBulkResolve cancels a running bulk resolve (if any). Items already
+ * resolved stay resolved; the job stops cleanly before the next item.
+ * @returns {$CancellablePromise<void>}
+ */
+export function CancelBulkResolve() {
+    return $Call.ByID(4247312975);
+}
+
+/**
+ * DuplicateStats returns the archive-wide duplicate totals (pair count + wasted
+ * bytes) for the header, computed in SQL across ALL flagged duplicates.
+ * @returns {$CancellablePromise<$models.DuplicateStatsDTO>}
+ */
+export function DuplicateStats() {
+    return $Call.ByID(4173165203).then(/** @type {($result: any) => any} */(($result) => {
+        return $$createType1($result);
+    }));
+}
+
+/**
+ * ListDuplicateGroups returns the distinct duplicate groups (with counts + wasted
+ * bytes) for a group picker. groupBy is "folder" or "session". Groups are ordered
+ * by wasted bytes descending.
+ * @param {string} groupBy
+ * @returns {$CancellablePromise<$models.DuplicateGroupDTO[]>}
+ */
+export function ListDuplicateGroups(groupBy) {
+    return $Call.ByID(3325735128, groupBy).then(/** @type {($result: any) => any} */(($result) => {
+        return $$createType3($result);
+    }));
+}
+
+/**
+ * ListDuplicateIDs returns the full ID list of every flagged duplicate matching
+ * the filter, so the frontend can "select all in folder/session/filter" without
+ * paging thousands of rows through the UI.
+ * @param {$models.DuplicateFilterDTO} filter
+ * @returns {$CancellablePromise<string[]>}
+ */
+export function ListDuplicateIDs(filter) {
+    return $Call.ByID(3669120482, filter).then(/** @type {($result: any) => any} */(($result) => {
+        return $$createType4($result);
+    }));
+}
+
+/**
+ * ListDuplicates returns a page of duplicate/original pairs (newest first,
+ * unfiltered). Retained for callers that do not filter; the Total is the true
+ * archive-wide count.
  * @param {number} page
  * @param {number} pageSize
  * @returns {$CancellablePromise<$models.PageResult<$models.DuplicatePairDTO>>}
  */
 export function ListDuplicates(page, pageSize) {
     return $Call.ByID(4232984785, page, pageSize).then(/** @type {($result: any) => any} */(($result) => {
-        return $$createType1($result);
+        return $$createType6($result);
+    }));
+}
+
+/**
+ * ListDuplicatesFiltered returns a page of duplicate/original pairs matching the
+ * filter. Total reflects the FILTERED count so pagination is correct within a
+ * folder/session/sort selection.
+ * @param {$models.DuplicateFilterDTO} filter
+ * @param {number} page
+ * @param {number} pageSize
+ * @returns {$CancellablePromise<$models.PageResult<$models.DuplicatePairDTO>>}
+ */
+export function ListDuplicatesFiltered(filter, page, pageSize) {
+    return $Call.ByID(20873026, filter, page, pageSize).then(/** @type {($result: any) => any} */(($result) => {
+        return $$createType6($result);
     }));
 }
 
@@ -73,6 +148,42 @@ export function SetGate(gate) {
     return $Call.ByID(3666370770, gate);
 }
 
+/**
+ * SetSleepGuard injects the shared sleep guard. Called once by main.go after
+ * construction; left unset (no-op) in unit tests.
+ * @param {$models.SleepGuard | null} g
+ * @returns {$CancellablePromise<void>}
+ */
+export function SetSleepGuard(g) {
+    return $Call.ByID(3493343613, g);
+}
+
+/**
+ * StartBulkResolve launches a background job that applies action to every
+ * duplicate in ids (delete → trash + soft-delete, move → relocate, ignore /
+ * keep_both → clear the flag), reusing the exact per-pair resolve logic. Only one
+ * bulk resolve may run at a time (ErrBulkResolveInProgress otherwise). It is
+ * cancellable between items (CancelBulkResolve), activity-tracked (quit guard),
+ * and sleep-guarded; per-item failures are collected and never abort the batch.
+ * Files are never hard-deleted (delete moves to the trash dir) and DB rows are
+ * only soft-deleted, exactly as the per-pair action does.
+ * @param {string[]} ids
+ * @param {string} action
+ * @param {string} destFolder
+ * @returns {$CancellablePromise<$models.StartBulkResolveDTO>}
+ */
+export function StartBulkResolve(ids, action, destFolder) {
+    return $Call.ByID(2625103243, ids, action, destFolder).then(/** @type {($result: any) => any} */(($result) => {
+        return $$createType7($result);
+    }));
+}
+
 // Private type creation functions
-const $$createType0 = $models.DuplicatePairDTO.createFrom;
-const $$createType1 = $models.PageResult.createFrom($$createType0);
+const $$createType0 = $models.ActiveBulkResolveDTO.createFrom;
+const $$createType1 = $models.DuplicateStatsDTO.createFrom;
+const $$createType2 = $models.DuplicateGroupDTO.createFrom;
+const $$createType3 = $Create.Array($$createType2);
+const $$createType4 = $Create.Array($Create.Any);
+const $$createType5 = $models.DuplicatePairDTO.createFrom;
+const $$createType6 = $models.PageResult.createFrom($$createType5);
+const $$createType7 = $models.StartBulkResolveDTO.createFrom;

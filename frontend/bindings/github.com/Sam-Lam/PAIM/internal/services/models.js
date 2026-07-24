@@ -117,6 +117,68 @@ export class ActiveAnalyzeDTO {
 }
 
 /**
+ * ActiveBulkResolveDTO is the re-attachment snapshot for a bulk resolve: "running"
+ * (Progress holds the latest snapshot), "completed" (Summary, possibly Cancelled),
+ * or "none". A completed snapshot lapses to "none" after safeEraseReportTTL.
+ */
+export class ActiveBulkResolveDTO {
+    /**
+     * Creates a new ActiveBulkResolveDTO instance.
+     * @param {Partial<ActiveBulkResolveDTO>} [$$source = {}] - The source object to create the ActiveBulkResolveDTO.
+     */
+    constructor($$source = {}) {
+        if (!("state" in $$source)) {
+            /**
+             * @member
+             * @type {string}
+             */
+            this["state"] = "";
+        }
+        if (!("progress" in $$source)) {
+            /**
+             * @member
+             * @type {BulkResolveProgress | null}
+             */
+            this["progress"] = null;
+        }
+        if (!("summary" in $$source)) {
+            /**
+             * @member
+             * @type {BulkResolveSummaryDTO | null}
+             */
+            this["summary"] = null;
+        }
+        if (!("cancelled" in $$source)) {
+            /**
+             * @member
+             * @type {boolean}
+             */
+            this["cancelled"] = false;
+        }
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new ActiveBulkResolveDTO instance from a string or object.
+     * @param {any} [$$source = {}]
+     * @returns {ActiveBulkResolveDTO}
+     */
+    static createFrom($$source = {}) {
+        const $$createField1_0 = $$createType6;
+        const $$createField2_0 = $$createType8;
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        if ("progress" in $$parsedSource) {
+            $$parsedSource["progress"] = $$createField1_0($$parsedSource["progress"]);
+        }
+        if ("summary" in $$parsedSource) {
+            $$parsedSource["summary"] = $$createField2_0($$parsedSource["summary"]);
+        }
+        return new ActiveBulkResolveDTO(/** @type {Partial<ActiveBulkResolveDTO>} */($$parsedSource));
+    }
+}
+
+/**
  * ActiveCleanupAnalyzeDTO is the re-attachment snapshot returned by
  * ActiveCleanupAnalyze. State is "running" (Progress holds the latest snapshot),
  * "completed" (Report, or Cancelled/Error, is populated), or "none". Root echoes
@@ -180,8 +242,8 @@ export class ActiveCleanupAnalyzeDTO {
      * @returns {ActiveCleanupAnalyzeDTO}
      */
     static createFrom($$source = {}) {
-        const $$createField2_0 = $$createType6;
-        const $$createField3_0 = $$createType8;
+        const $$createField2_0 = $$createType10;
+        const $$createField3_0 = $$createType12;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("progress" in $$parsedSource) {
             $$parsedSource["progress"] = $$createField2_0($$parsedSource["progress"]);
@@ -256,8 +318,8 @@ export class ActiveClearSourceDTO {
      * @returns {ActiveClearSourceDTO}
      */
     static createFrom($$source = {}) {
-        const $$createField2_0 = $$createType10;
-        const $$createField3_0 = $$createType12;
+        const $$createField2_0 = $$createType14;
+        const $$createField3_0 = $$createType16;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("progress" in $$parsedSource) {
             $$parsedSource["progress"] = $$createField2_0($$parsedSource["progress"]);
@@ -340,8 +402,8 @@ export class ActiveSafeToEraseDTO {
      * @returns {ActiveSafeToEraseDTO}
      */
     static createFrom($$source = {}) {
-        const $$createField3_0 = $$createType10;
-        const $$createField4_0 = $$createType14;
+        const $$createField3_0 = $$createType14;
+        const $$createField4_0 = $$createType18;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("progress" in $$parsedSource) {
             $$parsedSource["progress"] = $$createField3_0($$parsedSource["progress"]);
@@ -561,20 +623,20 @@ export class AppCore {
      * @returns {AppCore}
      */
     static createFrom($$source = {}) {
-        const $$createField1_0 = $$createType16;
-        const $$createField2_0 = $$createType18;
-        const $$createField3_0 = $$createType20;
-        const $$createField4_0 = $$createType22;
-        const $$createField5_0 = $$createType24;
-        const $$createField6_0 = $$createType26;
-        const $$createField7_0 = $$createType28;
-        const $$createField8_0 = $$createType30;
-        const $$createField9_0 = $$createType32;
-        const $$createField10_0 = $$createType34;
-        const $$createField11_0 = $$createType36;
-        const $$createField12_0 = $$createType38;
-        const $$createField13_0 = $$createType40;
-        const $$createField14_0 = $$createType42;
+        const $$createField1_0 = $$createType20;
+        const $$createField2_0 = $$createType22;
+        const $$createField3_0 = $$createType24;
+        const $$createField4_0 = $$createType26;
+        const $$createField5_0 = $$createType28;
+        const $$createField6_0 = $$createType30;
+        const $$createField7_0 = $$createType32;
+        const $$createField8_0 = $$createType34;
+        const $$createField9_0 = $$createType36;
+        const $$createField10_0 = $$createType38;
+        const $$createField11_0 = $$createType40;
+        const $$createField12_0 = $$createType42;
+        const $$createField13_0 = $$createType44;
+        const $$createField14_0 = $$createType46;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("Meta" in $$parsedSource) {
             $$parsedSource["Meta"] = $$createField1_0($$parsedSource["Meta"]);
@@ -1053,10 +1115,10 @@ export class AssetDetailDTO {
      * @returns {AssetDetailDTO}
      */
     static createFrom($$source = {}) {
-        const $$createField30_0 = $$createType44;
-        const $$createField31_0 = $$createType46;
-        const $$createField32_0 = $$createType47;
-        const $$createField33_0 = $$createType46;
+        const $$createField30_0 = $$createType48;
+        const $$createField31_0 = $$createType50;
+        const $$createField32_0 = $$createType51;
+        const $$createField33_0 = $$createType50;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("backupJobs" in $$parsedSource) {
             $$parsedSource["backupJobs"] = $$createField30_0($$parsedSource["backupJobs"]);
@@ -1252,7 +1314,7 @@ export class AssetsOverTimeDTO {
      * @returns {AssetsOverTimeDTO}
      */
     static createFrom($$source = {}) {
-        const $$createField1_0 = $$createType49;
+        const $$createField1_0 = $$createType53;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("buckets" in $$parsedSource) {
             $$parsedSource["buckets"] = $$createField1_0($$parsedSource["buckets"]);
@@ -1696,7 +1758,7 @@ export class BackupQueueChanged {
      * @returns {BackupQueueChanged}
      */
     static createFrom($$source = {}) {
-        const $$createField0_0 = $$createType50;
+        const $$createField0_0 = $$createType54;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("summary" in $$parsedSource) {
             $$parsedSource["summary"] = $$createField0_0($$parsedSource["summary"]);
@@ -2082,6 +2144,203 @@ export class BrowseFilters {
 }
 
 /**
+ * BulkResolveFailure records one duplicate the bulk job could not resolve: the
+ * asset ID, its display filename and resolved path (best effort), and the error.
+ * One bad pair never aborts the batch — every failure is collected here.
+ */
+export class BulkResolveFailure {
+    /**
+     * Creates a new BulkResolveFailure instance.
+     * @param {Partial<BulkResolveFailure>} [$$source = {}] - The source object to create the BulkResolveFailure.
+     */
+    constructor($$source = {}) {
+        if (!("assetId" in $$source)) {
+            /**
+             * @member
+             * @type {string}
+             */
+            this["assetId"] = "";
+        }
+        if (!("filename" in $$source)) {
+            /**
+             * @member
+             * @type {string}
+             */
+            this["filename"] = "";
+        }
+        if (!("path" in $$source)) {
+            /**
+             * @member
+             * @type {string}
+             */
+            this["path"] = "";
+        }
+        if (!("error" in $$source)) {
+            /**
+             * @member
+             * @type {string}
+             */
+            this["error"] = "";
+        }
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new BulkResolveFailure instance from a string or object.
+     * @param {any} [$$source = {}]
+     * @returns {BulkResolveFailure}
+     */
+    static createFrom($$source = {}) {
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        return new BulkResolveFailure(/** @type {Partial<BulkResolveFailure>} */($$parsedSource));
+    }
+}
+
+/**
+ * BulkResolveProgress is the payload for duplicates:progress, emitted (throttled)
+ * while a StartBulkResolve job works through the selected duplicates. Done/Total
+ * count items processed; Succeeded/Failed accumulate outcomes; CurrentFile is the
+ * duplicate being resolved. Done == Total marks the final tick (paired with a
+ * duplicates:completed carrying the summary).
+ */
+export class BulkResolveProgress {
+    /**
+     * Creates a new BulkResolveProgress instance.
+     * @param {Partial<BulkResolveProgress>} [$$source = {}] - The source object to create the BulkResolveProgress.
+     */
+    constructor($$source = {}) {
+        if (!("action" in $$source)) {
+            /**
+             * @member
+             * @type {string}
+             */
+            this["action"] = "";
+        }
+        if (!("done" in $$source)) {
+            /**
+             * @member
+             * @type {number}
+             */
+            this["done"] = 0;
+        }
+        if (!("total" in $$source)) {
+            /**
+             * @member
+             * @type {number}
+             */
+            this["total"] = 0;
+        }
+        if (!("succeeded" in $$source)) {
+            /**
+             * @member
+             * @type {number}
+             */
+            this["succeeded"] = 0;
+        }
+        if (!("failed" in $$source)) {
+            /**
+             * @member
+             * @type {number}
+             */
+            this["failed"] = 0;
+        }
+        if (!("currentFile" in $$source)) {
+            /**
+             * @member
+             * @type {string}
+             */
+            this["currentFile"] = "";
+        }
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new BulkResolveProgress instance from a string or object.
+     * @param {any} [$$source = {}]
+     * @returns {BulkResolveProgress}
+     */
+    static createFrom($$source = {}) {
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        return new BulkResolveProgress(/** @type {Partial<BulkResolveProgress>} */($$parsedSource));
+    }
+}
+
+/**
+ * BulkResolveSummaryDTO is the payload for duplicates:completed and the terminal
+ * snapshot ActiveBulkResolve returns. It totals the batch outcome and lists every
+ * per-item failure. Cancelled is true when the run was stopped early (items
+ * already resolved stay resolved; the remainder are left flagged for a later run).
+ */
+export class BulkResolveSummaryDTO {
+    /**
+     * Creates a new BulkResolveSummaryDTO instance.
+     * @param {Partial<BulkResolveSummaryDTO>} [$$source = {}] - The source object to create the BulkResolveSummaryDTO.
+     */
+    constructor($$source = {}) {
+        if (!("action" in $$source)) {
+            /**
+             * @member
+             * @type {string}
+             */
+            this["action"] = "";
+        }
+        if (!("total" in $$source)) {
+            /**
+             * @member
+             * @type {number}
+             */
+            this["total"] = 0;
+        }
+        if (!("succeeded" in $$source)) {
+            /**
+             * @member
+             * @type {number}
+             */
+            this["succeeded"] = 0;
+        }
+        if (!("failed" in $$source)) {
+            /**
+             * @member
+             * @type {number}
+             */
+            this["failed"] = 0;
+        }
+        if (!("cancelled" in $$source)) {
+            /**
+             * @member
+             * @type {boolean}
+             */
+            this["cancelled"] = false;
+        }
+        if (!("failures" in $$source)) {
+            /**
+             * @member
+             * @type {BulkResolveFailure[]}
+             */
+            this["failures"] = [];
+        }
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new BulkResolveSummaryDTO instance from a string or object.
+     * @param {any} [$$source = {}]
+     * @returns {BulkResolveSummaryDTO}
+     */
+    static createFrom($$source = {}) {
+        const $$createField5_0 = $$createType56;
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        if ("failures" in $$parsedSource) {
+            $$parsedSource["failures"] = $$createField5_0($$parsedSource["failures"]);
+        }
+        return new BulkResolveSummaryDTO(/** @type {Partial<BulkResolveSummaryDTO>} */($$parsedSource));
+    }
+}
+
+/**
  * CameraCountDTO is one distinct camera in the library with its asset count. It
  * backs the Library browser's Camera filter (BrowserService.Cameras). Make and
  * Model are the exact stored values the grid filters on; Label is the display
@@ -2190,7 +2449,7 @@ export class ClassStatDTO {
      * @returns {ClassStatDTO}
      */
     static createFrom($$source = {}) {
-        const $$createField3_0 = $$createType51;
+        const $$createField3_0 = $$createType57;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("files" in $$parsedSource) {
             $$parsedSource["files"] = $$createField3_0($$parsedSource["files"]);
@@ -2249,7 +2508,7 @@ export class CleanupCompleted {
      * @returns {CleanupCompleted}
      */
     static createFrom($$source = {}) {
-        const $$createField1_0 = $$createType8;
+        const $$createField1_0 = $$createType12;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("report" in $$parsedSource) {
             $$parsedSource["report"] = $$createField1_0($$parsedSource["report"]);
@@ -2395,8 +2654,8 @@ export class CleanupReportDTO {
      * @returns {CleanupReportDTO}
      */
     static createFrom($$source = {}) {
-        const $$createField1_0 = $$createType53;
-        const $$createField9_0 = $$createType54;
+        const $$createField1_0 = $$createType59;
+        const $$createField9_0 = $$createType60;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("classes" in $$parsedSource) {
             $$parsedSource["classes"] = $$createField1_0($$parsedSource["classes"]);
@@ -2716,7 +2975,7 @@ export class CoverageRowDTO {
      * @returns {CoverageRowDTO}
      */
     static createFrom($$source = {}) {
-        const $$createField8_0 = $$createType56;
+        const $$createField8_0 = $$createType62;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("providers" in $$parsedSource) {
             $$parsedSource["providers"] = $$createField8_0($$parsedSource["providers"]);
@@ -2864,11 +3123,11 @@ export class DashboardStats {
      * @returns {DashboardStats}
      */
     static createFrom($$source = {}) {
-        const $$createField0_0 = $$createType57;
-        const $$createField2_0 = $$createType58;
-        const $$createField5_0 = $$createType60;
-        const $$createField6_0 = $$createType60;
-        const $$createField7_0 = $$createType62;
+        const $$createField0_0 = $$createType63;
+        const $$createField2_0 = $$createType64;
+        const $$createField5_0 = $$createType66;
+        const $$createField6_0 = $$createType66;
+        const $$createField7_0 = $$createType68;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("totals" in $$parsedSource) {
             $$parsedSource["totals"] = $$createField0_0($$parsedSource["totals"]);
@@ -3000,6 +3259,108 @@ export class DryRunReportDTO {
 }
 
 /**
+ * DuplicateFilterDTO selects a subset of duplicates for the listing/ID methods.
+ * GroupBy ("" | "folder" | "session") plus GroupKey narrows to one folder or one
+ * import session; SortBySize orders by wasted size descending. All filtering is
+ * pushed into SQL.
+ */
+export class DuplicateFilterDTO {
+    /**
+     * Creates a new DuplicateFilterDTO instance.
+     * @param {Partial<DuplicateFilterDTO>} [$$source = {}] - The source object to create the DuplicateFilterDTO.
+     */
+    constructor($$source = {}) {
+        if (!("groupBy" in $$source)) {
+            /**
+             * @member
+             * @type {string}
+             */
+            this["groupBy"] = "";
+        }
+        if (!("groupKey" in $$source)) {
+            /**
+             * @member
+             * @type {string}
+             */
+            this["groupKey"] = "";
+        }
+        if (!("sortBySize" in $$source)) {
+            /**
+             * @member
+             * @type {boolean}
+             */
+            this["sortBySize"] = false;
+        }
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new DuplicateFilterDTO instance from a string or object.
+     * @param {any} [$$source = {}]
+     * @returns {DuplicateFilterDTO}
+     */
+    static createFrom($$source = {}) {
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        return new DuplicateFilterDTO(/** @type {Partial<DuplicateFilterDTO>} */($$parsedSource));
+    }
+}
+
+/**
+ * DuplicateGroupDTO is one group in the picker: its raw Key (folder path or
+ * session ID, echoed back as GroupKey when filtering), a human Label, and the
+ * flagged-duplicate Count and WastedBytes in that group.
+ */
+export class DuplicateGroupDTO {
+    /**
+     * Creates a new DuplicateGroupDTO instance.
+     * @param {Partial<DuplicateGroupDTO>} [$$source = {}] - The source object to create the DuplicateGroupDTO.
+     */
+    constructor($$source = {}) {
+        if (!("key" in $$source)) {
+            /**
+             * @member
+             * @type {string}
+             */
+            this["key"] = "";
+        }
+        if (!("label" in $$source)) {
+            /**
+             * @member
+             * @type {string}
+             */
+            this["label"] = "";
+        }
+        if (!("count" in $$source)) {
+            /**
+             * @member
+             * @type {number}
+             */
+            this["count"] = 0;
+        }
+        if (!("wastedBytes" in $$source)) {
+            /**
+             * @member
+             * @type {number}
+             */
+            this["wastedBytes"] = 0;
+        }
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new DuplicateGroupDTO instance from a string or object.
+     * @param {any} [$$source = {}]
+     * @returns {DuplicateGroupDTO}
+     */
+    static createFrom($$source = {}) {
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        return new DuplicateGroupDTO(/** @type {Partial<DuplicateGroupDTO>} */($$parsedSource));
+    }
+}
+
+/**
  * DuplicatePairDTO pairs a duplicate asset with the original it duplicates,
  * plus per-side presence flags so the UI can label a copy-mode duplicate ("on
  * source only — never copied") and disable reveal actions for files that are not
@@ -3064,8 +3425,8 @@ export class DuplicatePairDTO {
      * @returns {DuplicatePairDTO}
      */
     static createFrom($$source = {}) {
-        const $$createField0_0 = $$createType63;
-        const $$createField1_0 = $$createType63;
+        const $$createField0_0 = $$createType69;
+        const $$createField1_0 = $$createType69;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("duplicate" in $$parsedSource) {
             $$parsedSource["duplicate"] = $$createField0_0($$parsedSource["duplicate"]);
@@ -3120,6 +3481,46 @@ export class DuplicateProgress {
     static createFrom($$source = {}) {
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         return new DuplicateProgress(/** @type {Partial<DuplicateProgress>} */($$parsedSource));
+    }
+}
+
+/**
+ * DuplicateStatsDTO reports the TRUE totals across all non-deleted flagged
+ * duplicates (never just the visible page): the pair count and the sum of the
+ * duplicate assets' FileSize (reclaimable "wasted" bytes).
+ */
+export class DuplicateStatsDTO {
+    /**
+     * Creates a new DuplicateStatsDTO instance.
+     * @param {Partial<DuplicateStatsDTO>} [$$source = {}] - The source object to create the DuplicateStatsDTO.
+     */
+    constructor($$source = {}) {
+        if (!("totalPairs" in $$source)) {
+            /**
+             * @member
+             * @type {number}
+             */
+            this["totalPairs"] = 0;
+        }
+        if (!("totalWastedBytes" in $$source)) {
+            /**
+             * @member
+             * @type {number}
+             */
+            this["totalWastedBytes"] = 0;
+        }
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new DuplicateStatsDTO instance from a string or object.
+     * @param {any} [$$source = {}]
+     * @returns {DuplicateStatsDTO}
+     */
+    static createFrom($$source = {}) {
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        return new DuplicateStatsDTO(/** @type {Partial<DuplicateStatsDTO>} */($$parsedSource));
     }
 }
 
@@ -3257,8 +3658,8 @@ export class FolderListingDTO {
      * @returns {FolderListingDTO}
      */
     static createFrom($$source = {}) {
-        const $$createField3_0 = $$createType65;
-        const $$createField4_0 = $$createType67;
+        const $$createField3_0 = $$createType71;
+        const $$createField4_0 = $$createType73;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("subfolders" in $$parsedSource) {
             $$parsedSource["subfolders"] = $$createField3_0($$parsedSource["subfolders"]);
@@ -3419,7 +3820,7 @@ export class ImportOptions {
      * @returns {ImportOptions}
      */
     static createFrom($$source = {}) {
-        const $$createField6_0 = $$createType51;
+        const $$createField6_0 = $$createType57;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("skipProviderIds" in $$parsedSource) {
             $$parsedSource["skipProviderIds"] = $$createField6_0($$parsedSource["skipProviderIds"]);
@@ -3866,8 +4267,8 @@ export class MatchDTO {
      * @returns {MatchDTO}
      */
     static createFrom($$source = {}) {
-        const $$createField1_0 = $$createType59;
-        const $$createField3_0 = $$createType51;
+        const $$createField1_0 = $$createType65;
+        const $$createField3_0 = $$createType57;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("source" in $$parsedSource) {
             $$parsedSource["source"] = $$createField1_0($$parsedSource["source"]);
@@ -3964,8 +4365,8 @@ export class OpenResultDTO {
      * @returns {OpenResultDTO}
      */
     static createFrom($$source = {}) {
-        const $$createField1_0 = $$createType69;
-        const $$createField2_0 = $$createType71;
+        const $$createField1_0 = $$createType75;
+        const $$createField2_0 = $$createType77;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("library" in $$parsedSource) {
             $$parsedSource["library"] = $$createField1_0($$parsedSource["library"]);
@@ -4100,7 +4501,7 @@ export class PageResult {
      * @returns {($$source?: any) => PageResult<T>}
      */
     static createFrom($$createParamT) {
-        const $$createField0_0 = $$createType72($$createParamT);
+        const $$createField0_0 = $$createType78($$createParamT);
         return ($$source = {}) => {
             let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
             if ("items" in $$parsedSource) {
@@ -4383,7 +4784,7 @@ export class ProviderDTO {
      * @returns {ProviderDTO}
      */
     static createFrom($$source = {}) {
-        const $$createField9_0 = $$createType74;
+        const $$createField9_0 = $$createType80;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("lastError" in $$parsedSource) {
             $$parsedSource["lastError"] = $$createField9_0($$parsedSource["lastError"]);
@@ -4578,7 +4979,7 @@ export class QueueSummaryDTO {
      * @returns {QueueSummaryDTO}
      */
     static createFrom($$source = {}) {
-        const $$createField8_0 = $$createType76;
+        const $$createField8_0 = $$createType82;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("cooldowns" in $$parsedSource) {
             $$parsedSource["cooldowns"] = $$createField8_0($$parsedSource["cooldowns"]);
@@ -4616,7 +5017,7 @@ export class QuitRequested {
      * @returns {QuitRequested}
      */
     static createFrom($$source = {}) {
-        const $$createField0_0 = $$createType78;
+        const $$createField0_0 = $$createType84;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("operations" in $$parsedSource) {
             $$parsedSource["operations"] = $$createField0_0($$parsedSource["operations"]);
@@ -4732,7 +5133,7 @@ export class RcloneRemotesDTO {
      * @returns {RcloneRemotesDTO}
      */
     static createFrom($$source = {}) {
-        const $$createField2_0 = $$createType51;
+        const $$createField2_0 = $$createType57;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("remotes" in $$parsedSource) {
             $$parsedSource["remotes"] = $$createField2_0($$parsedSource["remotes"]);
@@ -4833,7 +5234,7 @@ export class RecommendationDTO {
      * @returns {RecommendationDTO}
      */
     static createFrom($$source = {}) {
-        const $$createField3_0 = $$createType51;
+        const $$createField3_0 = $$createType57;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("reasons" in $$parsedSource) {
             $$parsedSource["reasons"] = $$createField3_0($$parsedSource["reasons"]);
@@ -5020,8 +5421,8 @@ export class ReorganizePlanDTO {
      * @returns {ReorganizePlanDTO}
      */
     static createFrom($$source = {}) {
-        const $$createField6_0 = $$createType80;
-        const $$createField7_0 = $$createType82;
+        const $$createField6_0 = $$createType86;
+        const $$createField7_0 = $$createType88;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("movesSample" in $$parsedSource) {
             $$parsedSource["movesSample"] = $$createField6_0($$parsedSource["movesSample"]);
@@ -5555,8 +5956,8 @@ export class SessionDetail {
      * @returns {SessionDetail}
      */
     static createFrom($$source = {}) {
-        const $$createField0_0 = $$createType83;
-        const $$createField1_0 = $$createType62;
+        const $$createField0_0 = $$createType89;
+        const $$createField1_0 = $$createType68;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("session" in $$parsedSource) {
             $$parsedSource["session"] = $$createField0_0($$parsedSource["session"]);
@@ -6055,7 +6456,7 @@ export class SourceEvaluated {
      * @returns {SourceEvaluated}
      */
     static createFrom($$source = {}) {
-        const $$createField2_0 = $$createType14;
+        const $$createField2_0 = $$createType18;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("report" in $$parsedSource) {
             $$parsedSource["report"] = $$createField2_0($$parsedSource["report"]);
@@ -6219,6 +6620,44 @@ export class StartAnalyzeResult {
     static createFrom($$source = {}) {
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         return new StartAnalyzeResult(/** @type {Partial<StartAnalyzeResult>} */($$parsedSource));
+    }
+}
+
+/**
+ * StartBulkResolveDTO is returned immediately once a bulk resolve launches.
+ */
+export class StartBulkResolveDTO {
+    /**
+     * Creates a new StartBulkResolveDTO instance.
+     * @param {Partial<StartBulkResolveDTO>} [$$source = {}] - The source object to create the StartBulkResolveDTO.
+     */
+    constructor($$source = {}) {
+        if (!("action" in $$source)) {
+            /**
+             * @member
+             * @type {string}
+             */
+            this["action"] = "";
+        }
+        if (!("total" in $$source)) {
+            /**
+             * @member
+             * @type {number}
+             */
+            this["total"] = 0;
+        }
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new StartBulkResolveDTO instance from a string or object.
+     * @param {any} [$$source = {}]
+     * @returns {StartBulkResolveDTO}
+     */
+    static createFrom($$source = {}) {
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        return new StartBulkResolveDTO(/** @type {Partial<StartBulkResolveDTO>} */($$parsedSource));
     }
 }
 
@@ -6730,7 +7169,7 @@ export class VolumeDTO {
      * @returns {VolumeDTO}
      */
     static createFrom($$source = {}) {
-        const $$createField16_0 = $$createType51;
+        const $$createField16_0 = $$createType57;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("warnings" in $$parsedSource) {
             $$parsedSource["warnings"] = $$createField16_0($$parsedSource["warnings"]);
@@ -6908,82 +7347,88 @@ const $$createType1 = ImportProgress.createFrom;
 const $$createType2 = $Create.Nullable($$createType1);
 const $$createType3 = DryRunReportDTO.createFrom;
 const $$createType4 = $Create.Nullable($$createType3);
-const $$createType5 = CleanupProgress.createFrom;
+const $$createType5 = BulkResolveProgress.createFrom;
 const $$createType6 = $Create.Nullable($$createType5);
-const $$createType7 = CleanupReportDTO.createFrom;
+const $$createType7 = BulkResolveSummaryDTO.createFrom;
 const $$createType8 = $Create.Nullable($$createType7);
-const $$createType9 = SourceProgress.createFrom;
+const $$createType9 = CleanupProgress.createFrom;
 const $$createType10 = $Create.Nullable($$createType9);
-const $$createType11 = ClearSourceResultDTO.createFrom;
+const $$createType11 = CleanupReportDTO.createFrom;
 const $$createType12 = $Create.Nullable($$createType11);
-const $$createType13 = SafeToEraseDTO.createFrom;
+const $$createType13 = SourceProgress.createFrom;
 const $$createType14 = $Create.Nullable($$createType13);
-const $$createType15 = db$0.Meta.createFrom;
+const $$createType15 = ClearSourceResultDTO.createFrom;
 const $$createType16 = $Create.Nullable($$createType15);
-const $$createType17 = gorm$0.DB.createFrom;
+const $$createType17 = SafeToEraseDTO.createFrom;
 const $$createType18 = $Create.Nullable($$createType17);
-const $$createType19 = repo$0.AssetRepo.createFrom;
+const $$createType19 = db$0.Meta.createFrom;
 const $$createType20 = $Create.Nullable($$createType19);
-const $$createType21 = repo$0.SessionRepo.createFrom;
+const $$createType21 = gorm$0.DB.createFrom;
 const $$createType22 = $Create.Nullable($$createType21);
-const $$createType23 = repo$0.SourceRepo.createFrom;
+const $$createType23 = repo$0.AssetRepo.createFrom;
 const $$createType24 = $Create.Nullable($$createType23);
-const $$createType25 = repo$0.BackupRepo.createFrom;
+const $$createType25 = repo$0.SessionRepo.createFrom;
 const $$createType26 = $Create.Nullable($$createType25);
-const $$createType27 = repo$0.LogRepo.createFrom;
+const $$createType27 = repo$0.SourceRepo.createFrom;
 const $$createType28 = $Create.Nullable($$createType27);
-const $$createType29 = repo$0.SettingsRepo.createFrom;
+const $$createType29 = repo$0.BackupRepo.createFrom;
 const $$createType30 = $Create.Nullable($$createType29);
-const $$createType31 = backup$0.Manager.createFrom;
+const $$createType31 = repo$0.LogRepo.createFrom;
 const $$createType32 = $Create.Nullable($$createType31);
-const $$createType33 = importer$0.Pipeline.createFrom;
+const $$createType33 = repo$0.SettingsRepo.createFrom;
 const $$createType34 = $Create.Nullable($$createType33);
-const $$createType35 = cleanup$0.Analyzer.createFrom;
+const $$createType35 = backup$0.Manager.createFrom;
 const $$createType36 = $Create.Nullable($$createType35);
-const $$createType37 = source$0.Identifier.createFrom;
+const $$createType37 = importer$0.Pipeline.createFrom;
 const $$createType38 = $Create.Nullable($$createType37);
-const $$createType39 = volumes$0.Collector.createFrom;
+const $$createType39 = cleanup$0.Analyzer.createFrom;
 const $$createType40 = $Create.Nullable($$createType39);
-const $$createType41 = thumbs$0.Cache.createFrom;
+const $$createType41 = source$0.Identifier.createFrom;
 const $$createType42 = $Create.Nullable($$createType41);
-const $$createType43 = BackupJobRefDTO.createFrom;
-const $$createType44 = $Create.Array($$createType43);
-const $$createType45 = AssetRefDTO.createFrom;
+const $$createType43 = volumes$0.Collector.createFrom;
+const $$createType44 = $Create.Nullable($$createType43);
+const $$createType45 = thumbs$0.Cache.createFrom;
 const $$createType46 = $Create.Nullable($$createType45);
-const $$createType47 = $Create.Array($$createType45);
-const $$createType48 = AssetsOverTimeBucketDTO.createFrom;
-const $$createType49 = $Create.Array($$createType48);
-const $$createType50 = QueueSummaryDTO.createFrom;
-const $$createType51 = $Create.Array($Create.Any);
-const $$createType52 = ClassStatDTO.createFrom;
+const $$createType47 = BackupJobRefDTO.createFrom;
+const $$createType48 = $Create.Array($$createType47);
+const $$createType49 = AssetRefDTO.createFrom;
+const $$createType50 = $Create.Nullable($$createType49);
+const $$createType51 = $Create.Array($$createType49);
+const $$createType52 = AssetsOverTimeBucketDTO.createFrom;
 const $$createType53 = $Create.Array($$createType52);
-const $$createType54 = RecommendationDTO.createFrom;
-const $$createType55 = ProviderCoverageDTO.createFrom;
+const $$createType54 = QueueSummaryDTO.createFrom;
+const $$createType55 = BulkResolveFailure.createFrom;
 const $$createType56 = $Create.Array($$createType55);
-const $$createType57 = TotalsDTO.createFrom;
-const $$createType58 = BackupSummaryDTO.createFrom;
-const $$createType59 = SourceDTO.createFrom;
-const $$createType60 = $Create.Array($$createType59);
-const $$createType61 = LogEntryDTO.createFrom;
+const $$createType57 = $Create.Array($Create.Any);
+const $$createType58 = ClassStatDTO.createFrom;
+const $$createType59 = $Create.Array($$createType58);
+const $$createType60 = RecommendationDTO.createFrom;
+const $$createType61 = ProviderCoverageDTO.createFrom;
 const $$createType62 = $Create.Array($$createType61);
-const $$createType63 = AssetDTO.createFrom;
-const $$createType64 = FolderEntryDTO.createFrom;
-const $$createType65 = $Create.Array($$createType64);
-const $$createType66 = BrowseAssetDTO.createFrom;
-const $$createType67 = PageResult.createFrom($$createType66);
-const $$createType68 = CurrentLibraryDTO.createFrom;
-const $$createType69 = $Create.Nullable($$createType68);
-const $$createType70 = LockConflictDTO.createFrom;
-const $$createType71 = $Create.Nullable($$createType70);
-const $$createType72 = /** @type {(...args: any[]) => any} */(($$createParamT) => $Create.Array($$createParamT));
-const $$createType73 = ProviderErrorDTO.createFrom;
-const $$createType74 = $Create.Nullable($$createType73);
-const $$createType75 = ProviderCooldownDTO.createFrom;
-const $$createType76 = $Create.Array($$createType75);
-const $$createType77 = OperationInfo.createFrom;
-const $$createType78 = $Create.Array($$createType77);
-const $$createType79 = ReorganizeMoveDTO.createFrom;
-const $$createType80 = $Create.Array($$createType79);
-const $$createType81 = ReorganizeSkipDTO.createFrom;
+const $$createType63 = TotalsDTO.createFrom;
+const $$createType64 = BackupSummaryDTO.createFrom;
+const $$createType65 = SourceDTO.createFrom;
+const $$createType66 = $Create.Array($$createType65);
+const $$createType67 = LogEntryDTO.createFrom;
+const $$createType68 = $Create.Array($$createType67);
+const $$createType69 = AssetDTO.createFrom;
+const $$createType70 = FolderEntryDTO.createFrom;
+const $$createType71 = $Create.Array($$createType70);
+const $$createType72 = BrowseAssetDTO.createFrom;
+const $$createType73 = PageResult.createFrom($$createType72);
+const $$createType74 = CurrentLibraryDTO.createFrom;
+const $$createType75 = $Create.Nullable($$createType74);
+const $$createType76 = LockConflictDTO.createFrom;
+const $$createType77 = $Create.Nullable($$createType76);
+const $$createType78 = /** @type {(...args: any[]) => any} */(($$createParamT) => $Create.Array($$createParamT));
+const $$createType79 = ProviderErrorDTO.createFrom;
+const $$createType80 = $Create.Nullable($$createType79);
+const $$createType81 = ProviderCooldownDTO.createFrom;
 const $$createType82 = $Create.Array($$createType81);
-const $$createType83 = SessionDTO.createFrom;
+const $$createType83 = OperationInfo.createFrom;
+const $$createType84 = $Create.Array($$createType83);
+const $$createType85 = ReorganizeMoveDTO.createFrom;
+const $$createType86 = $Create.Array($$createType85);
+const $$createType87 = ReorganizeSkipDTO.createFrom;
+const $$createType88 = $Create.Array($$createType87);
+const $$createType89 = SessionDTO.createFrom;

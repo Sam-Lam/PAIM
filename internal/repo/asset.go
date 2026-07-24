@@ -606,15 +606,128 @@ type DuplicatePair struct {
 	Original  domain.Asset `json:"original"`
 }
 
+// dupWhere is the predicate identifying a flagged duplicate asset (references an
+// original via DuplicateOfAssetID). Soft-deleted rows are excluded by GORM's
+// default scope on domain.Asset.
+const dupWhere = "duplicate_of_asset_id IS NOT NULL AND duplicate_of_asset_id <> ''"
+
+// dupParentDirExpr is a SQLite expression yielding the parent directory of
+// current_archive_path (library-root-relative, forward slashes): everything
+// before the last '/'. It uses the standard rtrim idiom — rtrim(path, <all
+// non-slash characters of path>) strips the trailing filename up to (and
+// including) the last slash, then rtrim(..., '/') drops that slash. A root-level
+// file with no slash (or a copy-mode duplicate with an empty archive path)
+// yields the empty string, which the service labels distinctly.
+const dupParentDirExpr = "rtrim(rtrim(current_archive_path, replace(current_archive_path, '/', '')), '/')"
+
+// DuplicateFilter constrains a duplicate listing/aggregation. The zero value
+// matches every flagged duplicate. Folder and SessionID filter in SQL (never in
+// Go); SortBySize orders by wasted size (the duplicate's FileSize) descending.
+type DuplicateFilter struct {
+	// HasFolder activates the Folder predicate (distinguishing "no folder filter"
+	// from a filter on the empty/root folder).
+	HasFolder  bool
+	Folder     string
+	SessionID  string
+	SortBySize bool
+}
+
+// duplicateBase builds the filtered base query over flagged duplicates.
+func duplicateBase(db *gorm.DB, f DuplicateFilter) *gorm.DB {
+	q := db.Model(&domain.Asset{}).Where(dupWhere)
+	if f.HasFolder {
+		q = q.Where(dupParentDirExpr+" = ?", f.Folder)
+	}
+	if f.SessionID != "" {
+		q = q.Where("session_id = ?", f.SessionID)
+	}
+	return q
+}
+
+// duplicateOrder applies the stable ordering for a filter: by wasted size
+// descending when requested, otherwise newest first.
+func duplicateOrder(q *gorm.DB, f DuplicateFilter) *gorm.DB {
+	if f.SortBySize {
+		return q.Order("file_size DESC, created_at DESC")
+	}
+	return q.Order("created_at DESC")
+}
+
+// DuplicateStats returns the true count of flagged duplicates matching f and the
+// sum of their FileSize (wasted bytes) — computed entirely in SQL, independent of
+// any pagination. A zero filter yields the archive-wide totals.
+func (r *AssetRepo) DuplicateStats(ctx context.Context, f DuplicateFilter) (count, wastedBytes int64, err error) {
+	var row struct {
+		Cnt    int64
+		Wasted int64
+	}
+	if err := duplicateBase(r.db.WithContext(ctx), f).
+		Select("COUNT(*) AS cnt, COALESCE(SUM(file_size), 0) AS wasted").
+		Scan(&row).Error; err != nil {
+		return 0, 0, fmt.Errorf("repo: duplicate stats: %w", err)
+	}
+	return row.Cnt, row.Wasted, nil
+}
+
+// DuplicateIDs returns the IDs of every flagged duplicate matching f, ordered the
+// same way ListDuplicatesFiltered pages them — so "select all in filter" yields a
+// stable, complete set without paging rows through the caller.
+func (r *AssetRepo) DuplicateIDs(ctx context.Context, f DuplicateFilter) ([]string, error) {
+	var ids []string
+	q := duplicateOrder(duplicateBase(r.db.WithContext(ctx), f), f)
+	if err := q.Pluck("id", &ids).Error; err != nil {
+		return nil, fmt.Errorf("repo: duplicate ids: %w", err)
+	}
+	return ids, nil
+}
+
+// DuplicateGroup is one distinct group (by folder or session) with its flagged-
+// duplicate count and wasted bytes.
+type DuplicateGroup struct {
+	Key         string
+	Count       int64
+	WastedBytes int64
+}
+
+// DuplicateGroups returns the distinct groups of flagged duplicates by "folder"
+// (parent directory of the archive path) or "session" (import session), each with
+// its count and wasted bytes, ordered by wasted bytes descending. All grouping is
+// done in SQL.
+func (r *AssetRepo) DuplicateGroups(ctx context.Context, groupBy string) ([]DuplicateGroup, error) {
+	var keyExpr string
+	switch groupBy {
+	case "folder":
+		keyExpr = dupParentDirExpr
+	case "session":
+		keyExpr = "session_id"
+	default:
+		return nil, fmt.Errorf("repo: duplicate groups: unknown groupBy %q", groupBy)
+	}
+	var groups []DuplicateGroup
+	if err := r.db.WithContext(ctx).
+		Model(&domain.Asset{}).
+		Where(dupWhere).
+		Select(keyExpr + " AS key, COUNT(*) AS count, COALESCE(SUM(file_size), 0) AS wasted_bytes").
+		Group(keyExpr).
+		Order("wasted_bytes DESC").
+		Scan(&groups).Error; err != nil {
+		return nil, fmt.Errorf("repo: duplicate groups: %w", err)
+	}
+	return groups, nil
+}
+
 // ListDuplicates returns all non-deleted assets that reference an original via
-// DuplicateOfAssetID, paired with that original.
+// DuplicateOfAssetID, paired with that original (newest first, unfiltered).
 func (r *AssetRepo) ListDuplicates(ctx context.Context, page Page) ([]DuplicatePair, error) {
+	return r.ListDuplicatesFiltered(ctx, DuplicateFilter{}, page)
+}
+
+// ListDuplicatesFiltered returns a page of duplicate/original pairs matching f,
+// ordered per the filter (by wasted size or newest first).
+func (r *AssetRepo) ListDuplicatesFiltered(ctx context.Context, f DuplicateFilter, page Page) ([]DuplicatePair, error) {
 	limit, offset := page.apply()
 
-	q := r.db.WithContext(ctx).
-		Model(&domain.Asset{}).
-		Where("duplicate_of_asset_id IS NOT NULL AND duplicate_of_asset_id <> ''").
-		Order("created_at DESC")
+	q := duplicateOrder(duplicateBase(r.db.WithContext(ctx), f), f)
 	if limit > 0 {
 		q = q.Limit(limit)
 	}

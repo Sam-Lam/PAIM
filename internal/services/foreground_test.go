@@ -123,12 +123,13 @@ func TestForegroundYield_NilSafe(t *testing.T) {
 func TestForegroundKindsPartitionAllKinds(t *testing.T) {
 	// The expected classification, maintained alongside AllOperationKinds.
 	wantForeground := map[string]bool{
-		OpKindImport:      true,
-		OpKindAnalyze:     true,
-		OpKindReorganize:  true,
-		OpKindSafeToErase: true,
-		OpKindCleanup:     true,
-		OpKindClearSource: true,
+		OpKindImport:           true,
+		OpKindAnalyze:          true,
+		OpKindReorganize:       true,
+		OpKindSafeToErase:      true,
+		OpKindCleanup:          true,
+		OpKindClearSource:      true,
+		OpKindDuplicateResolve: true,
 	}
 	wantBackground := map[string]bool{
 		OpKindBackupUpload:    true,

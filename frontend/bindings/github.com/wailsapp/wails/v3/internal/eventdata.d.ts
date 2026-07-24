@@ -23,6 +23,8 @@ declare module "@wailsio/runtime" {
             "cleanup:completed": services$0.CleanupCompleted;
             "cleanup:progress": services$0.CleanupProgress;
             "duplicate:progress": services$0.DuplicateProgress;
+            "duplicates:completed": services$0.BulkResolveSummaryDTO;
+            "duplicates:progress": services$0.BulkResolveProgress;
             "import:completed": services$0.ImportCompleted;
             "import:progress": services$0.ImportProgress;
             "library:progress": services$0.LibraryProgress;
