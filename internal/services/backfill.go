@@ -51,7 +51,7 @@ func (s *BackupService) BackfillStatus(ctx context.Context) (BackfillStatusDTO, 
 // (ErrBackfillInProgress otherwise).
 //
 // Eligibility mirrors the importer exactly: non-deleted, verified assets with an
-// archive copy (CurrentArchivePath <> ''). Copy-mode duplicate placeholders (empty
+// archive copy (CurrentArchivePath <> ”). Copy-mode duplicate placeholders (empty
 // path) are excluded; adopt-flagged duplicates (which carry a path) are included.
 // Each backfilled job is stamped with the same capture/import-date SortKey the
 // importer uses (backup.SortKeyForAsset) so it honors the provider's upload order.
@@ -77,7 +77,9 @@ func (s *BackupService) StartBackfill(ctx context.Context, providerID string) (B
 		return BackfillStatusDTO{}, fmt.Errorf("services: start backfill: provider %q is disabled", providerID)
 	}
 
-	total, err := s.assets.CountEligibleForBackup(ctx)
+	// The eligible total (progress denominator) is scope-aware: a scoped provider
+	// backfills only its in-scope kinds, so out-of-scope assets never enter the scan.
+	total, err := s.assets.CountEligibleForBackup(ctx, provider.MediaScope)
 	if err != nil {
 		return BackfillStatusDTO{}, err
 	}
@@ -98,7 +100,7 @@ func (s *BackupService) StartBackfill(ctx context.Context, providerID string) (B
 	s.bfMu.Unlock()
 
 	s.sleep.Acquire()
-	go s.runBackfill(runCtx, provider.ID, provider.PluginName, int(total))
+	go s.runBackfill(runCtx, provider.ID, provider.PluginName, provider.MediaScope, int(total))
 
 	return BackfillStatusDTO{Running: true, ProviderID: providerID, Done: 0, Total: int(total)}, nil
 }
@@ -116,11 +118,12 @@ func (s *BackupService) CancelBackfill(ctx context.Context) error {
 	return nil
 }
 
-// runBackfill is the background loop: it pages eligible assets by ID and enqueues
-// an idempotent job per asset for the provider, one transaction per page. It
-// emits throttled backup:backfill-progress ticks and a terminal
-// backup:backfill-completed event with the final {enqueued, skipped} counts.
-func (s *BackupService) runBackfill(ctx context.Context, providerID, pluginName string, total int) {
+// runBackfill is the background driver: it pages eligible assets by ID and
+// enqueues an idempotent job per asset for the provider (scope-aware — the page
+// query filters to the provider's in-scope kinds), then emits a terminal
+// backup:backfill-progress tick and a backup:backfill-completed event with the
+// final {enqueued, skipped} counts.
+func (s *BackupService) runBackfill(ctx context.Context, providerID, pluginName, scope string, total int) {
 	var enqueued, skipped int
 	cancelled := false
 
@@ -151,6 +154,17 @@ func (s *BackupService) runBackfill(ctx context.Context, providerID, pluginName 
 			"provider", providerID, "enqueued", enqueued, "skipped", skipped, "cancelled", cancelled)
 	}()
 
+	enqueued, skipped, cancelled = s.scanAndEnqueue(ctx, providerID, pluginName, scope, total)
+}
+
+// scanAndEnqueue pages the provider's in-scope eligible assets by ID and enqueues
+// an idempotent job per asset, one transaction per page. It updates s.bfDone and
+// emits throttled backup:backfill-progress ticks as it scans. It returns the
+// newly-created and already-present (skipped) counts and whether the run was
+// cancelled early. It is shared by runBackfill and runReconcile so the "enqueue
+// every missing in-scope job" path is identical for both (and so a backfill and a
+// reconcile can never run concurrently — both hold the bf single-instance guard).
+func (s *BackupService) scanAndEnqueue(ctx context.Context, providerID, pluginName, scope string, total int) (enqueued, skipped int, cancelled bool) {
 	pageSize := s.bfPageSize
 	if pageSize <= 0 {
 		pageSize = backfillPageSize
@@ -160,20 +174,19 @@ func (s *BackupService) runBackfill(ctx context.Context, providerID, pluginName 
 	scanned := 0
 	for {
 		if ctx.Err() != nil {
-			cancelled = true
-			return
+			return enqueued, skipped, true
 		}
-		page, err := s.assets.EligibleForBackupPage(ctx, afterID, pageSize)
+		page, err := s.assets.EligibleForBackupPage(ctx, afterID, pageSize, scope)
 		if err != nil {
 			if ctx.Err() != nil {
 				cancelled = true
 			} else {
 				s.log.Error("backup backfill: read eligible page", "provider", providerID, "after", afterID, "error", err.Error())
 			}
-			return
+			return enqueued, skipped, cancelled
 		}
 		if len(page) == 0 {
-			return // drained: all eligible assets scanned
+			return enqueued, skipped, cancelled // drained: all in-scope eligible assets scanned
 		}
 
 		// Enqueue this page inside one transaction for insert throughput. Enqueue is
@@ -189,7 +202,7 @@ func (s *BackupService) runBackfill(ctx context.Context, providerID, pluginName 
 			} else {
 				s.log.Error("backup backfill: enqueue page", "provider", providerID, "error", err.Error())
 			}
-			return
+			return enqueued, skipped, cancelled
 		}
 
 		s.bfMu.Lock()
@@ -202,7 +215,7 @@ func (s *BackupService) runBackfill(ctx context.Context, providerID, pluginName 
 		}
 
 		if len(page) < pageSize {
-			return // last (short) page
+			return enqueued, skipped, cancelled // last (short) page
 		}
 	}
 }

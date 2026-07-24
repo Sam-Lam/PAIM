@@ -63,7 +63,7 @@ func TestBackfillSkipsOptedOut(t *testing.T) {
 	}
 
 	// Missing count excludes the opted-out asset (only the normal one is a gap).
-	if n, err := assets.CountEligibleMissingBackup(ctx, providerID); err != nil {
+	if n, err := assets.CountEligibleMissingBackup(ctx, providerID, ""); err != nil {
 		t.Fatalf("missing count: %v", err)
 	} else if n != 1 {
 		t.Fatalf("missing count = %d, want 1 (opted_out excluded)", n)

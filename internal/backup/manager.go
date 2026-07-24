@@ -13,6 +13,7 @@ import (
 
 	"github.com/Sam-Lam/PAIM/internal/domain"
 	"github.com/Sam-Lam/PAIM/internal/library"
+	"github.com/Sam-Lam/PAIM/internal/mediatype"
 	"github.com/Sam-Lam/PAIM/internal/repo"
 	"gorm.io/gorm"
 )
@@ -942,6 +943,18 @@ func AggregateBackupStatus(jobs []domain.BackupJob, isMirror func(providerID str
 // backup work (all providers skipped, or none enabled, => zero => the caller
 // records none). This signature is injected into the importer and must remain
 // stable.
+//
+// Per-provider media scope is honored here: a provider whose MediaScope excludes
+// the asset's kind (mediatype.ScopeIncludes over the asset's OriginalExtension,
+// so each Live Photo component is judged by its own extension) gets NO job at all —
+// not even an opted-out one. This is the KEY distinction from a skipProviderIDs
+// opt-out: an opt-out is a durable, user-recorded per-asset choice (an opted_out
+// row); a scope exclusion is a DERIVED policy — recomputed from the provider's
+// current scope every time, never persisted as a job. A later scope change
+// therefore changes eligibility with no stale rows to clean up (reconcile handles
+// jobs already queued under a wider scope). An out-of-scope provider is also
+// skipped from the opt-out branch: recording an opt-out for a kind the provider
+// does not accept would be meaningless.
 func (m *Manager) EnqueueForAsset(ctx context.Context, tx *gorm.DB, assetID string, skipProviderIDs []string) (int, error) {
 	providers, err := m.providers.WithTx(tx).ListEnabled(ctx)
 	if err != nil {
@@ -963,6 +976,11 @@ func (m *Manager) EnqueueForAsset(ctx context.Context, tx *gorm.DB, assetID stri
 	q := m.jobs.WithTx(tx)
 	created := 0
 	for _, p := range providers {
+		// Derived scope exclusion: a provider whose scope does not accept this
+		// asset's kind gets no job (and no opt-out row) — see the doc comment.
+		if !mediatype.ScopeIncludes(p.MediaScope, asset.OriginalExtension) {
+			continue
+		}
 		if skip[p.ID] {
 			// Record the opt-out durably (opted_out), stamped with the same SortKey a
 			// real job would carry so a later "Queue anyway" claims it in provider

@@ -100,12 +100,27 @@ export function PauseBackupsDuringForeground() {
 }
 
 /**
+ * PreviewReconcile reports what a "recalculate queue" would do for the provider,
+ * without changing anything: ToCancel counts its pending/paused jobs now out of
+ * scope, ToEnqueue counts its in-scope eligible assets missing a job. It is the
+ * count behind the inline "Scope changed — recalculate? (X to remove, Y to add)"
+ * prompt. An empty ("all kinds") scope has nothing out of scope, so ToCancel is 0.
+ * @param {string} providerID
+ * @returns {$CancellablePromise<$models.ReconcilePreviewDTO>}
+ */
+export function PreviewReconcile(providerID) {
+    return $Call.ByID(3578253622, providerID).then(/** @type {($result: any) => any} */(($result) => {
+        return $$createType3($result);
+    }));
+}
+
+/**
  * QueueSummary returns the count of jobs in each status.
  * @returns {$CancellablePromise<$models.QueueSummaryDTO>}
  */
 export function QueueSummary() {
     return $Call.ByID(3240464335).then(/** @type {($result: any) => any} */(($result) => {
-        return $$createType3($result);
+        return $$createType4($result);
     }));
 }
 
@@ -172,7 +187,7 @@ export function RetryAllFailed() {
  */
 export function SessionBackupStatus(sessionID) {
     return $Call.ByID(3411884294, sessionID).then(/** @type {($result: any) => any} */(($result) => {
-        return $$createType4($result);
+        return $$createType5($result);
     }));
 }
 
@@ -219,7 +234,7 @@ export function SetSleepGuard(g) {
  * (ErrBackfillInProgress otherwise).
  * 
  * Eligibility mirrors the importer exactly: non-deleted, verified assets with an
- * archive copy (CurrentArchivePath <> ''). Copy-mode duplicate placeholders (empty
+ * archive copy (CurrentArchivePath <> ”). Copy-mode duplicate placeholders (empty
  * path) are excluded; adopt-flagged duplicates (which carry a path) are included.
  * Each backfilled job is stamped with the same capture/import-date SortKey the
  * importer uses (backup.SortKeyForAsset) so it honors the provider's upload order.
@@ -232,9 +247,34 @@ export function StartBackfill(providerID) {
     }));
 }
 
+/**
+ * StartReconcile brings the provider's queue into line with its current scope in
+ * the background: it (a) cancels its pending/paused jobs whose asset is now out of
+ * scope (batch transition, stamping outOfScopeNote), then (b) runs the scope-aware
+ * backfill path to enqueue every in-scope eligible asset that lacks a job. It
+ * reuses the backfill single-instance guard, so a reconcile and a backfill can
+ * never run concurrently (ErrBackfillInProgress otherwise). Progress reuses the
+ * backup:backfill-progress events (so a re-attaching UI shows the same inline
+ * bar); completion emits a backup:reconcile-completed event carrying {cancelled,
+ * enqueued} for the toast, plus backup:queue-changed.
+ * 
+ * The out-of-scope cancel is a DERIVED reconciliation of jobs enqueued under a
+ * wider scope — it is NOT a per-import opt-out (those durable opted_out rows are
+ * left untouched; only pending/paused jobs are reclaimed). This mirrors the
+ * enqueue path, where scope exclusion is likewise derived, never recorded.
+ * @param {string} providerID
+ * @returns {$CancellablePromise<$models.BackfillStatusDTO>}
+ */
+export function StartReconcile(providerID) {
+    return $Call.ByID(410631250, providerID).then(/** @type {($result: any) => any} */(($result) => {
+        return $$createType0($result);
+    }));
+}
+
 // Private type creation functions
 const $$createType0 = $models.BackfillStatusDTO.createFrom;
 const $$createType1 = $models.BackupJobDTO.createFrom;
 const $$createType2 = $models.PageResult.createFrom($$createType1);
-const $$createType3 = $models.QueueSummaryDTO.createFrom;
-const $$createType4 = $models.SessionBackupStatusDTO.createFrom;
+const $$createType3 = $models.ReconcilePreviewDTO.createFrom;
+const $$createType4 = $models.QueueSummaryDTO.createFrom;
+const $$createType5 = $models.SessionBackupStatusDTO.createFrom;

@@ -55,6 +55,20 @@ export function Cameras() {
 }
 
 /**
+ * CoverageProviders lists every destination ever referenced by a backup job
+ * (including removed providers, resolved Unscoped) for the coverage table's
+ * column set and the per-provider status filter dropdown. Live destinations sort
+ * first, then removed ones; within each group, by name — so the primary columns
+ * are the destinations still in use.
+ * @returns {$CancellablePromise<$models.CoverageProviderDTO[]>}
+ */
+export function CoverageProviders() {
+    return $Call.ByID(739639758).then(/** @type {($result: any) => any} */(($result) => {
+        return $$createType4($result);
+    }));
+}
+
+/**
  * ListAssets returns a page of slim asset tiles matching filters, sorted
  * capture-date DESC (assets without a capture date sort last). Total is the true
  * match count so the grid can page correctly.
@@ -65,7 +79,35 @@ export function Cameras() {
  */
 export function ListAssets(filters, page, pageSize) {
     return $Call.ByID(2494688543, filters, page, pageSize).then(/** @type {($result: any) => any} */(($result) => {
-        return $$createType4($result);
+        return $$createType6($result);
+    }));
+}
+
+/**
+ * ListCoverage returns a page of the Backup Coverage table: one row per asset
+ * (matching the same Batch-B filters ListAssets accepts) with its provenance and
+ * its per-destination backup state. When providerStatus is set, the page is
+ * restricted to assets whose backup state for that destination matches the given
+ * coverage status (composed as an EXISTS/NOT EXISTS predicate on the jobs table,
+ * AND-ed with every other filter).
+ * 
+ * Query shape / scale: the page of assets is fetched first via AssetRepo.List
+ * (the same filtered, capture-date-ordered, indexed query the grid uses). Then a
+ * SINGLE query loads every non-deleted backup job for that page's asset IDs (an
+ * IN clause over the indexed asset_id), grouped in Go into asset -> destination
+ * -> newest job. Provider metadata (mirror/name/removed) is resolved with one
+ * Unscoped query over the destinations seen on the page, and per-row source
+ * labels are memoized by session. So a page costs O(1) queries regardless of page
+ * size — no per-asset or per-provider round-trips in the row loop.
+ * @param {$models.BrowseFilters} filters
+ * @param {$models.CoverageProviderFilter | null} providerStatus
+ * @param {number} page
+ * @param {number} pageSize
+ * @returns {$CancellablePromise<$models.PageResult<$models.CoverageRowDTO>>}
+ */
+export function ListCoverage(filters, providerStatus, page, pageSize) {
+    return $Call.ByID(1693375104, filters, providerStatus, page, pageSize).then(/** @type {($result: any) => any} */(($result) => {
+        return $$createType8($result);
     }));
 }
 
@@ -88,7 +130,7 @@ export function ListAssets(filters, page, pageSize) {
  */
 export function ListFolder(relDir, page, pageSize, sortBy, sortDir) {
     return $Call.ByID(3269834490, relDir, page, pageSize, sortBy, sortDir).then(/** @type {($result: any) => any} */(($result) => {
-        return $$createType5($result);
+        return $$createType9($result);
     }));
 }
 
@@ -99,8 +141,32 @@ export function ListFolder(relDir, page, pageSize, sortBy, sortDir) {
  */
 export function Months() {
     return $Call.ByID(1742568889).then(/** @type {($result: any) => any} */(($result) => {
-        return $$createType7($result);
+        return $$createType11($result);
     }));
+}
+
+/**
+ * QueueAssetsForProvider queues the given assets for one destination, returning
+ * how many were newly queued. Per asset: an existing opted_out job for the
+ * destination is un-skipped (opted_out -> pending); an asset with NO job for the
+ * destination gets a fresh pending job; an asset that already has a
+ * pending/running/completed job is left untouched (and not counted). It emits
+ * backup:queue-changed when anything was queued. assetIds is capped at
+ * coverageQueueCap per call.
+ * 
+ * Seam decision: the fresh-enqueue path reuses the exported, idempotent
+ * BackupRepo.Enqueue (owned elsewhere; called, not modified). There is no
+ * asset-scoped un-skip primitive — RequeueOptedOut is provider/session-scoped —
+ * so the opted_out -> pending flip is a guarded direct update in this file
+ * (WHERE destination = ? AND status = opted_out AND asset_id IN ?), mirroring
+ * RequeueOptedOut's transition exactly. TODO: consolidate the asset-scoped
+ * requeue into repo/backup.go once ownership allows.
+ * @param {string} providerID
+ * @param {string[]} assetIds
+ * @returns {$CancellablePromise<number>}
+ */
+export function QueueAssetsForProvider(providerID, assetIds) {
+    return $Call.ByID(135690922, providerID, assetIds);
 }
 
 /**
@@ -120,7 +186,7 @@ export function Months() {
  */
 export function RenameEventFolder(relDir, newLabel) {
     return $Call.ByID(1543151500, relDir, newLabel).then(/** @type {($result: any) => any} */(($result) => {
-        return $$createType5($result);
+        return $$createType9($result);
     }));
 }
 
@@ -162,6 +228,17 @@ export function SetActivity(a) {
 }
 
 /**
+ * SetEmitter injects the shared event emitter so the coverage view's bulk queue
+ * action can emit backup:queue-changed. Called once by main.go (mirrors how the
+ * backup services receive their emitter at construction).
+ * @param {$models.Emitter} e
+ * @returns {$CancellablePromise<void>}
+ */
+export function SetEmitter(e) {
+    return $Call.ByID(2242600140, e);
+}
+
+/**
  * SetGate injects the shared library gate. Called once by main.go after
  * construction; never called in unit tests (leaving the service ungated).
  * @param {$models.LibraryGate | null} gate
@@ -179,7 +256,7 @@ export function SetGate(gate) {
  */
 export function Years() {
     return $Call.ByID(2940347496).then(/** @type {($result: any) => any} */(($result) => {
-        return $$createType9($result);
+        return $$createType13($result);
     }));
 }
 
@@ -187,10 +264,14 @@ export function Years() {
 const $$createType0 = $models.AssetDetailDTO.createFrom;
 const $$createType1 = $models.CameraCountDTO.createFrom;
 const $$createType2 = $Create.Array($$createType1);
-const $$createType3 = $models.BrowseAssetDTO.createFrom;
-const $$createType4 = $models.PageResult.createFrom($$createType3);
-const $$createType5 = $models.FolderListingDTO.createFrom;
-const $$createType6 = $models.MonthCountDTO.createFrom;
-const $$createType7 = $Create.Array($$createType6);
-const $$createType8 = $models.YearCountDTO.createFrom;
-const $$createType9 = $Create.Array($$createType8);
+const $$createType3 = $models.CoverageProviderDTO.createFrom;
+const $$createType4 = $Create.Array($$createType3);
+const $$createType5 = $models.BrowseAssetDTO.createFrom;
+const $$createType6 = $models.PageResult.createFrom($$createType5);
+const $$createType7 = $models.CoverageRowDTO.createFrom;
+const $$createType8 = $models.PageResult.createFrom($$createType7);
+const $$createType9 = $models.FolderListingDTO.createFrom;
+const $$createType10 = $models.MonthCountDTO.createFrom;
+const $$createType11 = $Create.Array($$createType10);
+const $$createType12 = $models.YearCountDTO.createFrom;
+const $$createType13 = $Create.Array($$createType12);

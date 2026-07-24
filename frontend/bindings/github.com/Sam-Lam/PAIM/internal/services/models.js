@@ -1706,6 +1706,63 @@ export class BackupQueueChanged {
 }
 
 /**
+ * BackupReconcileCompleted is the payload for backup:reconcile-completed, emitted
+ * once when a "recalculate queue" reconcile finishes (or is cancelled). Cancelled
+ * is how many out-of-scope pending/paused jobs it cancelled; Enqueued is how many
+ * in-scope missing jobs it created. Aborted is true when the run was stopped early
+ * (the cancel step still applied; the enqueue phase may be partial and resumes on a
+ * later run). It drives the "Removed X · Queued Y" toast.
+ */
+export class BackupReconcileCompleted {
+    /**
+     * Creates a new BackupReconcileCompleted instance.
+     * @param {Partial<BackupReconcileCompleted>} [$$source = {}] - The source object to create the BackupReconcileCompleted.
+     */
+    constructor($$source = {}) {
+        if (!("providerId" in $$source)) {
+            /**
+             * @member
+             * @type {string}
+             */
+            this["providerId"] = "";
+        }
+        if (!("cancelled" in $$source)) {
+            /**
+             * @member
+             * @type {number}
+             */
+            this["cancelled"] = 0;
+        }
+        if (!("enqueued" in $$source)) {
+            /**
+             * @member
+             * @type {number}
+             */
+            this["enqueued"] = 0;
+        }
+        if (!("aborted" in $$source)) {
+            /**
+             * @member
+             * @type {boolean}
+             */
+            this["aborted"] = false;
+        }
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new BackupReconcileCompleted instance from a string or object.
+     * @param {any} [$$source = {}]
+     * @returns {BackupReconcileCompleted}
+     */
+    static createFrom($$source = {}) {
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        return new BackupReconcileCompleted(/** @type {Partial<BackupReconcileCompleted>} */($$parsedSource));
+    }
+}
+
+/**
  * BackupSummaryDTO is the dashboard's compact backup-queue view. Pending/Failed
  * are the HEADLINE numbers and count required (non-mirror) backups only, so a
  * convenience mirror lagging behind never inflates the failure count. MirrorPending
@@ -2428,6 +2485,199 @@ export class ClearSourceResultDTO {
 }
 
 /**
+ * CoverageProviderDTO describes one column of the coverage table: a destination
+ * ever referenced by a backup job. It survives provider removal (Removed=true,
+ * named from the soft-deleted row) so the table stays honest about where past
+ * backups went. Mirror marks a destination whose completed jobs are
+ * uploaded-but-unverifiable.
+ */
+export class CoverageProviderDTO {
+    /**
+     * Creates a new CoverageProviderDTO instance.
+     * @param {Partial<CoverageProviderDTO>} [$$source = {}] - The source object to create the CoverageProviderDTO.
+     */
+    constructor($$source = {}) {
+        if (!("providerId" in $$source)) {
+            /**
+             * @member
+             * @type {string}
+             */
+            this["providerId"] = "";
+        }
+        if (!("name" in $$source)) {
+            /**
+             * @member
+             * @type {string}
+             */
+            this["name"] = "";
+        }
+        if (!("mirror" in $$source)) {
+            /**
+             * @member
+             * @type {boolean}
+             */
+            this["mirror"] = false;
+        }
+        if (!("removed" in $$source)) {
+            /**
+             * @member
+             * @type {boolean}
+             */
+            this["removed"] = false;
+        }
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new CoverageProviderDTO instance from a string or object.
+     * @param {any} [$$source = {}]
+     * @returns {CoverageProviderDTO}
+     */
+    static createFrom($$source = {}) {
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        return new CoverageProviderDTO(/** @type {Partial<CoverageProviderDTO>} */($$parsedSource));
+    }
+}
+
+/**
+ * CoverageProviderFilter is the optional per-provider status filter for
+ * ListCoverage: restrict to assets whose backup state for ProviderID matches
+ * Status (a coverage status string). A nil pointer (or empty fields) applies no
+ * provider filter.
+ */
+export class CoverageProviderFilter {
+    /**
+     * Creates a new CoverageProviderFilter instance.
+     * @param {Partial<CoverageProviderFilter>} [$$source = {}] - The source object to create the CoverageProviderFilter.
+     */
+    constructor($$source = {}) {
+        if (!("providerId" in $$source)) {
+            /**
+             * @member
+             * @type {string}
+             */
+            this["providerId"] = "";
+        }
+        if (!("status" in $$source)) {
+            /**
+             * @member
+             * @type {string}
+             */
+            this["status"] = "";
+        }
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new CoverageProviderFilter instance from a string or object.
+     * @param {any} [$$source = {}]
+     * @returns {CoverageProviderFilter}
+     */
+    static createFrom($$source = {}) {
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        return new CoverageProviderFilter(/** @type {Partial<CoverageProviderFilter>} */($$parsedSource));
+    }
+}
+
+/**
+ * CoverageRowDTO is one asset row of the Backup Coverage table: its identity and
+ * provenance (name, resolved archive location, where it came from, taken/imported
+ * dates) plus its per-destination backup state. Providers carries ONLY the
+ * destinations this asset actually has a job for; a column in the table with no
+ * matching entry renders as "none".
+ */
+export class CoverageRowDTO {
+    /**
+     * Creates a new CoverageRowDTO instance.
+     * @param {Partial<CoverageRowDTO>} [$$source = {}] - The source object to create the CoverageRowDTO.
+     */
+    constructor($$source = {}) {
+        if (!("assetId" in $$source)) {
+            /**
+             * @member
+             * @type {string}
+             */
+            this["assetId"] = "";
+        }
+        if (!("filename" in $$source)) {
+            /**
+             * @member
+             * @type {string}
+             */
+            this["filename"] = "";
+        }
+        if (!("archivePath" in $$source)) {
+            /**
+             * resolved absolute
+             * @member
+             * @type {string}
+             */
+            this["archivePath"] = "";
+        }
+        if (!("sourceLabel" in $$source)) {
+            /**
+             * @member
+             * @type {string}
+             */
+            this["sourceLabel"] = "";
+        }
+        if (!("captureDate" in $$source)) {
+            /**
+             * @member
+             * @type {string | null}
+             */
+            this["captureDate"] = null;
+        }
+        if (!("importDate" in $$source)) {
+            /**
+             * @member
+             * @type {string}
+             */
+            this["importDate"] = "0001-01-01T00:00:00.000Z";
+        }
+        if (!("mediaType" in $$source)) {
+            /**
+             * @member
+             * @type {string}
+             */
+            this["mediaType"] = "";
+        }
+        if (!("hasArchiveCopy" in $$source)) {
+            /**
+             * @member
+             * @type {boolean}
+             */
+            this["hasArchiveCopy"] = false;
+        }
+        if (!("providers" in $$source)) {
+            /**
+             * @member
+             * @type {ProviderCoverageDTO[]}
+             */
+            this["providers"] = [];
+        }
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new CoverageRowDTO instance from a string or object.
+     * @param {any} [$$source = {}]
+     * @returns {CoverageRowDTO}
+     */
+    static createFrom($$source = {}) {
+        const $$createField8_0 = $$createType56;
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        if ("providers" in $$parsedSource) {
+            $$parsedSource["providers"] = $$createField8_0($$parsedSource["providers"]);
+        }
+        return new CoverageRowDTO(/** @type {Partial<CoverageRowDTO>} */($$parsedSource));
+    }
+}
+
+/**
  * CurrentLibraryDTO describes the library currently open, surfaced to the
  * frontend for the Settings → Library card and the root-layout gate.
  */
@@ -2566,11 +2816,11 @@ export class DashboardStats {
      * @returns {DashboardStats}
      */
     static createFrom($$source = {}) {
-        const $$createField0_0 = $$createType55;
-        const $$createField2_0 = $$createType56;
-        const $$createField5_0 = $$createType58;
-        const $$createField6_0 = $$createType58;
-        const $$createField7_0 = $$createType60;
+        const $$createField0_0 = $$createType57;
+        const $$createField2_0 = $$createType58;
+        const $$createField5_0 = $$createType60;
+        const $$createField6_0 = $$createType60;
+        const $$createField7_0 = $$createType62;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("totals" in $$parsedSource) {
             $$parsedSource["totals"] = $$createField0_0($$parsedSource["totals"]);
@@ -2766,8 +3016,8 @@ export class DuplicatePairDTO {
      * @returns {DuplicatePairDTO}
      */
     static createFrom($$source = {}) {
-        const $$createField0_0 = $$createType61;
-        const $$createField1_0 = $$createType61;
+        const $$createField0_0 = $$createType63;
+        const $$createField1_0 = $$createType63;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("duplicate" in $$parsedSource) {
             $$parsedSource["duplicate"] = $$createField0_0($$parsedSource["duplicate"]);
@@ -2824,6 +3074,13 @@ export class DuplicateProgress {
         return new DuplicateProgress(/** @type {Partial<DuplicateProgress>} */($$parsedSource));
     }
 }
+
+/**
+ * Emitter delivers a typed event payload to the frontend. It is implemented in
+ * main.go over the Wails App's event manager and injected into every service
+ * that reports progress. A nil Emitter is tolerated by emitSafe.
+ * @typedef {any} Emitter
+ */
 
 /**
  * FolderEntryDTO is one immediate subdirectory in a folder listing: its display
@@ -2952,8 +3209,8 @@ export class FolderListingDTO {
      * @returns {FolderListingDTO}
      */
     static createFrom($$source = {}) {
-        const $$createField3_0 = $$createType63;
-        const $$createField4_0 = $$createType65;
+        const $$createField3_0 = $$createType65;
+        const $$createField4_0 = $$createType67;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("subfolders" in $$parsedSource) {
             $$parsedSource["subfolders"] = $$createField3_0($$parsedSource["subfolders"]);
@@ -3561,7 +3818,7 @@ export class MatchDTO {
      * @returns {MatchDTO}
      */
     static createFrom($$source = {}) {
-        const $$createField1_0 = $$createType57;
+        const $$createField1_0 = $$createType59;
         const $$createField3_0 = $$createType51;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("source" in $$parsedSource) {
@@ -3659,8 +3916,8 @@ export class OpenResultDTO {
      * @returns {OpenResultDTO}
      */
     static createFrom($$source = {}) {
-        const $$createField1_0 = $$createType67;
-        const $$createField2_0 = $$createType69;
+        const $$createField1_0 = $$createType69;
+        const $$createField2_0 = $$createType71;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("library" in $$parsedSource) {
             $$parsedSource["library"] = $$createField1_0($$parsedSource["library"]);
@@ -3795,7 +4052,7 @@ export class PageResult {
      * @returns {($$source?: any) => PageResult<T>}
      */
     static createFrom($$createParamT) {
-        const $$createField0_0 = $$createType70($$createParamT);
+        const $$createField0_0 = $$createType72($$createParamT);
         return ($$source = {}) => {
             let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
             if ("items" in $$parsedSource) {
@@ -3911,6 +4168,61 @@ export class ProviderCooldownDTO {
 }
 
 /**
+ * ProviderCoverageDTO is one asset's backup state for one destination in the
+ * coverage table: the coverage status, when the job completed (nil unless it
+ * completed), and a note (a verify-unavailable explanation on an unverifiable
+ * destination, or the error message on a failure; empty otherwise).
+ */
+export class ProviderCoverageDTO {
+    /**
+     * Creates a new ProviderCoverageDTO instance.
+     * @param {Partial<ProviderCoverageDTO>} [$$source = {}] - The source object to create the ProviderCoverageDTO.
+     */
+    constructor($$source = {}) {
+        if (!("providerId" in $$source)) {
+            /**
+             * @member
+             * @type {string}
+             */
+            this["providerId"] = "";
+        }
+        if (!("status" in $$source)) {
+            /**
+             * @member
+             * @type {string}
+             */
+            this["status"] = "";
+        }
+        if (!("completedAt" in $$source)) {
+            /**
+             * @member
+             * @type {string | null}
+             */
+            this["completedAt"] = null;
+        }
+        if (!("note" in $$source)) {
+            /**
+             * @member
+             * @type {string}
+             */
+            this["note"] = "";
+        }
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new ProviderCoverageDTO instance from a string or object.
+     * @param {any} [$$source = {}]
+     * @returns {ProviderCoverageDTO}
+     */
+    static createFrom($$source = {}) {
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        return new ProviderCoverageDTO(/** @type {Partial<ProviderCoverageDTO>} */($$parsedSource));
+    }
+}
+
+/**
  * ProviderDTO is the JSON-friendly projection of a BackupProvider.
  */
 export class ProviderDTO {
@@ -3960,6 +4272,16 @@ export class ProviderDTO {
              * @type {string}
              */
             this["uploadOrder"] = "";
+        }
+        if (!("mediaScope" in $$source)) {
+            /**
+             * MediaScope is the CSV of media kinds this destination backs up, from
+             * {photos,videos,raws} (see internal/mediatype). An empty string means "all
+             * kinds" (the default). Missing/opted-out counts and backfill are scoped to it.
+             * @member
+             * @type {string}
+             */
+            this["mediaScope"] = "";
         }
         if (!("missingBackupCount" in $$source)) {
             /**
@@ -4013,10 +4335,10 @@ export class ProviderDTO {
      * @returns {ProviderDTO}
      */
     static createFrom($$source = {}) {
-        const $$createField8_0 = $$createType72;
+        const $$createField9_0 = $$createType74;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("lastError" in $$parsedSource) {
-            $$parsedSource["lastError"] = $$createField8_0($$parsedSource["lastError"]);
+            $$parsedSource["lastError"] = $$createField9_0($$parsedSource["lastError"]);
         }
         return new ProviderDTO(/** @type {Partial<ProviderDTO>} */($$parsedSource));
     }
@@ -4160,7 +4482,7 @@ export class QueueSummaryDTO {
      * @returns {QueueSummaryDTO}
      */
     static createFrom($$source = {}) {
-        const $$createField8_0 = $$createType74;
+        const $$createField8_0 = $$createType76;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("cooldowns" in $$parsedSource) {
             $$parsedSource["cooldowns"] = $$createField8_0($$parsedSource["cooldowns"]);
@@ -4198,7 +4520,7 @@ export class QuitRequested {
      * @returns {QuitRequested}
      */
     static createFrom($$source = {}) {
-        const $$createField0_0 = $$createType76;
+        const $$createField0_0 = $$createType78;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("operations" in $$parsedSource) {
             $$parsedSource["operations"] = $$createField0_0($$parsedSource["operations"]);
@@ -4425,6 +4747,55 @@ export class RecommendationDTO {
 }
 
 /**
+ * ReconcilePreviewDTO is the dry-run outcome of a queue reconcile for a provider:
+ * how many jobs would be cancelled (pending/paused jobs whose asset is now OUT of
+ * the provider's scope) and how many would be enqueued (in-scope eligible assets
+ * with no job yet). Both are computed from the provider's CURRENT stored scope, so
+ * the UI saves a scope change first, then previews.
+ */
+export class ReconcilePreviewDTO {
+    /**
+     * Creates a new ReconcilePreviewDTO instance.
+     * @param {Partial<ReconcilePreviewDTO>} [$$source = {}] - The source object to create the ReconcilePreviewDTO.
+     */
+    constructor($$source = {}) {
+        if (!("providerId" in $$source)) {
+            /**
+             * @member
+             * @type {string}
+             */
+            this["providerId"] = "";
+        }
+        if (!("toCancel" in $$source)) {
+            /**
+             * @member
+             * @type {number}
+             */
+            this["toCancel"] = 0;
+        }
+        if (!("toEnqueue" in $$source)) {
+            /**
+             * @member
+             * @type {number}
+             */
+            this["toEnqueue"] = 0;
+        }
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new ReconcilePreviewDTO instance from a string or object.
+     * @param {any} [$$source = {}]
+     * @returns {ReconcilePreviewDTO}
+     */
+    static createFrom($$source = {}) {
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        return new ReconcilePreviewDTO(/** @type {Partial<ReconcilePreviewDTO>} */($$parsedSource));
+    }
+}
+
+/**
  * ReorganizeMoveDTO is one planned same-drive move in a reorganize preview.
  */
 export class ReorganizeMoveDTO {
@@ -4553,8 +4924,8 @@ export class ReorganizePlanDTO {
      * @returns {ReorganizePlanDTO}
      */
     static createFrom($$source = {}) {
-        const $$createField6_0 = $$createType78;
-        const $$createField7_0 = $$createType80;
+        const $$createField6_0 = $$createType80;
+        const $$createField7_0 = $$createType82;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("movesSample" in $$parsedSource) {
             $$parsedSource["movesSample"] = $$createField6_0($$parsedSource["movesSample"]);
@@ -5088,8 +5459,8 @@ export class SessionDetail {
      * @returns {SessionDetail}
      */
     static createFrom($$source = {}) {
-        const $$createField0_0 = $$createType81;
-        const $$createField1_0 = $$createType60;
+        const $$createField0_0 = $$createType83;
+        const $$createField1_0 = $$createType62;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("session" in $$parsedSource) {
             $$parsedSource["session"] = $$createField0_0($$parsedSource["session"]);
@@ -6491,30 +6862,32 @@ const $$createType51 = $Create.Array($Create.Any);
 const $$createType52 = ClassStatDTO.createFrom;
 const $$createType53 = $Create.Array($$createType52);
 const $$createType54 = RecommendationDTO.createFrom;
-const $$createType55 = TotalsDTO.createFrom;
-const $$createType56 = BackupSummaryDTO.createFrom;
-const $$createType57 = SourceDTO.createFrom;
-const $$createType58 = $Create.Array($$createType57);
-const $$createType59 = LogEntryDTO.createFrom;
+const $$createType55 = ProviderCoverageDTO.createFrom;
+const $$createType56 = $Create.Array($$createType55);
+const $$createType57 = TotalsDTO.createFrom;
+const $$createType58 = BackupSummaryDTO.createFrom;
+const $$createType59 = SourceDTO.createFrom;
 const $$createType60 = $Create.Array($$createType59);
-const $$createType61 = AssetDTO.createFrom;
-const $$createType62 = FolderEntryDTO.createFrom;
-const $$createType63 = $Create.Array($$createType62);
-const $$createType64 = BrowseAssetDTO.createFrom;
-const $$createType65 = PageResult.createFrom($$createType64);
-const $$createType66 = CurrentLibraryDTO.createFrom;
-const $$createType67 = $Create.Nullable($$createType66);
-const $$createType68 = LockConflictDTO.createFrom;
+const $$createType61 = LogEntryDTO.createFrom;
+const $$createType62 = $Create.Array($$createType61);
+const $$createType63 = AssetDTO.createFrom;
+const $$createType64 = FolderEntryDTO.createFrom;
+const $$createType65 = $Create.Array($$createType64);
+const $$createType66 = BrowseAssetDTO.createFrom;
+const $$createType67 = PageResult.createFrom($$createType66);
+const $$createType68 = CurrentLibraryDTO.createFrom;
 const $$createType69 = $Create.Nullable($$createType68);
-const $$createType70 = /** @type {(...args: any[]) => any} */(($$createParamT) => $Create.Array($$createParamT));
-const $$createType71 = ProviderErrorDTO.createFrom;
-const $$createType72 = $Create.Nullable($$createType71);
-const $$createType73 = ProviderCooldownDTO.createFrom;
-const $$createType74 = $Create.Array($$createType73);
-const $$createType75 = OperationInfo.createFrom;
+const $$createType70 = LockConflictDTO.createFrom;
+const $$createType71 = $Create.Nullable($$createType70);
+const $$createType72 = /** @type {(...args: any[]) => any} */(($$createParamT) => $Create.Array($$createParamT));
+const $$createType73 = ProviderErrorDTO.createFrom;
+const $$createType74 = $Create.Nullable($$createType73);
+const $$createType75 = ProviderCooldownDTO.createFrom;
 const $$createType76 = $Create.Array($$createType75);
-const $$createType77 = ReorganizeMoveDTO.createFrom;
+const $$createType77 = OperationInfo.createFrom;
 const $$createType78 = $Create.Array($$createType77);
-const $$createType79 = ReorganizeSkipDTO.createFrom;
+const $$createType79 = ReorganizeMoveDTO.createFrom;
 const $$createType80 = $Create.Array($$createType79);
-const $$createType81 = SessionDTO.createFrom;
+const $$createType81 = ReorganizeSkipDTO.createFrom;
+const $$createType82 = $Create.Array($$createType81);
+const $$createType83 = SessionDTO.createFrom;

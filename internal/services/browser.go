@@ -2,6 +2,7 @@ package services
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -10,11 +11,14 @@ import (
 	"path"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 
 	"github.com/Sam-Lam/PAIM/internal/archive"
+	"github.com/Sam-Lam/PAIM/internal/backup"
 	"github.com/Sam-Lam/PAIM/internal/domain"
+	"github.com/Sam-Lam/PAIM/internal/importer"
 	"github.com/Sam-Lam/PAIM/internal/library"
 	"github.com/Sam-Lam/PAIM/internal/repo"
 	"gorm.io/gorm"
@@ -63,7 +67,10 @@ type BrowserService struct {
 	assets   *repo.AssetRepo
 	sources  *repo.SourceRepo
 	sessions *repo.SessionRepo
-	log      *slog.Logger
+	// jobs is the backup queue repo, used by QueueAssetsForProvider to create
+	// fresh pending jobs (via the exported idempotent Enqueue). Bound in place.
+	jobs *repo.BackupRepo
+	log  *slog.Logger
 	// root resolves stored (relative) archive paths to absolute for display.
 	root string
 	// reveal opens a resolved path in Finder; injectable for tests.
@@ -71,11 +78,20 @@ type BrowserService struct {
 	// activity, when set, lets RenameEventFolder refuse while any long operation
 	// is running. Nil (unit tests) means "never busy".
 	activity activitySnapshotter
+	// emitter, when set, delivers backup:queue-changed after QueueAssetsForProvider
+	// creates or un-skips jobs so the Backup Queue and provider cards refresh. Nil
+	// (unit tests) is tolerated by emitSafe.
+	emitter Emitter
 }
 
 // SetActivity injects the shared activity tracker so RenameEventFolder can refuse
 // while any long operation is in flight. Called once by main.go.
 func (s *BrowserService) SetActivity(a activitySnapshotter) { s.activity = a }
+
+// SetEmitter injects the shared event emitter so the coverage view's bulk queue
+// action can emit backup:queue-changed. Called once by main.go (mirrors how the
+// backup services receive their emitter at construction).
+func (s *BrowserService) SetEmitter(e Emitter) { s.emitter = e }
 
 // Bind wires the BrowserService to an open library's catalog in place.
 func (s *BrowserService) Bind(core *AppCore) {
@@ -83,6 +99,7 @@ func (s *BrowserService) Bind(core *AppCore) {
 	s.assets = core.Assets
 	s.sources = core.Sources
 	s.sessions = core.Sessions
+	s.jobs = core.Backups
 	s.root = core.Root
 }
 
@@ -557,6 +574,544 @@ func (s *BrowserService) ListAssets(ctx context.Context, filters BrowseFilters, 
 		items = append(items, toBrowseAssetDTO(a))
 	}
 	return PageResult[BrowseAssetDTO]{Items: items, Total: total, Page: page, PageSize: pageSize}, nil
+}
+
+/* -------------------------------------------------------------------------- */
+/* Backup Coverage                                                            */
+/* -------------------------------------------------------------------------- */
+
+// Coverage status vocabulary — one asset's backup state for one destination.
+// These strings are shared with the frontend chips and are identical to the
+// repo's ProviderJobMatch values so the per-provider status filter passes
+// straight through.
+const (
+	// CoverageStatusVerified: a completed job on a non-mirror destination with no
+	// verify-unavailable note — an independently proven backup.
+	CoverageStatusVerified = "verified"
+	// CoverageStatusUploadedUnverified: a completed job that PAIM cannot prove
+	// (a mirror destination, or a non-mirror destination whose Verify was
+	// unavailable and recorded a note). The upload happened; verification did not.
+	CoverageStatusUploadedUnverified = "uploaded_unverified"
+	CoverageStatusPending            = "pending"   // pending or paused (queued, not yet uploaded)
+	CoverageStatusRunning            = "running"   // uploading now
+	CoverageStatusFailed             = "failed"    // last attempt failed
+	CoverageStatusSkipped            = "skipped"   // opted out by choice (opted_out)
+	CoverageStatusCancelled          = "cancelled" // cancelled
+	CoverageStatusNone               = "none"      // no job for this destination
+)
+
+// ProviderCoverageDTO is one asset's backup state for one destination in the
+// coverage table: the coverage status, when the job completed (nil unless it
+// completed), and a note (a verify-unavailable explanation on an unverifiable
+// destination, or the error message on a failure; empty otherwise).
+type ProviderCoverageDTO struct {
+	ProviderID  string     `json:"providerId"`
+	Status      string     `json:"status"`
+	CompletedAt *time.Time `json:"completedAt"`
+	Note        string     `json:"note"`
+}
+
+// CoverageRowDTO is one asset row of the Backup Coverage table: its identity and
+// provenance (name, resolved archive location, where it came from, taken/imported
+// dates) plus its per-destination backup state. Providers carries ONLY the
+// destinations this asset actually has a job for; a column in the table with no
+// matching entry renders as "none".
+type CoverageRowDTO struct {
+	AssetID        string                `json:"assetId"`
+	Filename       string                `json:"filename"`
+	ArchivePath    string                `json:"archivePath"` // resolved absolute
+	SourceLabel    string                `json:"sourceLabel"`
+	CaptureDate    *time.Time            `json:"captureDate"`
+	ImportDate     time.Time             `json:"importDate"`
+	MediaType      string                `json:"mediaType"`
+	HasArchiveCopy bool                  `json:"hasArchiveCopy"`
+	Providers      []ProviderCoverageDTO `json:"providers"`
+}
+
+// CoverageProviderDTO describes one column of the coverage table: a destination
+// ever referenced by a backup job. It survives provider removal (Removed=true,
+// named from the soft-deleted row) so the table stays honest about where past
+// backups went. Mirror marks a destination whose completed jobs are
+// uploaded-but-unverifiable.
+type CoverageProviderDTO struct {
+	ProviderID string `json:"providerId"`
+	Name       string `json:"name"`
+	Mirror     bool   `json:"mirror"`
+	Removed    bool   `json:"removed"`
+}
+
+// CoverageProviderFilter is the optional per-provider status filter for
+// ListCoverage: restrict to assets whose backup state for ProviderID matches
+// Status (a coverage status string). A nil pointer (or empty fields) applies no
+// provider filter.
+type CoverageProviderFilter struct {
+	ProviderID string `json:"providerId"`
+	Status     string `json:"status"`
+}
+
+// coverageProviderMeta is the resolved display metadata for one destination.
+type coverageProviderMeta struct {
+	name    string
+	mirror  bool
+	removed bool
+}
+
+// coverageQueueCap bounds one QueueAssetsForProvider call so a runaway
+// select-all can never queue an unbounded set in a single request.
+const coverageQueueCap = 10000
+
+// coverageQueueBatch is how many asset IDs QueueAssetsForProvider processes per
+// transaction (bounded IN-clause size, one commit per batch).
+const coverageQueueBatch = 500
+
+// ListCoverage returns a page of the Backup Coverage table: one row per asset
+// (matching the same Batch-B filters ListAssets accepts) with its provenance and
+// its per-destination backup state. When providerStatus is set, the page is
+// restricted to assets whose backup state for that destination matches the given
+// coverage status (composed as an EXISTS/NOT EXISTS predicate on the jobs table,
+// AND-ed with every other filter).
+//
+// Query shape / scale: the page of assets is fetched first via AssetRepo.List
+// (the same filtered, capture-date-ordered, indexed query the grid uses). Then a
+// SINGLE query loads every non-deleted backup job for that page's asset IDs (an
+// IN clause over the indexed asset_id), grouped in Go into asset -> destination
+// -> newest job. Provider metadata (mirror/name/removed) is resolved with one
+// Unscoped query over the destinations seen on the page, and per-row source
+// labels are memoized by session. So a page costs O(1) queries regardless of page
+// size — no per-asset or per-provider round-trips in the row loop.
+func (s *BrowserService) ListCoverage(ctx context.Context, filters BrowseFilters, providerStatus *CoverageProviderFilter, page, pageSize int) (PageResult[CoverageRowDTO], error) {
+	if err := s.guard(); err != nil {
+		return PageResult[CoverageRowDTO]{}, err
+	}
+	from, err := parseFilterTime(filters.CaptureFrom)
+	if err != nil {
+		return PageResult[CoverageRowDTO]{}, err
+	}
+	to, err := parseFilterTime(filters.CaptureTo)
+	if err != nil {
+		return PageResult[CoverageRowDTO]{}, err
+	}
+	limit, offset := normalizePage(page, pageSize)
+	q := repo.AssetQuery{
+		MediaType:          mediaTypeFilter(filters.MediaType),
+		VerificationStatus: verificationFilter(filters.VerificationStatus),
+		BackupStatus:       backupFilter(filters.BackupStatus),
+		SessionID:          filters.SessionID,
+		Text:               filters.Query,
+		YearMonth:          filters.YearMonth,
+		CaptureFrom:        from,
+		CaptureTo:          to,
+		CameraMake:         filters.CameraMake,
+		CameraModel:        filters.CameraModel,
+		Page:               repo.Page{Limit: limit, Offset: offset},
+	}
+	// Provider-status filter: the destination's mirror flag decides how a completed
+	// job is classified (verified vs uploaded_unverified), so resolve it Unscoped —
+	// a removed provider is still a valid filter target.
+	if providerStatus != nil && providerStatus.ProviderID != "" && providerStatus.Status != "" {
+		mirror := false
+		var p domain.BackupProvider
+		err := s.db.WithContext(ctx).Unscoped().First(&p, "id = ?", providerStatus.ProviderID).Error
+		if err == nil {
+			mirror = p.Mirror
+		} else if !errors.Is(err, gorm.ErrRecordNotFound) {
+			return PageResult[CoverageRowDTO]{}, fmt.Errorf("services: coverage filter provider %q: %w", providerStatus.ProviderID, err)
+		}
+		q.ProviderJob = &repo.ProviderJobFilter{
+			Destination: providerStatus.ProviderID,
+			Match:       repo.ProviderJobMatch(providerStatus.Status),
+			Mirror:      mirror,
+		}
+	}
+
+	rows, total, err := s.assets.List(ctx, q)
+	if err != nil {
+		return PageResult[CoverageRowDTO]{}, err
+	}
+
+	ids := make([]string, 0, len(rows))
+	for i := range rows {
+		ids = append(ids, rows[i].ID)
+	}
+	newestByAsset, dests, err := s.coverageJobsForAssets(ctx, ids)
+	if err != nil {
+		return PageResult[CoverageRowDTO]{}, err
+	}
+	meta, err := s.coverageProviderMetaMap(ctx, dests)
+	if err != nil {
+		return PageResult[CoverageRowDTO]{}, err
+	}
+
+	sessLabels := make(map[string]string)
+	items := make([]CoverageRowDTO, 0, len(rows))
+	for i := range rows {
+		a := rows[i]
+		byDest := newestByAsset[a.ID]
+		provs := make([]ProviderCoverageDTO, 0, len(byDest))
+		for dest, job := range byDest {
+			m := meta[dest]
+			provs = append(provs, ProviderCoverageDTO{
+				ProviderID:  dest,
+				Status:      coverageStatusForJob(job, m.mirror),
+				CompletedAt: job.CompletedAt,
+				Note:        job.ErrorMessage,
+			})
+		}
+		// Stable order so the frontend's per-column lookup is deterministic.
+		sort.Slice(provs, func(i, j int) bool { return provs[i].ProviderID < provs[j].ProviderID })
+		items = append(items, CoverageRowDTO{
+			AssetID:        a.ID,
+			Filename:       a.OriginalFilename,
+			ArchivePath:    library.ResolvePath(s.root, a.CurrentArchivePath),
+			SourceLabel:    s.coverageSourceLabel(ctx, a, sessLabels),
+			CaptureDate:    a.CaptureDate,
+			ImportDate:     a.ImportDate,
+			MediaType:      string(a.MediaType),
+			HasArchiveCopy: a.CurrentArchivePath != "",
+			Providers:      provs,
+		})
+	}
+	return PageResult[CoverageRowDTO]{Items: items, Total: total, Page: page, PageSize: pageSize}, nil
+}
+
+// coverageJobsForAssets loads every non-deleted backup job for the given asset
+// IDs in one query and folds them into asset -> destination -> NEWEST job, plus
+// the distinct set of destinations seen. Jobs are ordered oldest-first so a later
+// map assignment overwrites with the newest job per (asset, destination).
+func (s *BrowserService) coverageJobsForAssets(ctx context.Context, assetIDs []string) (map[string]map[string]domain.BackupJob, []string, error) {
+	byAsset := make(map[string]map[string]domain.BackupJob, len(assetIDs))
+	if len(assetIDs) == 0 {
+		return byAsset, nil, nil
+	}
+	var jobs []domain.BackupJob
+	if err := s.db.WithContext(ctx).
+		Where("asset_id IN ?", assetIDs).
+		Order("created_at ASC, id ASC").
+		Find(&jobs).Error; err != nil {
+		return nil, nil, fmt.Errorf("services: coverage jobs: %w", err)
+	}
+	destSeen := make(map[string]struct{})
+	for i := range jobs {
+		j := jobs[i]
+		m := byAsset[j.AssetID]
+		if m == nil {
+			m = make(map[string]domain.BackupJob)
+			byAsset[j.AssetID] = m
+		}
+		m[j.Destination] = j
+		destSeen[j.Destination] = struct{}{}
+	}
+	dests := make([]string, 0, len(destSeen))
+	for d := range destSeen {
+		dests = append(dests, d)
+	}
+	return byAsset, dests, nil
+}
+
+// coverageProviderMetaMap resolves display metadata for a set of destination IDs
+// with ONE Unscoped query (soft-deleted providers included so removed
+// destinations still get a name and are flagged Removed). A destination with no
+// provider row at all is simply absent from the map; callers fall back to the raw
+// ID and treat it as removed.
+func (s *BrowserService) coverageProviderMetaMap(ctx context.Context, ids []string) (map[string]coverageProviderMeta, error) {
+	out := make(map[string]coverageProviderMeta, len(ids))
+	if len(ids) == 0 {
+		return out, nil
+	}
+	var provs []domain.BackupProvider
+	if err := s.db.WithContext(ctx).Unscoped().Where("id IN ?", ids).Find(&provs).Error; err != nil {
+		return nil, fmt.Errorf("services: coverage provider meta: %w", err)
+	}
+	for _, p := range provs {
+		out[p.ID] = coverageProviderMeta{
+			name:    coverageProviderName(p),
+			mirror:  p.Mirror,
+			removed: p.DeletedAt.Valid,
+		}
+	}
+	return out, nil
+}
+
+// CoverageProviders lists every destination ever referenced by a backup job
+// (including removed providers, resolved Unscoped) for the coverage table's
+// column set and the per-provider status filter dropdown. Live destinations sort
+// first, then removed ones; within each group, by name — so the primary columns
+// are the destinations still in use.
+func (s *BrowserService) CoverageProviders(ctx context.Context) ([]CoverageProviderDTO, error) {
+	if err := s.guard(); err != nil {
+		return nil, err
+	}
+	var dests []string
+	if err := s.db.WithContext(ctx).
+		Model(&domain.BackupJob{}).
+		Distinct().
+		Where("deleted_at IS NULL AND destination <> ''").
+		Order("destination").
+		Pluck("destination", &dests).Error; err != nil {
+		return nil, fmt.Errorf("services: coverage providers: %w", err)
+	}
+	meta, err := s.coverageProviderMetaMap(ctx, dests)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]CoverageProviderDTO, 0, len(dests))
+	for _, d := range dests {
+		if m, ok := meta[d]; ok {
+			out = append(out, CoverageProviderDTO{ProviderID: d, Name: m.name, Mirror: m.mirror, Removed: m.removed})
+			continue
+		}
+		// No provider row at all: name by ID and mark removed so the column is honest.
+		out = append(out, CoverageProviderDTO{ProviderID: d, Name: d, Removed: true})
+	}
+	sort.SliceStable(out, func(i, j int) bool {
+		if out[i].Removed != out[j].Removed {
+			return !out[i].Removed // live providers first
+		}
+		return strings.ToLower(out[i].Name) < strings.ToLower(out[j].Name)
+	})
+	return out, nil
+}
+
+// QueueAssetsForProvider queues the given assets for one destination, returning
+// how many were newly queued. Per asset: an existing opted_out job for the
+// destination is un-skipped (opted_out -> pending); an asset with NO job for the
+// destination gets a fresh pending job; an asset that already has a
+// pending/running/completed job is left untouched (and not counted). It emits
+// backup:queue-changed when anything was queued. assetIds is capped at
+// coverageQueueCap per call.
+//
+// Seam decision: the fresh-enqueue path reuses the exported, idempotent
+// BackupRepo.Enqueue (owned elsewhere; called, not modified). There is no
+// asset-scoped un-skip primitive — RequeueOptedOut is provider/session-scoped —
+// so the opted_out -> pending flip is a guarded direct update in this file
+// (WHERE destination = ? AND status = opted_out AND asset_id IN ?), mirroring
+// RequeueOptedOut's transition exactly. TODO: consolidate the asset-scoped
+// requeue into repo/backup.go once ownership allows.
+func (s *BrowserService) QueueAssetsForProvider(ctx context.Context, providerID string, assetIds []string) (int, error) {
+	if err := s.guard(); err != nil {
+		return 0, err
+	}
+	if providerID == "" {
+		return 0, fmt.Errorf("services: queue for provider: empty provider id")
+	}
+	if len(assetIds) == 0 {
+		return 0, nil
+	}
+	if len(assetIds) > coverageQueueCap {
+		return 0, fmt.Errorf("services: queue for provider: too many assets (%d > %d)", len(assetIds), coverageQueueCap)
+	}
+	// The destination must be a live (non-deleted) provider: queueing to a removed
+	// destination would create unrunnable work. Its plugin name stamps new jobs.
+	var provider domain.BackupProvider
+	if err := s.db.WithContext(ctx).First(&provider, "id = ?", providerID).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return 0, fmt.Errorf("services: queue for provider: provider %q not found", providerID)
+		}
+		return 0, fmt.Errorf("services: queue for provider: load provider %q: %w", providerID, err)
+	}
+
+	queued := 0
+	for start := 0; start < len(assetIds); start += coverageQueueBatch {
+		end := start + coverageQueueBatch
+		if end > len(assetIds) {
+			end = len(assetIds)
+		}
+		n, err := s.queueBatch(ctx, provider, assetIds[start:end])
+		if err != nil {
+			return queued, err
+		}
+		queued += n
+	}
+
+	if queued > 0 && s.jobs != nil {
+		if counts, err := s.jobs.QueueSummary(ctx); err == nil {
+			statuses := make([]domain.JobStatus, len(counts))
+			values := make([]int64, len(counts))
+			for i, c := range counts {
+				statuses[i] = c.Status
+				values[i] = c.Count
+			}
+			emitSafe(s.emitter, EventBackupQueueChanged, BackupQueueChanged{Summary: summaryFromCounts(statuses, values)})
+		}
+	}
+	s.log.Info("queued assets for provider", "provider", providerID, "requested", len(assetIds), "queued", queued)
+	return queued, nil
+}
+
+// queueBatch queues one batch of assets for the provider inside a single
+// transaction. It un-skips existing opted_out jobs (guarded update) and enqueues
+// a fresh pending job for assets with none, stamping each with the same
+// capture/import-date SortKey the importer uses so it honors the provider's
+// upload order.
+func (s *BrowserService) queueBatch(ctx context.Context, provider domain.BackupProvider, ids []string) (int, error) {
+	if s.jobs == nil {
+		return 0, fmt.Errorf("services: queue batch: backup repo unbound")
+	}
+	queued := 0
+	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		// 1) Which of these assets currently have an opted_out job for the dest?
+		var optedIDs []string
+		if err := tx.Model(&domain.BackupJob{}).
+			Where("destination = ? AND status = ? AND asset_id IN ?", provider.ID, domain.JobStatusOptedOut, ids).
+			Distinct().
+			Pluck("asset_id", &optedIDs).Error; err != nil {
+			return err
+		}
+		optedSet := make(map[string]struct{}, len(optedIDs))
+		for _, id := range optedIDs {
+			optedSet[id] = struct{}{}
+		}
+		// 2) Un-skip them (opted_out -> pending), guarded on the opted_out state.
+		if len(optedIDs) > 0 {
+			res := tx.Model(&domain.BackupJob{}).
+				Where("destination = ? AND status = ? AND asset_id IN ?", provider.ID, domain.JobStatusOptedOut, optedIDs).
+				Updates(map[string]any{
+					"status":       domain.JobStatusPending,
+					"started_at":   nil,
+					"completed_at": nil,
+				})
+			if res.Error != nil {
+				return res.Error
+			}
+			queued += int(res.RowsAffected)
+		}
+		// 3) Enqueue a fresh pending job for assets that were NOT opted out. Load
+		//    them (existing rows only) to stamp the upload-order SortKey; Enqueue is
+		//    idempotent, so an asset already pending/running/completed is a no-op.
+		fresh := make([]string, 0, len(ids))
+		for _, id := range ids {
+			if _, skip := optedSet[id]; !skip {
+				fresh = append(fresh, id)
+			}
+		}
+		if len(fresh) > 0 {
+			var assets []domain.Asset
+			if err := tx.Where("id IN ?", fresh).Find(&assets).Error; err != nil {
+				return err
+			}
+			q := s.jobs.WithTx(tx)
+			for i := range assets {
+				a := assets[i]
+				_, created, err := q.Enqueue(ctx, a.ID, provider.PluginName, provider.ID, backup.SortKeyForAsset(a))
+				if err != nil {
+					return err
+				}
+				if created {
+					queued++
+				}
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return 0, fmt.Errorf("services: queue batch for provider %q: %w", provider.ID, err)
+	}
+	return queued, nil
+}
+
+// coverageStatusForJob maps a single backup job (the newest for its destination)
+// to a coverage status. A completed job is verified only on a non-mirror
+// destination with no verify-unavailable note; otherwise it is
+// uploaded_unverified. Paused folds into pending (still queued); opted_out is
+// skipped.
+func coverageStatusForJob(j domain.BackupJob, mirror bool) string {
+	switch j.Status {
+	case domain.JobStatusCompleted:
+		if mirror || j.ErrorMessage != "" {
+			return CoverageStatusUploadedUnverified
+		}
+		return CoverageStatusVerified
+	case domain.JobStatusPending, domain.JobStatusPaused:
+		return CoverageStatusPending
+	case domain.JobStatusRunning:
+		return CoverageStatusRunning
+	case domain.JobStatusFailed:
+		return CoverageStatusFailed
+	case domain.JobStatusOptedOut:
+		return CoverageStatusSkipped
+	case domain.JobStatusCancelled:
+		return CoverageStatusCancelled
+	default:
+		return CoverageStatusNone
+	}
+}
+
+// coverageProviderName derives a short human label for a destination: its rclone
+// remote or localfs root from the config JSON, else the plugin name, else the raw
+// ID. Best-effort — any parse failure degrades to the next fallback.
+func coverageProviderName(p domain.BackupProvider) string {
+	var cfg struct {
+		Remote string `json:"remote"`
+		Root   string `json:"root"`
+	}
+	if json.Unmarshal([]byte(p.ConfigJSON), &cfg) == nil {
+		if cfg.Remote != "" {
+			return cfg.Remote
+		}
+		if cfg.Root != "" {
+			return cfg.Root
+		}
+	}
+	if p.PluginName != "" {
+		return p.PluginName
+	}
+	return p.ID
+}
+
+// coverageSourceLabel resolves "where this asset came from" via its session,
+// memoized by session ID for the page. An asset with no session yields "".
+func (s *BrowserService) coverageSourceLabel(ctx context.Context, a domain.Asset, cache map[string]string) string {
+	if a.SessionID == "" {
+		return ""
+	}
+	if lbl, ok := cache[a.SessionID]; ok {
+		return lbl
+	}
+	lbl := s.coverageSessionSourceLabel(ctx, a.SessionID)
+	cache[a.SessionID] = lbl
+	return lbl
+}
+
+// coverageSessionSourceLabel names an import session's origin, reusing History's
+// enrichment approach: a linked copy-mode source is named by its volume label +
+// type; otherwise it falls back to "Library (adopt)" for adopt runs or the
+// source-root folder's basename recorded in the session notes.
+func (s *BrowserService) coverageSessionSourceLabel(ctx context.Context, sessionID string) string {
+	if s.sessions == nil {
+		return ""
+	}
+	sess, err := s.sessions.GetByID(ctx, sessionID)
+	if err != nil || sess == nil {
+		return ""
+	}
+	st, _ := decodeResumeState(sess.Notes)
+	mode := "copy"
+	if st.Mode != "" {
+		mode = st.Mode
+	}
+	if sess.SourceID != "" && mode != string(importer.ModeAdopt) && s.sources != nil {
+		if src, err := s.sources.GetByID(ctx, sess.SourceID); err == nil && src != nil {
+			if lbl := coverageSourceDisplay(src); lbl != "" {
+				return lbl
+			}
+		}
+	}
+	return defaultSourceLabel(mode, st.SourceRoot)
+}
+
+// coverageSourceDisplay formats a linked source as "<label> (<type>)", falling
+// through volume label / model / manufacturer / serial for the label.
+func coverageSourceDisplay(src *domain.ImportSource) string {
+	label := firstNonEmptyStr(src.VolumeLabel, src.Model, src.Manufacturer, src.HardwareSerial)
+	typ := string(src.SourceType)
+	switch {
+	case label != "" && typ != "":
+		return fmt.Sprintf("%s (%s)", label, typ)
+	case label != "":
+		return label
+	default:
+		return typ
+	}
 }
 
 // Months returns distinct capture months with counts (newest first) for the

@@ -22,15 +22,19 @@ import {
   PencilSquareIcon,
   PhotoIcon,
   Squares2X2Icon,
+  TableCellsIcon,
   XMarkIcon,
 } from "@heroicons/react/24/outline";
 import {
   Button,
   Card,
+  ConfirmDialog,
+  DataTable,
   EmptyState,
   LoadingBlock,
   PageHeader,
   StatusBadge,
+  type DataTableColumn,
 } from "../components";
 import {
   BrowserService,
@@ -41,9 +45,12 @@ import {
   type BrowseAssetDTO,
   type BrowseFilters,
   type CameraCountDTO,
+  type CoverageProviderDTO,
+  type CoverageRowDTO,
   type FolderEntryDTO,
   type FolderListingDTO,
   type MonthCountDTO,
+  type ProviderCoverageDTO,
   type ThumbsProgress,
   type WarmupStatusDTO,
   type YearCountDTO,
@@ -110,6 +117,14 @@ type DateSel =
   | { kind: "custom"; from: string; to: string }; // from/to are YYYY-MM-DD (either may be "")
 
 const DATE_SEL_KEY = "paim.library.date";
+
+/** The three Library views, persisted per machine under paim.library.view. */
+type LibraryView = "grid" | "folders" | "coverage";
+
+function loadLibraryView(): LibraryView {
+  const v = localStorage.getItem("paim.library.view");
+  return v === "folders" || v === "coverage" ? v : "grid";
+}
 
 function loadDateSel(): DateSel {
   try {
@@ -230,11 +245,10 @@ export function LibraryPage() {
       return !v;
     });
   };
-  // View: the flat capture-month grid, or the archive folder tree. Persisted per machine.
-  const [view, setView] = useState<"grid" | "folders">(
-    () => (localStorage.getItem("paim.library.view") === "folders" ? "folders" : "grid"),
-  );
-  const setViewPersisted = (v: "grid" | "folders") => {
+  // View: the flat capture-month grid, the archive folder tree, or the backup
+  // coverage table. Persisted per machine.
+  const [view, setView] = useState<LibraryView>(() => loadLibraryView());
+  const setViewPersisted = (v: LibraryView) => {
     localStorage.setItem("paim.library.view", v);
     setView(v);
   };
@@ -304,6 +318,22 @@ export function LibraryPage() {
   const months = useAsyncData(() => BrowserService.Months());
   const years = useAsyncData(() => BrowserService.Years());
   const cameras = useAsyncData(() => BrowserService.Cameras());
+
+  // Coverage view: the per-provider status filter pair, and the set of provider
+  // columns (every destination ever referenced by a job, incl. removed ones).
+  const [covProviderId, setCovProviderId] = useState("");
+  const [covStatus, setCovStatus] = useState("");
+  const coverageProviders = useAsyncData(() => BrowserService.CoverageProviders());
+  // Load the provider column set when the coverage view is shown, and refresh it
+  // when the backup queue changes (a new destination can appear once its first
+  // job is queued).
+  useEffect(() => {
+    if (view === "coverage") void coverageProviders.run().catch(() => undefined);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [view]);
+  useWailsEvent(WailsEvents.BackupQueueChanged, () => {
+    if (view === "coverage") void coverageProviders.run({ silent: true }).catch(() => undefined);
+  });
 
   const filters = useMemo<BrowseFilters>(
     () => ({
@@ -385,7 +415,38 @@ export function LibraryPage() {
     setBackup("");
     setCamera({ make: "", model: "" });
     setDatePersisted({ kind: "any" });
+    setCovProviderId("");
+    setCovStatus("");
   };
+
+  // The Batch-B filter bar, shared by the grid and coverage views. Extracted so
+  // both render an identical Search + Type + Camera + Date + Verification + Backup
+  // row; each view passes its own trailing controls (grid: fit/crop; coverage: the
+  // per-provider status filter).
+  const filterBar = (extraRow: React.ReactNode, rightSlot: React.ReactNode) => (
+    <FilterBar
+      queryInput={queryInput}
+      setQueryInput={setQueryInput}
+      mediaType={mediaType}
+      setMediaType={setMediaType}
+      verification={verification}
+      setVerification={setVerification}
+      backup={backup}
+      setBackup={setBackup}
+      camera={camera}
+      setCamera={setCamera}
+      cameras={cameras.data ?? []}
+      dateSel={dateSel}
+      setDatePersisted={setDatePersisted}
+      years={years.data ?? []}
+      months={months.data ?? []}
+      filtersActive={filtersActive}
+      activeCount={activeCount}
+      clearFilters={clearFilters}
+      extraRow={extraRow}
+      rightSlot={rightSlot}
+    />
+  );
 
   return (
     <div>
@@ -397,6 +458,7 @@ export function LibraryPage() {
             <div className="flex items-center rounded-md border border-zinc-700 bg-zinc-950 p-0.5">
               <SegBtn active={view === "grid"} icon={Squares2X2Icon} label="Grid" onClick={() => setViewPersisted("grid")} />
               <SegBtn active={view === "folders"} icon={FolderIcon} label="Folders" onClick={() => setViewPersisted("folders")} />
+              <SegBtn active={view === "coverage"} icon={TableCellsIcon} label="Coverage" onClick={() => setViewPersisted("coverage")} />
             </div>
             {warmRunning ? (
               <span className="flex items-center gap-1.5 rounded-md border border-blue-500/30 bg-blue-500/5 px-2.5 py-1.5 text-[12px] text-zinc-300 tabular-nums">
@@ -427,82 +489,35 @@ export function LibraryPage() {
 
       {view === "folders" ? <FolderView fit={fitTiles} filtersActive={filtersActive} /> : null}
 
+      {view === "coverage" ? (
+        <CoverageView
+          filters={filters}
+          providerId={covProviderId}
+          status={covStatus}
+          providers={coverageProviders.data ?? []}
+          providersLoading={coverageProviders.loading}
+          filterBar={filterBar}
+          setCovProviderId={setCovProviderId}
+          setCovStatus={setCovStatus}
+          filtersActive={filtersActive}
+          clearFilters={clearFilters}
+        />
+      ) : null}
+
       {view === "grid" ? (
       <>
-      <Card className="mb-5">
-        <div className="space-y-3">
-          {/* Search spans the width; the structured filters wrap in a tidy row below. */}
-          <label className="block">
-            <span className={FIELD_LABEL_CLASS}>Search</span>
-            <div className="relative">
-              <MagnifyingGlassIcon className="pointer-events-none absolute top-1/2 left-2.5 h-4 w-4 -translate-y-1/2 text-zinc-600" />
-              <input
-                value={queryInput}
-                onChange={(e) => setQueryInput(e.target.value)}
-                placeholder="Filename, path, camera, or lens…"
-                className="w-full rounded-md border border-zinc-700 bg-zinc-950 py-1.5 pr-3 pl-8 text-[13px] text-zinc-200 outline-none focus:border-blue-500"
-              />
-            </div>
-          </label>
-
-          <div className="flex flex-wrap items-end gap-3">
-            <label>
-              <span className={FIELD_LABEL_CLASS}>Type</span>
-              <select value={mediaType} onChange={(e) => setMediaType(e.target.value)} className={SELECT_CLASS}>
-                {MEDIA_TYPES.map((o) => (
-                  <option key={o.value} value={o.value}>
-                    {o.label}
-                  </option>
-                ))}
-              </select>
-            </label>
-
-            <CameraFilter cameras={cameras.data ?? []} value={camera} onChange={setCamera} />
-
-            <DateFilter sel={dateSel} onChange={setDatePersisted} years={years.data ?? []} months={months.data ?? []} />
-
-            <label>
-              <span className={FIELD_LABEL_CLASS}>Verification</span>
-              <select value={verification} onChange={(e) => setVerification(e.target.value)} className={SELECT_CLASS}>
-                {VERIFICATION.map((o) => (
-                  <option key={o.value} value={o.value}>
-                    {o.label}
-                  </option>
-                ))}
-              </select>
-            </label>
-
-            <label>
-              <span className={FIELD_LABEL_CLASS}>Backup</span>
-              <select value={backup} onChange={(e) => setBackup(e.target.value)} className={SELECT_CLASS}>
-                {BACKUP.map((o) => (
-                  <option key={o.value} value={o.value}>
-                    {o.label}
-                  </option>
-                ))}
-              </select>
-            </label>
-
-            {filtersActive ? (
-              <Button size="sm" variant="ghost" icon={XMarkIcon} onClick={clearFilters}>
-                Clear ({activeCount})
-              </Button>
-            ) : null}
-
-            <div className="ml-auto">
-              <Button
-                size="sm"
-                variant="ghost"
-                icon={fitTiles ? ArrowsPointingInIcon : ArrowsPointingOutIcon}
-                onClick={toggleFit}
-                title={fitTiles ? "Crop tiles to square" : "Fit full image in tile"}
-              >
-                {fitTiles ? "Crop" : "Fit"}
-              </Button>
-            </div>
-          </div>
-        </div>
-      </Card>
+      {filterBar(
+        null,
+        <Button
+          size="sm"
+          variant="ghost"
+          icon={fitTiles ? ArrowsPointingInIcon : ArrowsPointingOutIcon}
+          onClick={toggleFit}
+          title={fitTiles ? "Crop tiles to square" : "Fit full image in tile"}
+        >
+          {fitTiles ? "Crop" : "Fit"}
+        </Button>,
+      )}
 
       {loading && items.length === 0 ? (
         <LoadingBlock label="Loading library…" />
@@ -611,6 +626,571 @@ function SegBtn({
       {label}
     </button>
   );
+}
+
+/* -------------------------------------------------------------------------- */
+/* Shared filter bar                                                          */
+/* -------------------------------------------------------------------------- */
+
+interface FilterBarProps {
+  queryInput: string;
+  setQueryInput: (v: string) => void;
+  mediaType: string;
+  setMediaType: (v: string) => void;
+  verification: string;
+  setVerification: (v: string) => void;
+  backup: string;
+  setBackup: (v: string) => void;
+  camera: { make: string; model: string };
+  setCamera: (v: { make: string; model: string }) => void;
+  cameras: CameraCountDTO[];
+  dateSel: DateSel;
+  setDatePersisted: (s: DateSel) => void;
+  years: YearCountDTO[];
+  months: MonthCountDTO[];
+  filtersActive: boolean;
+  activeCount: number;
+  clearFilters: () => void;
+  /** A second control row (coverage's per-provider status filter). */
+  extraRow?: React.ReactNode;
+  /** A trailing control aligned right on the first row (grid's fit/crop toggle). */
+  rightSlot?: React.ReactNode;
+}
+
+/**
+ * FilterBar — the shared Batch-B filter card (Search + Type + Camera + Date +
+ * Verification + Backup + Clear) rendered above both the grid and the coverage
+ * table so the same filters drive both. Each view supplies its own trailing
+ * controls via rightSlot (grid: fit/crop) and its own second row via extraRow
+ * (coverage: the per-provider status filter).
+ */
+function FilterBar(p: FilterBarProps) {
+  return (
+    <Card className="mb-5">
+      <div className="space-y-3">
+        <label className="block">
+          <span className={FIELD_LABEL_CLASS}>Search</span>
+          <div className="relative">
+            <MagnifyingGlassIcon className="pointer-events-none absolute top-1/2 left-2.5 h-4 w-4 -translate-y-1/2 text-zinc-600" />
+            <input
+              value={p.queryInput}
+              onChange={(e) => p.setQueryInput(e.target.value)}
+              placeholder="Filename, path, camera, or lens…"
+              className="w-full rounded-md border border-zinc-700 bg-zinc-950 py-1.5 pr-3 pl-8 text-[13px] text-zinc-200 outline-none focus:border-blue-500"
+            />
+          </div>
+        </label>
+
+        <div className="flex flex-wrap items-end gap-3">
+          <label>
+            <span className={FIELD_LABEL_CLASS}>Type</span>
+            <select value={p.mediaType} onChange={(e) => p.setMediaType(e.target.value)} className={SELECT_CLASS}>
+              {MEDIA_TYPES.map((o) => (
+                <option key={o.value} value={o.value}>
+                  {o.label}
+                </option>
+              ))}
+            </select>
+          </label>
+
+          <CameraFilter cameras={p.cameras} value={p.camera} onChange={p.setCamera} />
+
+          <DateFilter sel={p.dateSel} onChange={p.setDatePersisted} years={p.years} months={p.months} />
+
+          <label>
+            <span className={FIELD_LABEL_CLASS}>Verification</span>
+            <select value={p.verification} onChange={(e) => p.setVerification(e.target.value)} className={SELECT_CLASS}>
+              {VERIFICATION.map((o) => (
+                <option key={o.value} value={o.value}>
+                  {o.label}
+                </option>
+              ))}
+            </select>
+          </label>
+
+          <label>
+            <span className={FIELD_LABEL_CLASS}>Backup</span>
+            <select value={p.backup} onChange={(e) => p.setBackup(e.target.value)} className={SELECT_CLASS}>
+              {BACKUP.map((o) => (
+                <option key={o.value} value={o.value}>
+                  {o.label}
+                </option>
+              ))}
+            </select>
+          </label>
+
+          {p.filtersActive ? (
+            <Button size="sm" variant="ghost" icon={XMarkIcon} onClick={p.clearFilters}>
+              Clear ({p.activeCount})
+            </Button>
+          ) : null}
+
+          {p.rightSlot ? <div className="ml-auto">{p.rightSlot}</div> : null}
+        </div>
+
+        {p.extraRow}
+      </div>
+    </Card>
+  );
+}
+
+/* -------------------------------------------------------------------------- */
+/* Backup Coverage view                                                       */
+/* -------------------------------------------------------------------------- */
+
+const COVERAGE_PAGE_SIZE = 50;
+const COVERAGE_MAX_PROVIDER_COLUMNS = 6;
+
+/** The per-provider status filter options (matches the backend vocabulary). */
+const COVERAGE_STATUS_OPTIONS = [
+  { value: "", label: "Any status" },
+  { value: "verified", label: "Verified" },
+  { value: "uploaded_unverified", label: "Uploaded (unverifiable)" },
+  { value: "pending", label: "Pending" },
+  { value: "running", label: "Uploading" },
+  { value: "failed", label: "Failed" },
+  { value: "skipped", label: "Skipped by choice" },
+  { value: "cancelled", label: "Cancelled" },
+  { value: "none", label: "Not backed up" },
+];
+
+/** Compact chip presentation per coverage status. */
+const COVERAGE_CHIP: Record<string, { label: string; cls: string; title?: string }> = {
+  verified: { label: "Verified", cls: "border-emerald-500/30 bg-emerald-500/10 text-emerald-300" },
+  uploaded_unverified: {
+    label: "Uploaded",
+    cls: "border-blue-500/30 bg-blue-500/10 text-blue-300",
+    title: "completed — this destination cannot be verified",
+  },
+  pending: { label: "Pending", cls: "border-zinc-600 bg-zinc-700/40 text-zinc-300" },
+  running: { label: "Uploading", cls: "border-zinc-600 bg-zinc-700/40 text-zinc-200 animate-pulse" },
+  failed: { label: "Failed", cls: "border-red-500/30 bg-red-500/10 text-red-300" },
+  skipped: { label: "Skipped", cls: "border-amber-500/30 bg-amber-500/10 text-amber-300", title: "skipped by choice" },
+  cancelled: { label: "Cancelled", cls: "border-zinc-700 bg-zinc-800 text-zinc-500" },
+};
+
+interface CoverageViewProps {
+  filters: BrowseFilters;
+  providerId: string;
+  status: string;
+  providers: CoverageProviderDTO[];
+  providersLoading: boolean;
+  filterBar: (extraRow: React.ReactNode, rightSlot: React.ReactNode) => React.ReactNode;
+  setCovProviderId: (v: string) => void;
+  setCovStatus: (v: string) => void;
+  filtersActive: boolean;
+  clearFilters: () => void;
+}
+
+/**
+ * CoverageView — the per-asset × per-provider Backup Coverage table. Answers
+ * "which of my files are backed up where, and why not": identity + provenance
+ * columns, then one compact status chip per destination (durable even for removed
+ * providers, honest about unverifiable destinations). Row selection drives a bulk
+ * "Queue N to <provider>" action; clicking a row (not its checkbox) opens the
+ * shared provenance drawer.
+ */
+function CoverageView({
+  filters,
+  providerId,
+  status,
+  providers,
+  providersLoading,
+  filterBar,
+  setCovProviderId,
+  setCovStatus,
+  filtersActive,
+  clearFilters,
+}: CoverageViewProps) {
+  const toast = useToast();
+  const [page, setPage] = useState(1);
+  const [rows, setRows] = useState<CoverageRowDTO[]>([]);
+  const [total, setTotal] = useState(0);
+  const [loading, setLoading] = useState(true);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+
+  // Live (non-removed) providers are the only valid queue targets.
+  const liveProviders = useMemo(() => providers.filter((p) => !p.removed), [providers]);
+  const [bulkProviderId, setBulkProviderId] = useState("");
+  useEffect(() => {
+    // Default the bulk target to the first live provider once they load / change.
+    if (!bulkProviderId && liveProviders.length > 0) setBulkProviderId(liveProviders[0].providerId);
+    if (bulkProviderId && !liveProviders.some((p) => p.providerId === bulkProviderId)) {
+      setBulkProviderId(liveProviders[0]?.providerId ?? "");
+    }
+  }, [liveProviders, bulkProviderId]);
+
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  const [queuing, setQueuing] = useState(false);
+
+  const load = useCallback(
+    async (p: number) => {
+      setLoading(true);
+      try {
+        const ps = providerId && status ? { providerId, status } : null;
+        const res = await BrowserService.ListCoverage(filters, ps, p, COVERAGE_PAGE_SIZE);
+        setRows(res.items ?? []);
+        setTotal(res.total ?? 0);
+        setPage(p);
+        setSelected(new Set()); // selection is page-scoped
+      } catch (e) {
+        toast.fromError(e, "Failed to load coverage");
+      } finally {
+        setLoading(false);
+      }
+    },
+    [filters, providerId, status, toast],
+  );
+
+  // Reload from page 1 whenever the filters or the provider-status filter change.
+  useEffect(() => {
+    void load(1);
+  }, [load]);
+
+  // Refresh the current page when the backup queue changes (a queued/flip job
+  // moves cells) without disturbing pagination.
+  useWailsEvent(WailsEvents.BackupQueueChanged, () => {
+    void load(page);
+  });
+
+  const shownProviders = providers.slice(0, COVERAGE_MAX_PROVIDER_COLUMNS);
+  const hiddenProviderCount = providers.length - shownProviders.length;
+
+  const allSelected = rows.length > 0 && rows.every((r) => selected.has(r.assetId));
+  const toggleAll = () => {
+    setSelected((prev) => {
+      if (rows.length > 0 && rows.every((r) => prev.has(r.assetId))) return new Set();
+      return new Set(rows.map((r) => r.assetId));
+    });
+  };
+  const toggleOne = (id: string) => {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const columns = useMemo<DataTableColumn<CoverageRowDTO>[]>(() => {
+    const base: DataTableColumn<CoverageRowDTO>[] = [
+      {
+        id: "select",
+        header: () => (
+          <input
+            type="checkbox"
+            aria-label="Select all on page"
+            checked={allSelected}
+            onChange={toggleAll}
+            onClick={(e) => e.stopPropagation()}
+            className="h-3.5 w-3.5 cursor-pointer accent-blue-500"
+          />
+        ),
+        cell: ({ row }) => (
+          <input
+            type="checkbox"
+            aria-label="Select row"
+            checked={selected.has(row.original.assetId)}
+            onChange={() => toggleOne(row.original.assetId)}
+            onClick={(e) => e.stopPropagation()}
+            className="h-3.5 w-3.5 cursor-pointer accent-blue-500"
+          />
+        ),
+      },
+      {
+        id: "name",
+        header: "Name",
+        cell: ({ row }) => <CoverageNameCell row={row.original} />,
+      },
+      {
+        id: "location",
+        header: "Location",
+        cell: ({ row }) => {
+          const path = row.original.archivePath;
+          if (!path) return <span className="text-zinc-600">—</span>;
+          return (
+            <span className="font-mono text-[11px] text-zinc-400" title={path}>
+              {middleTruncate(path, 40)}
+            </span>
+          );
+        },
+      },
+      {
+        id: "source",
+        header: "Source",
+        cell: ({ row }) => (
+          <span className="truncate text-zinc-300" title={row.original.sourceLabel}>
+            {row.original.sourceLabel || "—"}
+          </span>
+        ),
+      },
+      {
+        id: "taken",
+        header: "Taken",
+        cell: ({ row }) => (
+          <span className="tabular-nums text-zinc-400">
+            {row.original.captureDate ? formatDateOnly(row.original.captureDate) : "—"}
+          </span>
+        ),
+      },
+      {
+        id: "imported",
+        header: "Imported",
+        cell: ({ row }) => (
+          <span className="tabular-nums text-zinc-400">{formatDateOnly(row.original.importDate)}</span>
+        ),
+      },
+    ];
+    const provCols: DataTableColumn<CoverageRowDTO>[] = shownProviders.map((prov) => ({
+      id: `prov-${prov.providerId}`,
+      header: () => (
+        <span
+          className={`whitespace-nowrap ${prov.removed ? "text-zinc-600 italic" : ""}`}
+          title={prov.removed ? `${prov.name} (removed)` : prov.name}
+        >
+          {prov.name}
+          {prov.removed ? " (removed)" : ""}
+        </span>
+      ),
+      cell: ({ row }) => (
+        <CoverageChip entry={row.original.providers.find((e) => e.providerId === prov.providerId)} />
+      ),
+    }));
+    return [...base, ...provCols];
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [shownProviders, selected, allSelected, rows]);
+
+  // Nav items for the shared drawer — only .id is load-bearing for stepping.
+  const navItems = useMemo<BrowseAssetDTO[]>(
+    () =>
+      rows.map((r) => ({
+        id: r.assetId,
+        filename: r.filename,
+        captureDate: r.captureDate,
+        mediaType: r.mediaType,
+        fileSize: 0,
+        width: 0,
+        height: 0,
+        durationSeconds: 0,
+        verificationStatus: "",
+        backupStatus: "",
+        isLivePhotoPair: false,
+        duplicateOfAssetId: "",
+        hasArchiveCopy: r.hasArchiveCopy,
+      })),
+    [rows],
+  );
+
+  const selectedCount = selected.size;
+  const bulkProviderName =
+    liveProviders.find((p) => p.providerId === bulkProviderId)?.name ?? "backup";
+
+  const doQueue = async () => {
+    if (!bulkProviderId || selectedCount === 0) return;
+    setQueuing(true);
+    try {
+      const ids = [...selected];
+      const n = await BrowserService.QueueAssetsForProvider(bulkProviderId, ids);
+      toast.success(`Queued ${formatNumber(n)} ${n === 1 ? "asset" : "assets"} to ${bulkProviderName}`);
+      setSelected(new Set());
+      setConfirmOpen(false);
+      await load(page);
+    } catch (e) {
+      toast.fromError(e, "Could not queue backups");
+    } finally {
+      setQueuing(false);
+    }
+  };
+
+  const providerFilterRow = (
+    <div className="flex flex-wrap items-end gap-3 border-t border-zinc-800/60 pt-3">
+      <label>
+        <span className={FIELD_LABEL_CLASS}>Provider</span>
+        <select
+          value={providerId}
+          onChange={(e) => {
+            setCovProviderId(e.target.value);
+            if (!e.target.value) setCovStatus("");
+          }}
+          className={SELECT_CLASS}
+        >
+          <option value="">Any provider</option>
+          {providers.map((p) => (
+            <option key={p.providerId} value={p.providerId}>
+              {p.name}
+              {p.removed ? " (removed)" : ""}
+            </option>
+          ))}
+        </select>
+      </label>
+      <label>
+        <span className={FIELD_LABEL_CLASS}>Backup status</span>
+        <select
+          value={status}
+          onChange={(e) => setCovStatus(e.target.value)}
+          disabled={!providerId}
+          className={`${SELECT_CLASS} disabled:opacity-40`}
+        >
+          {COVERAGE_STATUS_OPTIONS.map((o) => (
+            <option key={o.value} value={o.value}>
+              {o.label}
+            </option>
+          ))}
+        </select>
+      </label>
+      {providersLoading && providers.length === 0 ? (
+        <span className="pb-1.5 text-[11px] text-zinc-600">Loading destinations…</span>
+      ) : null}
+    </div>
+  );
+
+  return (
+    <div>
+      {filterBar(providerFilterRow, null)}
+
+      {hiddenProviderCount > 0 ? (
+        <div className="mb-3 text-[11px] text-zinc-500">
+          Showing {COVERAGE_MAX_PROVIDER_COLUMNS} of {formatNumber(providers.length)} destinations as columns. Use the
+          Provider filter above to inspect the others.
+        </div>
+      ) : null}
+
+      <Card className="overflow-hidden p-0">
+        <DataTable
+          data={rows}
+          columns={columns}
+          loading={loading}
+          enableSorting={false}
+          dense
+          getRowId={(r) => r.assetId}
+          onRowClick={(r) => setSelectedId(r.assetId)}
+          pagination={{ page, pageSize: COVERAGE_PAGE_SIZE, total, onPageChange: (p) => void load(p) }}
+          emptyState={{
+            icon: TableCellsIcon,
+            title: filtersActive || (providerId && status) ? "No matches" : "Nothing to cover yet",
+            description:
+              filtersActive || (providerId && status)
+                ? "No assets match the current filters."
+                : "Import media and configure a backup destination to see coverage here.",
+            action:
+              filtersActive || (providerId && status) ? (
+                <Button size="sm" variant="secondary" onClick={clearFilters}>
+                  Clear filters
+                </Button>
+              ) : undefined,
+          }}
+        />
+      </Card>
+
+      {/* Bulk action bar (page-level selection). */}
+      {selectedCount > 0 ? (
+        <div className="fixed inset-x-0 bottom-0 z-30 border-t border-zinc-800 bg-zinc-950/95 px-4 py-3 backdrop-blur">
+          <div className="mx-auto flex max-w-6xl flex-wrap items-center gap-3">
+            <span className="text-[13px] font-medium text-zinc-200 tabular-nums">
+              {formatNumber(selectedCount)} selected
+            </span>
+            <div className="flex items-center gap-2">
+              <span className="text-[12px] text-zinc-500">Queue to</span>
+              <select
+                value={bulkProviderId}
+                onChange={(e) => setBulkProviderId(e.target.value)}
+                className={SELECT_CLASS}
+                disabled={liveProviders.length === 0}
+              >
+                {liveProviders.length === 0 ? <option value="">No destinations</option> : null}
+                {liveProviders.map((p) => (
+                  <option key={p.providerId} value={p.providerId}>
+                    {p.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <Button
+              size="sm"
+              variant="primary"
+              disabled={!bulkProviderId}
+              onClick={() => setConfirmOpen(true)}
+            >
+              Queue {formatNumber(selectedCount)}
+            </Button>
+            <Button size="sm" variant="ghost" onClick={() => setSelected(new Set())}>
+              Clear selection
+            </Button>
+          </div>
+        </div>
+      ) : null}
+
+      <ConfirmDialog
+        open={confirmOpen}
+        variant="primary"
+        title={`Queue ${formatNumber(selectedCount)} ${selectedCount === 1 ? "asset" : "assets"} to ${bulkProviderName}?`}
+        description="Assets skipped by choice will be un-skipped; assets with no job yet will be queued. Assets already uploaded or in progress are left untouched."
+        confirmLabel="Queue backups"
+        loading={queuing}
+        onConfirm={() => void doQueue()}
+        onCancel={() => setConfirmOpen(false)}
+      />
+
+      {selectedId ? (
+        <DetailDrawer
+          assetId={selectedId}
+          items={navItems}
+          onClose={() => setSelectedId(null)}
+          onNavigate={setSelectedId}
+        />
+      ) : null}
+    </div>
+  );
+}
+
+/** A compact per-cell coverage status chip (dim dash for "none"). */
+function CoverageChip({ entry }: { entry?: ProviderCoverageDTO }) {
+  const statusKey = entry?.status ?? "none";
+  const meta = COVERAGE_CHIP[statusKey];
+  if (!meta) return <span className="text-zinc-600">—</span>;
+  const title = statusKey === "failed" && entry?.note ? entry.note : meta.title;
+  return (
+    <span
+      title={title}
+      className={`inline-block rounded border px-1.5 py-0.5 text-[10px] font-medium ${meta.cls}`}
+    >
+      {meta.label}
+    </span>
+  );
+}
+
+/** Name cell: a 48px thumbnail plus the filename. */
+function CoverageNameCell({ row }: { row: CoverageRowDTO }) {
+  const [errored, setErrored] = useState(false);
+  const isVideo = row.mediaType === "video";
+  return (
+    <div className="flex min-w-0 items-center gap-2.5">
+      {errored ? (
+        <div className="flex h-12 w-12 flex-none items-center justify-center rounded bg-zinc-900">
+          {isVideo ? <FilmIcon className="h-5 w-5 text-zinc-700" /> : <PhotoIcon className="h-5 w-5 text-zinc-700" />}
+        </div>
+      ) : (
+        <img
+          src={`/thumb/${row.assetId}`}
+          loading="lazy"
+          alt={row.filename}
+          onError={() => setErrored(true)}
+          className="h-12 w-12 flex-none rounded bg-zinc-900 object-cover"
+        />
+      )}
+      <span className="min-w-0 truncate text-[13px] text-zinc-200" title={row.filename}>
+        {row.filename}
+      </span>
+    </div>
+  );
+}
+
+/** Middle-ellipsis a long string, keeping head and tail (full text goes in title). */
+function middleTruncate(s: string, max: number): string {
+  if (s.length <= max) return s;
+  const half = Math.floor((max - 1) / 2);
+  return `${s.slice(0, half)}…${s.slice(s.length - half)}`;
 }
 
 /**

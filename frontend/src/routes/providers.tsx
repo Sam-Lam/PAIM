@@ -19,10 +19,12 @@ import {
   WailsEvents,
   type BackupBackfillCompleted,
   type BackupBackfillProgress,
+  type BackupReconcileCompleted,
   type PluginDTO,
   type ProviderDTO,
   type RcloneRemoteInfoDTO,
   type RcloneRemotesDTO,
+  type ReconcilePreviewDTO,
 } from "../lib/api";
 import { useAsyncData, useWailsEvent } from "../lib/hooks";
 import { useToast } from "../lib/toast";
@@ -32,6 +34,42 @@ const ORDER_OPTIONS: { value: string; label: string }[] = [
   { value: "oldest_first", label: "Oldest first (FIFO)" },
   { value: "newest_first", label: "Newest first" },
 ];
+
+// Media-scope kinds mirror the backend's {photos,videos,raws} tokens (see
+// internal/mediatype). A provider's mediaScope is a CSV of these; an empty string
+// means "all kinds" (the default). Scope is judged by each file's extension, so a
+// Live Photo pair's still and MOV are covered independently.
+const SCOPE_KINDS = ["photos", "videos", "raws"] as const;
+type ScopeKind = (typeof SCOPE_KINDS)[number];
+const SCOPE_LABELS: Record<ScopeKind, string> = { photos: "Photos", videos: "Videos", raws: "RAWs" };
+
+/** parseScope reads a provider mediaScope CSV into its enabled kinds; empty (or an
+ *  all-unknown value) means all kinds. */
+function parseScope(scope: string): Set<ScopeKind> {
+  const t = (scope ?? "").trim();
+  if (!t) return new Set(SCOPE_KINDS);
+  const set = new Set<ScopeKind>();
+  for (const tok of t.split(",")) {
+    const k = tok.trim();
+    if ((SCOPE_KINDS as readonly string[]).includes(k)) set.add(k as ScopeKind);
+  }
+  return set.size > 0 ? set : new Set(SCOPE_KINDS);
+}
+
+/** serializeScope emits the mediaScope CSV for a set of kinds; all kinds selected
+ *  collapses to "" (the backward-compatible default). */
+function serializeScope(set: Set<ScopeKind>): string {
+  const sel = SCOPE_KINDS.filter((k) => set.has(k));
+  return sel.length === SCOPE_KINDS.length ? "" : sel.join(",");
+}
+
+/** scopeLabel is the compact human summary shown on a card ("All media",
+ *  "Photos + Videos"). */
+function scopeLabel(scope: string): string {
+  const set = parseScope(scope);
+  const parts = SCOPE_KINDS.filter((k) => set.has(k)).map((k) => SCOPE_LABELS[k]);
+  return parts.length === SCOPE_KINDS.length ? "All media" : parts.join(" + ");
+}
 
 /** Providers — configure backup destinations (localfs and future plugins). */
 export function ProvidersPage() {
@@ -67,6 +105,15 @@ export function ProvidersPage() {
     }
     void refresh();
   });
+  useWailsEvent<BackupReconcileCompleted>(WailsEvents.BackupReconcileCompleted, (d) => {
+    setBackfill(null);
+    if (d.cancelled > 0 || d.enqueued > 0) {
+      toast.success(
+        `Queue recalculated — removed ${formatNumber(d.cancelled)}, queued ${formatNumber(d.enqueued)}`,
+      );
+    }
+    void refresh();
+  });
 
   const startBackfill = (providerId: string) =>
     void (async () => {
@@ -75,6 +122,18 @@ export function ProvidersPage() {
         setBackfill({ providerId, done: st.done, total: st.total, running: true });
       } catch (e) {
         toast.fromError(e, "Could not queue backups");
+      }
+    })();
+
+  // Reconcile ("Recalculate queue") reuses the same inline progress channel as a
+  // backfill (both hold the single-instance guard), so it drives the same panel.
+  const startReconcile = (providerId: string) =>
+    void (async () => {
+      try {
+        const st = await BackupService.StartReconcile(providerId);
+        setBackfill({ providerId, done: st.done, total: st.total, running: true });
+      } catch (e) {
+        toast.fromError(e, "Could not recalculate the queue");
       }
     })();
 
@@ -131,6 +190,7 @@ export function ProvidersPage() {
                 backfill={backfill?.providerId === p.id ? backfill : null}
                 backfillBusy={!!backfill}
                 onQueueBackfill={() => startBackfill(p.id)}
+                onRecalculate={() => startReconcile(p.id)}
               />
             ))
           )}
@@ -162,6 +222,7 @@ function ProviderCard({
   backfill,
   backfillBusy,
   onQueueBackfill,
+  onRecalculate,
 }: {
   provider: ProviderDTO;
   plugin: PluginDTO | undefined;
@@ -169,13 +230,52 @@ function ProviderCard({
   backfill: BackupBackfillProgress | null;
   backfillBusy: boolean;
   onQueueBackfill: () => void;
+  onRecalculate: () => void;
 }) {
   const toast = useToast();
   const [saving, setSaving] = useState(false);
   const [requeueing, setRequeueing] = useState(false);
+  // scopePreview holds the pending "recalculate?" offer after a scope change (null
+  // when there is nothing to reconcile). It is set from PreviewReconcile.
+  const [scopePreview, setScopePreview] = useState<ReconcilePreviewDTO | null>(null);
   const summary = configSummary(provider.configJson);
   const missing = provider.missingBackupCount ?? 0;
   const optedOut = provider.optedOutCount ?? 0;
+  const scope = parseScope(provider.mediaScope);
+
+  // Toggle one media kind in this provider's scope. At least one kind must stay
+  // selected. The new scope is persisted immediately (like the enabled/order
+  // toggles), then PreviewReconcile offers to bring the EXISTING queue into line —
+  // new imports already honor the new scope without any reconcile.
+  const toggleScope = async (kind: ScopeKind) => {
+    const next = new Set(scope);
+    if (next.has(kind)) next.delete(kind);
+    else next.add(kind);
+    if (next.size === 0) return; // at least one kind required
+    const serialized = serializeScope(next);
+    setSaving(true);
+    try {
+      await ProviderService.Update(
+        provider.id,
+        provider.configJson,
+        provider.enabled,
+        provider.mirror,
+        provider.uploadOrder,
+        serialized,
+      );
+      onChanged();
+      try {
+        const preview = await BackupService.PreviewReconcile(provider.id);
+        setScopePreview(preview.toCancel > 0 || preview.toEnqueue > 0 ? preview : null);
+      } catch {
+        setScopePreview(null);
+      }
+    } catch (e) {
+      toast.fromError(e, "Could not update scope");
+    } finally {
+      setSaving(false);
+    }
+  };
 
   // Reverse a per-import opt-out ("Queue anyway"): flip this destination's
   // opted-out jobs back to pending so they upload. Per-session scoping is
@@ -214,6 +314,7 @@ function ProviderCard({
         patch.enabled ?? provider.enabled,
         provider.mirror,
         patch.uploadOrder ?? provider.uploadOrder,
+        provider.mediaScope,
       );
       onChanged();
     } catch (e) {
@@ -247,6 +348,14 @@ function ProviderCard({
             {provider.mirror ? (
               <span className="rounded-full bg-amber-500/15 px-2 py-0.5 text-[10px] font-semibold tracking-wide text-amber-300 uppercase ring-1 ring-amber-500/30 ring-inset">
                 Mirror
+              </span>
+            ) : null}
+            {provider.mediaScope ? (
+              <span
+                className="rounded-full bg-zinc-800/70 px-2 py-0.5 text-[10px] font-medium text-zinc-400 ring-1 ring-zinc-700/40 ring-inset"
+                title={`Backs up: ${scopeLabel(provider.mediaScope)}`}
+              >
+                {scopeLabel(provider.mediaScope)}
               </span>
             ) : null}
           </div>
@@ -297,6 +406,21 @@ function ProviderCard({
                 ))}
               </select>
             </label>
+            <div className="flex items-center gap-2 text-[11px] text-zinc-400">
+              <span>Backs up</span>
+              {SCOPE_KINDS.map((k) => (
+                <label key={k} className="flex items-center gap-1">
+                  <input
+                    type="checkbox"
+                    checked={scope.has(k)}
+                    disabled={saving}
+                    onChange={() => void toggleScope(k)}
+                    className="h-3.5 w-3.5 accent-blue-600"
+                  />
+                  <span>{SCOPE_LABELS[k]}</span>
+                </label>
+              ))}
+            </div>
           </div>
 
           {backfill ? (
@@ -332,6 +456,37 @@ function ProviderCard({
               >
                 Queue {formatNumber(missing)} backup{missing === 1 ? "" : "s"}
               </Button>
+            </div>
+          ) : null}
+
+          {/* Scope change: offer to bring the existing queue into line. Hidden while a
+              backfill/reconcile progress panel is showing for this card. */}
+          {scopePreview && !backfill ? (
+            <div className="mt-3 flex flex-wrap items-center gap-3 rounded-md border border-amber-500/30 bg-amber-500/5 p-3">
+              <div className="min-w-0 flex-1 text-[12px] text-amber-200/90">
+                <span className="font-medium text-amber-100">Scope changed — recalculate the queue?</span>{" "}
+                <span>
+                  {formatNumber(scopePreview.toCancel)} job{scopePreview.toCancel === 1 ? "" : "s"} to remove,{" "}
+                  {formatNumber(scopePreview.toEnqueue)} to add.
+                </span>
+              </div>
+              <div className="flex items-center gap-2">
+                <Button size="sm" variant="ghost" onClick={() => setScopePreview(null)}>
+                  Dismiss
+                </Button>
+                <Button
+                  size="sm"
+                  variant="primary"
+                  icon={ArrowPathIcon}
+                  disabled={backfillBusy}
+                  onClick={() => {
+                    setScopePreview(null);
+                    onRecalculate();
+                  }}
+                >
+                  Recalculate
+                </Button>
+              </div>
             </div>
           ) : null}
 
@@ -391,6 +546,15 @@ function AddDestination({
   // Mirror + upload order (shared across plugins).
   const [mirror, setMirror] = useState(false);
   const [uploadOrder, setUploadOrder] = useState("oldest_first");
+  // Media scope: which kinds this destination backs up (all checked = default).
+  const [scope, setScope] = useState<Set<ScopeKind>>(() => new Set(SCOPE_KINDS));
+  const toggleScope = (kind: ScopeKind) =>
+    setScope((prev) => {
+      const next = new Set(prev);
+      if (next.has(kind)) next.delete(kind);
+      else next.add(kind);
+      return next.size === 0 ? prev : next; // at least one kind required
+    });
 
   // rclone state.
   const [rclone, setRclone] = useState<RcloneRemotesDTO | null>(null);
@@ -494,9 +658,13 @@ function AddDestination({
     } else {
       configJSON = rawConfig.trim() || "{}";
     }
+    if (scope.size === 0) {
+      setError("Select at least one media kind for this destination to back up.");
+      return;
+    }
     setSaving(true);
     try {
-      await ProviderService.Add(pluginName, configJSON, mirror, uploadOrder);
+      await ProviderService.Add(pluginName, configJSON, mirror, uploadOrder, serializeScope(scope));
       toast.success("Destination added");
       onAdded();
     } catch (e) {
@@ -621,6 +789,35 @@ function AddDestination({
             Newest photos upload first — new imports jump the queue (good for a quota-limited mirror).
           </span>
         </label>
+
+        {/* Media scope: which kinds this destination backs up. */}
+        <div className="rounded-md border border-zinc-800 bg-zinc-900/40 p-3">
+          <span className="text-xs font-medium text-zinc-400">Back up</span>
+          <div className="mt-2 flex flex-wrap items-center gap-4">
+            {SCOPE_KINDS.map((k) => (
+              <label key={k} className="flex items-center gap-1.5 text-[12px] text-zinc-300">
+                <input
+                  type="checkbox"
+                  checked={scope.has(k)}
+                  onChange={() => toggleScope(k)}
+                  className="h-4 w-4 accent-blue-600"
+                />
+                <span>{SCOPE_LABELS[k]}</span>
+              </label>
+            ))}
+          </div>
+          {isGooglePhotos ? (
+            <p className="mt-2 text-[11px] text-amber-300/80">
+              Tip: Google Photos re-compresses RAWs and counts them against your storage — consider unchecking RAWs
+              here and keeping them on a custody destination.
+            </p>
+          ) : (
+            <p className="mt-2 text-[11px] text-zinc-500">
+              Uncheck a kind to keep it out of this destination (e.g. skip RAWs on a space-limited cloud remote). Each
+              Live Photo's still and video are judged separately.
+            </p>
+          )}
+        </div>
 
         {error ? (
           <p className="rounded-md border border-red-500/30 bg-red-500/5 px-3 py-2 text-[12px] text-red-400">{error}</p>

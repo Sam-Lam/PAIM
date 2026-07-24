@@ -8,6 +8,7 @@ package mediatype
 
 import (
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/Sam-Lam/PAIM/internal/domain"
@@ -89,6 +90,130 @@ func MediaTypeFor(ext string) domain.MediaType {
 	default:
 		return domain.MediaType("")
 	}
+}
+
+// Scope tokens are the media-kind selectors a backup provider's MediaScope
+// enables ({photos,videos,raws}). They map onto Kind: photos<-Photo,
+// videos<-Video, raws<-RawPhoto. An empty scope means "all kinds" (the default,
+// backward compatible with providers created before per-provider scoping).
+const (
+	ScopePhotos = "photos"
+	ScopeVideos = "videos"
+	ScopeRaws   = "raws"
+)
+
+// AllScopes is the canonical, ordered set of scope tokens. It is the "everything"
+// scope an empty MediaScope is equivalent to.
+var AllScopes = []string{ScopePhotos, ScopeVideos, ScopeRaws}
+
+// scopeForKind maps a media Kind to its scope token. Unknown (a non-media
+// extension) has no scope token and returns "".
+func scopeForKind(k Kind) string {
+	switch k {
+	case Photo:
+		return ScopePhotos
+	case Video:
+		return ScopeVideos
+	case RawPhoto:
+		return ScopeRaws
+	}
+	return ""
+}
+
+// ScopeIncludes reports whether a provider scope (a CSV of scope tokens, e.g.
+// "photos,videos") includes the media kind of ext. The mapping is KindOf(ext):
+// Photo->photos, Video->videos, RawPhoto->raws.
+//
+//   - An empty (or whitespace-only) scope means "all kinds" and includes every
+//     media extension — the default that keeps pre-scoping providers unchanged.
+//   - An Unknown extension (not in the registry) has no kind to scope on and is
+//     therefore NEVER included by a non-empty scope; under the empty ("all") scope
+//     it is likewise not a media file the caller would enqueue. Documented so the
+//     caller does not mistake "not scoped" for "excluded by policy".
+//
+// This is the single scoping key. It is deliberately driven by the FILE's
+// extension, not by the asset's MediaType, because the two components of a Live
+// Photo pair share MediaType live_photo_pair yet must be judged independently: the
+// still (heic/jpg) counts as photos, its companion MOV counts as videos.
+func ScopeIncludes(scope, ext string) bool {
+	tok := scopeForKind(KindOf(ext))
+	if tok == "" {
+		return false // Unknown extension: no kind, so not in any scope
+	}
+	if strings.TrimSpace(scope) == "" {
+		return true // empty scope = all kinds
+	}
+	for _, s := range strings.Split(scope, ",") {
+		if strings.TrimSpace(s) == tok {
+			return true
+		}
+	}
+	return false
+}
+
+// EnabledScopes parses a MediaScope CSV into the set of scope tokens it enables,
+// in AllScopes order. An empty/whitespace scope enables every kind (returns a copy
+// of AllScopes); unrecognized tokens are ignored.
+func EnabledScopes(scope string) []string {
+	if strings.TrimSpace(scope) == "" {
+		return append([]string(nil), AllScopes...)
+	}
+	set := make(map[string]bool)
+	for _, s := range strings.Split(scope, ",") {
+		set[strings.TrimSpace(s)] = true
+	}
+	out := make([]string, 0, len(AllScopes))
+	for _, k := range AllScopes {
+		if set[k] {
+			out = append(out, k)
+		}
+	}
+	return out
+}
+
+// NormalizeScope canonicalizes a MediaScope: it re-serializes the enabled tokens
+// in AllScopes order and collapses a full ("all kinds") scope back to the empty
+// string, so the stored default value is uniform and backward compatible.
+// Unrecognized tokens are dropped.
+func NormalizeScope(scope string) string {
+	scopes := EnabledScopes(scope)
+	if len(scopes) == len(AllScopes) {
+		return ""
+	}
+	return strings.Join(scopes, ",")
+}
+
+// ExtensionsForScopes returns the sorted, normalized (lowercase, no dot)
+// extensions belonging to the given scope tokens, drawn from the fixed registry.
+// Because the result derives only from the built-in registry (never caller text),
+// it is safe to interpolate into a SQL IN() predicate.
+func ExtensionsForScopes(scopes []string) []string {
+	want := make(map[string]bool, len(scopes))
+	for _, s := range scopes {
+		want[s] = true
+	}
+	var out []string
+	for ext, k := range registry {
+		if want[scopeForKind(k)] {
+			out = append(out, ext)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+// ScopedExtensions returns the extension whitelist a MediaScope restricts to, or
+// nil when the scope imposes NO restriction (empty scope, or a scope that enables
+// every kind). A non-nil, possibly-empty slice means "restrict to exactly these
+// extensions" — callers build an `IN (?)` predicate from it and treat nil as "no
+// extension filter" (all eligible rows). Efficient for large catalogs: the filter
+// runs in SQL rather than loading out-of-scope rows into Go.
+func ScopedExtensions(scope string) []string {
+	scopes := EnabledScopes(scope)
+	if len(scopes) == len(AllScopes) {
+		return nil // all kinds -> no restriction
+	}
+	return ExtensionsForScopes(scopes)
 }
 
 // Candidate is a file considered for Live Photo pairing. ContentIdentifier is

@@ -47,6 +47,20 @@ func LibraryMigrations(root string) []Migration {
 			Description: "convert archive paths to library-relative",
 			Run:         migrateRelativePaths(root),
 		},
+		{
+			ID:          3,
+			Description: "add backup provider media_scope column",
+			Run: func(tx *gorm.DB) error {
+				// AutoMigrate is additive and idempotent: it adds the new
+				// BackupProvider.MediaScope column on existing catalogs (fresh ones
+				// already have it from migration 1). Existing rows default to the empty
+				// scope, which means "all kinds" — so scoping is backward compatible.
+				if err := tx.AutoMigrate(&domain.BackupProvider{}); err != nil {
+					return wrap("add media_scope column", err)
+				}
+				return nil
+			},
+		},
 	}
 }
 

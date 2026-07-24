@@ -20,28 +20,29 @@ import (
 // for each via application.RegisterEvent so the binding generator produces a
 // strongly-typed TS API. The frontend subscribes with Events.On(<name>, cb).
 const (
-	EventImportProgress     = "import:progress"
-	EventImportCompleted    = "import:completed"
-	EventAnalyzeCompleted   = "analyze:completed"
-	EventBackupProgress          = "backup:progress"
-	EventBackupQueueChanged      = "backup:queue-changed"
-	EventBackupBackfillProgress  = "backup:backfill-progress"
-	EventBackupBackfillCompleted = "backup:backfill-completed"
-	EventBackupProviderFailing   = "backup:provider-failing"
-	EventVolumeMounted      = "volume:mounted"
-	EventVolumeUnmounted    = "volume:unmounted"
-	EventSourceIdentified   = "source:identified"
-	EventSourceProgress     = "source:progress"
-	EventSourceEvaluated    = "source:evaluated"
-	EventSourceCleared      = "source:cleared"
-	EventCleanupProgress    = "cleanup:progress"
-	EventCleanupCompleted   = "cleanup:completed"
-	EventReorganizePlan     = "reorganize:plan-progress"
-	EventLogExportProgress  = "log:export-progress"
-	EventDuplicateProgress  = "duplicate:progress"
-	EventLibraryProgress    = "library:progress"
-	EventQuitRequested      = "app:quit-requested"
-	EventThumbsProgress     = "thumbs:progress"
+	EventImportProgress           = "import:progress"
+	EventImportCompleted          = "import:completed"
+	EventAnalyzeCompleted         = "analyze:completed"
+	EventBackupProgress           = "backup:progress"
+	EventBackupQueueChanged       = "backup:queue-changed"
+	EventBackupBackfillProgress   = "backup:backfill-progress"
+	EventBackupBackfillCompleted  = "backup:backfill-completed"
+	EventBackupReconcileCompleted = "backup:reconcile-completed"
+	EventBackupProviderFailing    = "backup:provider-failing"
+	EventVolumeMounted            = "volume:mounted"
+	EventVolumeUnmounted          = "volume:unmounted"
+	EventSourceIdentified         = "source:identified"
+	EventSourceProgress           = "source:progress"
+	EventSourceEvaluated          = "source:evaluated"
+	EventSourceCleared            = "source:cleared"
+	EventCleanupProgress          = "cleanup:progress"
+	EventCleanupCompleted         = "cleanup:completed"
+	EventReorganizePlan           = "reorganize:plan-progress"
+	EventLogExportProgress        = "log:export-progress"
+	EventDuplicateProgress        = "duplicate:progress"
+	EventLibraryProgress          = "library:progress"
+	EventQuitRequested            = "app:quit-requested"
+	EventThumbsProgress           = "thumbs:progress"
 )
 
 // Emitter delivers a typed event payload to the frontend. It is implemented in
@@ -140,6 +141,19 @@ type BackupBackfillCompleted struct {
 	Enqueued   int    `json:"enqueued"`
 	Skipped    int    `json:"skipped"`
 	Cancelled  bool   `json:"cancelled"`
+}
+
+// BackupReconcileCompleted is the payload for backup:reconcile-completed, emitted
+// once when a "recalculate queue" reconcile finishes (or is cancelled). Cancelled
+// is how many out-of-scope pending/paused jobs it cancelled; Enqueued is how many
+// in-scope missing jobs it created. Aborted is true when the run was stopped early
+// (the cancel step still applied; the enqueue phase may be partial and resumes on a
+// later run). It drives the "Removed X · Queued Y" toast.
+type BackupReconcileCompleted struct {
+	ProviderID string `json:"providerId"`
+	Cancelled  int    `json:"cancelled"`
+	Enqueued   int    `json:"enqueued"`
+	Aborted    bool   `json:"aborted"`
 }
 
 // BackupProviderFailing is the payload for backup:provider-failing, emitted once

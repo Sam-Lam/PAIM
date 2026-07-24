@@ -117,7 +117,7 @@ func TestBackfillEnqueuesExactlyEligibleSet(t *testing.T) {
 	want := map[string]bool{elig1.ID: true, elig2.ID: true, adoptDup.ID: true}
 
 	// Missing-count query should report exactly the eligible set up front.
-	if n, err := assets.CountEligibleMissingBackup(ctx, providerID); err != nil {
+	if n, err := assets.CountEligibleMissingBackup(ctx, providerID, ""); err != nil {
 		t.Fatalf("missing count: %v", err)
 	} else if n != int64(len(want)) {
 		t.Fatalf("missing count = %d, want %d", n, len(want))
@@ -199,7 +199,7 @@ func TestBackfillIdempotentSecondRun(t *testing.T) {
 	}
 
 	// Missing count now excludes the 2 already-enqueued.
-	if n, err := assets.CountEligibleMissingBackup(ctx, providerID); err != nil {
+	if n, err := assets.CountEligibleMissingBackup(ctx, providerID, ""); err != nil {
 		t.Fatalf("missing count: %v", err)
 	} else if n != 3 {
 		t.Fatalf("missing count = %d, want 3", n)
@@ -223,7 +223,7 @@ func TestBackfillIdempotentSecondRun(t *testing.T) {
 	if len(got) != 5 {
 		t.Fatalf("after run 2: %d jobs, want 5 (no duplicates)", len(got))
 	}
-	if n, err := assets.CountEligibleMissingBackup(ctx, providerID); err != nil {
+	if n, err := assets.CountEligibleMissingBackup(ctx, providerID, ""); err != nil {
 		t.Fatalf("missing count after: %v", err)
 	} else if n != 0 {
 		t.Fatalf("missing count after full backfill = %d, want 0", n)

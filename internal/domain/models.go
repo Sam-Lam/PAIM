@@ -193,6 +193,14 @@ type BackupProvider struct {
 	// empty value means oldest_first.
 	UploadOrder UploadOrder `json:"uploadOrder"`
 
+	// MediaScope restricts which media kinds this provider backs up, as a CSV of
+	// scope tokens from {photos,videos,raws} (see internal/mediatype). An empty
+	// value means "all kinds" — the default that keeps providers created before
+	// per-provider scoping unchanged. Scope is judged against each asset's file
+	// extension (mediatype.ScopeIncludes), so the two components of a Live Photo
+	// pair are judged independently despite sharing MediaType live_photo_pair.
+	MediaScope string `json:"mediaScope"`
+
 	SoftDelete
 }
 

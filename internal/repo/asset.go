@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/Sam-Lam/PAIM/internal/domain"
+	"github.com/Sam-Lam/PAIM/internal/mediatype"
 	"gorm.io/gorm"
 )
 
@@ -384,25 +385,43 @@ func (r *AssetRepo) ArchivedIDs(ctx context.Context) ([]string, error) {
 	return ids, nil
 }
 
+// scopeExtWhere adds a provider-scope extension predicate to a query. scope is a
+// provider MediaScope CSV (see internal/mediatype); an empty/"all" scope adds no
+// predicate (every media kind is eligible). A restricting scope filters to exactly
+// its kinds' extensions via an indexed `lower(original_extension) IN (...)` clause
+// built from the fixed registry — so a photos-only provider never even loads RAW
+// rows. Matching is by FILE extension, so each Live Photo component (still vs MOV)
+// is judged independently despite the shared live_photo_pair MediaType.
+func scopeExtWhere(q *gorm.DB, scope string) *gorm.DB {
+	exts := mediatype.ScopedExtensions(scope)
+	if exts == nil {
+		return q // empty/all scope: no restriction
+	}
+	return q.Where("lower(original_extension) IN ?", exts)
+}
+
 // EligibleForBackupPage returns up to limit non-deleted, verified assets that
-// have an archive copy on disk (CurrentArchivePath <> ''), whose ID sorts after
+// have an archive copy on disk (CurrentArchivePath <> ”), whose ID sorts after
 // afterID, ordered by ID ascending. It is the stable, resumable keyset page the
 // backup backfill iterates: copy-mode duplicate PLACEHOLDERS (empty archive path)
 // are excluded because there is nothing to back up, while adopt-flagged duplicates
 // (which carry a real path) are INCLUDED — exactly the set the importer enqueues at
-// import time. Pass afterID="" to start from the first page. Because the order is a
-// stable total order over the ID key and Enqueue is idempotent, a cancelled
-// backfill resumes correctly on a fresh from-the-start run (already-enqueued pairs
-// are skipped).
-func (r *AssetRepo) EligibleForBackupPage(ctx context.Context, afterID string, limit int) ([]domain.Asset, error) {
+// import time. When scope restricts the provider's media kinds, out-of-scope
+// extensions are filtered in SQL (see scopeExtWhere) so a 237k-row catalog never
+// loads out-of-scope rows into Go. Pass afterID="" to start from the first page.
+// Because the order is a stable total order over the ID key and Enqueue is
+// idempotent, a cancelled backfill resumes correctly on a fresh from-the-start run
+// (already-enqueued pairs are skipped).
+func (r *AssetRepo) EligibleForBackupPage(ctx context.Context, afterID string, limit int, scope string) ([]domain.Asset, error) {
 	if limit <= 0 {
 		limit = 1000
 	}
 	var assets []domain.Asset
-	err := r.db.WithContext(ctx).
+	q := r.db.WithContext(ctx).
 		Where("verification_status = ?", domain.VerificationStatusVerified).
 		Where("current_archive_path <> ''").
-		Where("id > ?", afterID).
+		Where("id > ?", afterID)
+	err := scopeExtWhere(q, scope).
 		Order("id ASC").
 		Limit(limit).
 		Find(&assets).Error
@@ -413,41 +432,41 @@ func (r *AssetRepo) EligibleForBackupPage(ctx context.Context, afterID string, l
 }
 
 // CountEligibleForBackup counts every non-deleted, verified asset that has an
-// archive copy on disk — the total set a backfill scans (the progress-bar
-// denominator). It is the same eligibility EligibleForBackupPage pages over.
-func (r *AssetRepo) CountEligibleForBackup(ctx context.Context) (int64, error) {
+// archive copy on disk AND falls within the provider's scope — the total set a
+// scoped backfill scans (the progress-bar denominator). It is the same eligibility
+// EligibleForBackupPage pages over. An empty scope counts every eligible asset.
+func (r *AssetRepo) CountEligibleForBackup(ctx context.Context, scope string) (int64, error) {
 	var n int64
-	err := r.db.WithContext(ctx).
+	q := r.db.WithContext(ctx).
 		Model(&domain.Asset{}).
 		Where("verification_status = ?", domain.VerificationStatusVerified).
-		Where("current_archive_path <> ''").
-		Count(&n).Error
-	if err != nil {
+		Where("current_archive_path <> ''")
+	if err := scopeExtWhere(q, scope).Count(&n).Error; err != nil {
 		return 0, fmt.Errorf("repo: count eligible for backup: %w", err)
 	}
 	return n, nil
 }
 
 // CountEligibleMissingBackup counts non-deleted, verified assets that have an
-// archive copy but NO pending, running, completed, or opted-out backup job for
-// the given provider (destination). The status set matches BackupRepo.Enqueue's
-// idempotency exactly, so the result is precisely how many jobs a backfill for
-// this provider would create — the "N assets aren't queued for this destination
-// yet" count the Providers UI shows. Opted-out jobs count as present (NOT
-// missing): a deliberately-excluded asset is not a gap to be backfilled; it is
-// surfaced separately as "skipped by choice". It is a single indexed NOT EXISTS
-// scan.
-func (r *AssetRepo) CountEligibleMissingBackup(ctx context.Context, providerID string) (int64, error) {
+// archive copy, fall WITHIN the provider's scope, but have NO pending, running,
+// completed, or opted-out backup job for the given provider (destination). The
+// status set matches BackupRepo.Enqueue's idempotency exactly, so the result is
+// precisely how many jobs a scoped backfill for this provider would create — the
+// "N assets aren't queued for this destination yet" count the Providers UI shows.
+// Out-of-scope assets are excluded (they are never a gap for this provider — the
+// exclusion is a DERIVED policy, not a recorded opt-out). Opted-out jobs count as
+// present (NOT missing): a deliberately-excluded asset is surfaced separately as
+// "skipped by choice". It is a single indexed NOT EXISTS scan.
+func (r *AssetRepo) CountEligibleMissingBackup(ctx context.Context, providerID, scope string) (int64, error) {
 	var n int64
-	err := r.db.WithContext(ctx).
+	q := r.db.WithContext(ctx).
 		Model(&domain.Asset{}).
 		Where("verification_status = ?", domain.VerificationStatusVerified).
 		Where("current_archive_path <> ''").
 		Where("NOT EXISTS (SELECT 1 FROM backup_jobs j WHERE j.asset_id = assets.id AND j.destination = ? AND j.deleted_at IS NULL AND j.status IN ?)",
 			providerID,
-			[]domain.JobStatus{domain.JobStatusPending, domain.JobStatusRunning, domain.JobStatusCompleted, domain.JobStatusOptedOut}).
-		Count(&n).Error
-	if err != nil {
+			[]domain.JobStatus{domain.JobStatusPending, domain.JobStatusRunning, domain.JobStatusCompleted, domain.JobStatusOptedOut})
+	if err := scopeExtWhere(q, scope).Count(&n).Error; err != nil {
 		return 0, fmt.Errorf("repo: count eligible missing backup (provider %q): %w", providerID, err)
 	}
 	return n, nil
@@ -658,7 +677,83 @@ type AssetQuery struct {
 	CaptureTo          *time.Time
 	CameraMake         string
 	CameraModel        string
-	Page               Page
+	// ProviderJob, when non-nil, restricts the result to assets whose backup-job
+	// state for one destination (provider) matches a coverage status — an
+	// EXISTS/NOT EXISTS subquery over backup_jobs AND-ed with every other
+	// predicate. It backs the Backup Coverage view's per-provider status filter.
+	ProviderJob *ProviderJobFilter
+	Page        Page
+}
+
+// ProviderJobMatch is the coverage-status vocabulary the Backup Coverage view
+// filters on. The values are identical to the services-layer coverage status
+// strings so the browser service can pass them straight through.
+type ProviderJobMatch string
+
+// ProviderJobMatch values. They map to EXISTS/NOT EXISTS predicates over a
+// destination's backup_jobs (see applyProviderJobFilter).
+const (
+	ProviderJobNone               ProviderJobMatch = "none"
+	ProviderJobSkipped            ProviderJobMatch = "skipped"
+	ProviderJobPending            ProviderJobMatch = "pending"
+	ProviderJobRunning            ProviderJobMatch = "running"
+	ProviderJobFailed             ProviderJobMatch = "failed"
+	ProviderJobCancelled          ProviderJobMatch = "cancelled"
+	ProviderJobVerified           ProviderJobMatch = "verified"
+	ProviderJobUploadedUnverified ProviderJobMatch = "uploaded_unverified"
+)
+
+// ProviderJobFilter restricts a listing to assets whose backup-job state for one
+// destination matches a coverage status. Mirror carries whether the destination
+// is a mirror provider, which decides whether a completed job reads as verified
+// (non-mirror, no note) or uploaded_unverified (mirror, or a verify-unavailable
+// note) — matching the browser service's per-cell derivation.
+type ProviderJobFilter struct {
+	Destination string
+	Match       ProviderJobMatch
+	Mirror      bool
+}
+
+// applyProviderJobFilter composes f into base as an EXISTS/NOT EXISTS subquery
+// over backup_jobs for f.Destination. The predicate is assembled from fixed,
+// caller-independent SQL and domain status constants (never interpolated caller
+// text), so it is injection-safe; the destination and statuses are bound
+// parameters. Because Enqueue's idempotency prevents a destination from holding
+// more than one active job per asset, a per-status EXISTS matches the same job
+// the coverage cell derivation displays.
+func applyProviderJobFilter(base *gorm.DB, f ProviderJobFilter) *gorm.DB {
+	const existsBase = "SELECT 1 FROM backup_jobs j WHERE j.asset_id = assets.id AND j.destination = ? AND j.deleted_at IS NULL"
+	dest := f.Destination
+	switch f.Match {
+	case ProviderJobNone:
+		// No job at all (an opted_out job counts as 'skipped', not 'none').
+		return base.Where("NOT EXISTS ("+existsBase+")", dest)
+	case ProviderJobSkipped:
+		return base.Where("EXISTS ("+existsBase+" AND j.status = ?)", dest, domain.JobStatusOptedOut)
+	case ProviderJobPending:
+		return base.Where("EXISTS ("+existsBase+" AND j.status IN ?)", dest,
+			[]domain.JobStatus{domain.JobStatusPending, domain.JobStatusPaused})
+	case ProviderJobRunning:
+		return base.Where("EXISTS ("+existsBase+" AND j.status = ?)", dest, domain.JobStatusRunning)
+	case ProviderJobFailed:
+		return base.Where("EXISTS ("+existsBase+" AND j.status = ?)", dest, domain.JobStatusFailed)
+	case ProviderJobCancelled:
+		return base.Where("EXISTS ("+existsBase+" AND j.status = ?)", dest, domain.JobStatusCancelled)
+	case ProviderJobVerified:
+		if f.Mirror {
+			return base.Where("1 = 0") // a mirror destination is never independently verified
+		}
+		return base.Where("EXISTS ("+existsBase+" AND j.status = ? AND j.error_message = '')",
+			dest, domain.JobStatusCompleted)
+	case ProviderJobUploadedUnverified:
+		if f.Mirror {
+			return base.Where("EXISTS ("+existsBase+" AND j.status = ?)", dest, domain.JobStatusCompleted)
+		}
+		return base.Where("EXISTS ("+existsBase+" AND j.status = ? AND j.error_message <> '')",
+			dest, domain.JobStatusCompleted)
+	default:
+		return base
+	}
 }
 
 // applyFilters adds every non-empty AssetQuery predicate to a base query. It is
@@ -699,6 +794,9 @@ func (q AssetQuery) applyFilters(base *gorm.DB) *gorm.DB {
 	}
 	if q.YearMonth != "" {
 		base = base.Where("strftime('%Y-%m', capture_date) = ?", q.YearMonth)
+	}
+	if q.ProviderJob != nil && q.ProviderJob.Destination != "" {
+		base = applyProviderJobFilter(base, *q.ProviderJob)
 	}
 	if q.CaptureFrom != nil {
 		base = base.Where(effectiveDateExpr+" >= ?", *q.CaptureFrom)

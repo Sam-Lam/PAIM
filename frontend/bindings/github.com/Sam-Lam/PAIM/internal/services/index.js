@@ -55,6 +55,7 @@ export {
     BackupProgress,
     BackupProviderFailing,
     BackupQueueChanged,
+    BackupReconcileCompleted,
     BackupSummaryDTO,
     BrowseAssetDTO,
     BrowseFilters,
@@ -65,6 +66,9 @@ export {
     CleanupReportDTO,
     ClearSourcePreviewDTO,
     ClearSourceResultDTO,
+    CoverageProviderDTO,
+    CoverageProviderFilter,
+    CoverageRowDTO,
     CurrentLibraryDTO,
     DashboardStats,
     DryRunReportDTO,
@@ -88,6 +92,7 @@ export {
     PageResult,
     PluginDTO,
     ProviderCooldownDTO,
+    ProviderCoverageDTO,
     ProviderDTO,
     ProviderErrorDTO,
     QueueSummaryDTO,
@@ -96,6 +101,7 @@ export {
     RcloneRemotesDTO,
     RecentLibraryDTO,
     RecommendationDTO,
+    ReconcilePreviewDTO,
     ReorganizeMoveDTO,
     ReorganizePlanDTO,
     ReorganizePlanProgress,
@@ -128,3 +134,12 @@ export {
     WarmupStatusDTO,
     YearCountDTO
 } from "./models.js";
+
+import * as $models from "./models.js";
+
+/**
+ * Emitter delivers a typed event payload to the frontend. It is implemented in
+ * main.go over the Wails App's event manager and injected into every service
+ * that reports progress. A nil Emitter is tolerated by emitSafe.
+ * @typedef {$models.Emitter} Emitter
+ */

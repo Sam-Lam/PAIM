@@ -29,10 +29,11 @@ import * as $models from "./models.js";
  * @param {string} configJSON
  * @param {boolean} mirror
  * @param {string} uploadOrder
+ * @param {string} mediaScope
  * @returns {$CancellablePromise<$models.ProviderDTO>}
  */
-export function Add(pluginName, configJSON, mirror, uploadOrder) {
-    return $Call.ByID(3798959424, pluginName, configJSON, mirror, uploadOrder).then(/** @type {($result: any) => any} */(($result) => {
+export function Add(pluginName, configJSON, mirror, uploadOrder, mediaScope) {
+    return $Call.ByID(3798959424, pluginName, configJSON, mirror, uploadOrder, mediaScope).then(/** @type {($result: any) => any} */(($result) => {
         return $$createType0($result);
     }));
 }
@@ -111,10 +112,11 @@ export function SetGate(gate) {
  * @param {boolean} enabled
  * @param {boolean} mirror
  * @param {string} uploadOrder
+ * @param {string} mediaScope
  * @returns {$CancellablePromise<$models.ProviderDTO>}
  */
-export function Update(id, configJSON, enabled, mirror, uploadOrder) {
-    return $Call.ByID(4249247096, id, configJSON, enabled, mirror, uploadOrder).then(/** @type {($result: any) => any} */(($result) => {
+export function Update(id, configJSON, enabled, mirror, uploadOrder, mediaScope) {
+    return $Call.ByID(4249247096, id, configJSON, enabled, mirror, uploadOrder, mediaScope).then(/** @type {($result: any) => any} */(($result) => {
         return $$createType0($result);
     }));
 }

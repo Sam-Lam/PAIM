@@ -19,6 +19,7 @@ declare module "@wailsio/runtime" {
             "backup:progress": services$0.BackupProgress;
             "backup:provider-failing": services$0.BackupProviderFailing;
             "backup:queue-changed": services$0.BackupQueueChanged;
+            "backup:reconcile-completed": services$0.BackupReconcileCompleted;
             "cleanup:completed": services$0.CleanupCompleted;
             "cleanup:progress": services$0.CleanupProgress;
             "duplicate:progress": services$0.DuplicateProgress;

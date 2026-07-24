@@ -11,6 +11,7 @@ import (
 	"github.com/Sam-Lam/PAIM/internal/backup"
 	"github.com/Sam-Lam/PAIM/internal/backup/plugins/rclone"
 	"github.com/Sam-Lam/PAIM/internal/domain"
+	"github.com/Sam-Lam/PAIM/internal/mediatype"
 	"github.com/Sam-Lam/PAIM/internal/repo"
 	"gorm.io/gorm"
 )
@@ -50,6 +51,10 @@ type ProviderDTO struct {
 	Enabled     bool   `json:"enabled"`
 	Mirror      bool   `json:"mirror"`
 	UploadOrder string `json:"uploadOrder"`
+	// MediaScope is the CSV of media kinds this destination backs up, from
+	// {photos,videos,raws} (see internal/mediatype). An empty string means "all
+	// kinds" (the default). Missing/opted-out counts and backfill are scoped to it.
+	MediaScope string `json:"mediaScope"`
 	// MissingBackupCount is how many eligible library assets have NO backup job for
 	// this destination yet — the count that powers the "Queue N backups" auto-offer
 	// and the per-card badge. It is populated only for ENABLED providers (backfill
@@ -90,6 +95,7 @@ func toProviderDTO(p domain.BackupProvider) ProviderDTO {
 		Enabled:     p.Enabled,
 		Mirror:      p.Mirror,
 		UploadOrder: order,
+		MediaScope:  p.MediaScope,
 	}
 }
 
@@ -101,7 +107,7 @@ func (s *ProviderService) withMissingCount(ctx context.Context, dto ProviderDTO)
 	if !dto.Enabled || s.assets == nil {
 		return dto
 	}
-	if n, err := s.assets.CountEligibleMissingBackup(ctx, dto.ID); err == nil {
+	if n, err := s.assets.CountEligibleMissingBackup(ctx, dto.ID, dto.MediaScope); err == nil {
 		dto.MissingBackupCount = n
 	} else {
 		s.log.Warn("provider missing-backup count failed", "provider", dto.ID, "error", err.Error())
@@ -160,6 +166,16 @@ func normalizeUploadOrder(order string) domain.UploadOrder {
 	return domain.UploadOrderOldestFirst
 }
 
+// normalizeMediaScope canonicalizes a requested media scope: it drops unknown
+// tokens, orders the rest canonically, and collapses an "all kinds" scope to the
+// empty string (the backward-compatible default). A scope naming zero valid kinds
+// also collapses to empty ("all") rather than "back up nothing" — the UI enforces
+// "at least one kind", and treating an empty selection as "all" is the safe
+// interpretation for a backup destination (never silently stop backing up).
+func normalizeMediaScope(scope string) string {
+	return mediatype.NormalizeScope(scope)
+}
+
 // injectRcloneMirror stamps the mirror flag into an rclone config JSON so the
 // plugin's Initialize can enforce pool rules (a >1 remote pool is only valid on a
 // mirror provider). It is a no-op for non-rclone plugins and tolerates a config
@@ -210,7 +226,7 @@ func (s *ProviderService) List(ctx context.Context) ([]ProviderDTO, error) {
 // destination (its jobs never block a safety verdict); uploadOrder controls claim
 // order (oldest_first FIFO or newest_first). The mirror flag is also stamped into
 // the rclone config so the plugin can enforce its multi-remote-pool rules.
-func (s *ProviderService) Add(ctx context.Context, pluginName, configJSON string, mirror bool, uploadOrder string) (ProviderDTO, error) {
+func (s *ProviderService) Add(ctx context.Context, pluginName, configJSON string, mirror bool, uploadOrder, mediaScope string) (ProviderDTO, error) {
 	if err := s.guard(); err != nil {
 		return ProviderDTO{}, err
 	}
@@ -224,11 +240,12 @@ func (s *ProviderService) Add(ctx context.Context, pluginName, configJSON string
 		Enabled:     true,
 		Mirror:      mirror,
 		UploadOrder: normalizeUploadOrder(uploadOrder),
+		MediaScope:  normalizeMediaScope(mediaScope),
 	}
 	if err := s.db.WithContext(ctx).Create(p).Error; err != nil {
 		return ProviderDTO{}, fmt.Errorf("services: create provider: %w", err)
 	}
-	s.log.Info("backup provider added", "id", p.ID, "plugin", pluginName, "mirror", mirror, "uploadOrder", p.UploadOrder)
+	s.log.Info("backup provider added", "id", p.ID, "plugin", pluginName, "mirror", mirror, "uploadOrder", p.UploadOrder, "mediaScope", p.MediaScope)
 	// A brand-new provider has no jobs yet, so MissingBackupCount is the full
 	// eligible set — the UI reads it to auto-offer "Back up your existing library?".
 	return s.withMissingCount(ctx, toProviderDTO(*p)), nil
@@ -236,7 +253,7 @@ func (s *ProviderService) Add(ctx context.Context, pluginName, configJSON string
 
 // Update revalidates configJSON against the provider's plugin and persists the
 // new config, enabled flag, mirror flag, and upload order.
-func (s *ProviderService) Update(ctx context.Context, id, configJSON string, enabled, mirror bool, uploadOrder string) (ProviderDTO, error) {
+func (s *ProviderService) Update(ctx context.Context, id, configJSON string, enabled, mirror bool, uploadOrder, mediaScope string) (ProviderDTO, error) {
 	if err := s.guard(); err != nil {
 		return ProviderDTO{}, err
 	}
@@ -249,11 +266,15 @@ func (s *ProviderService) Update(ctx context.Context, id, configJSON string, ena
 		return ProviderDTO{}, err
 	}
 	order := normalizeUploadOrder(uploadOrder)
+	scope := normalizeMediaScope(mediaScope)
 	res := s.db.WithContext(ctx).Model(&domain.BackupProvider{}).Where("id = ?", id).Updates(map[string]any{
 		"config_json":  configJSON,
 		"enabled":      enabled,
 		"mirror":       mirror,
 		"upload_order": order,
+		// media_scope may narrow to "" (all kinds); a map update writes empty strings,
+		// so the column always reflects the requested scope.
+		"media_scope": scope,
 	})
 	if res.Error != nil {
 		return ProviderDTO{}, fmt.Errorf("services: update provider %q: %w", id, res.Error)
@@ -262,7 +283,8 @@ func (s *ProviderService) Update(ctx context.Context, id, configJSON string, ena
 	p.Enabled = enabled
 	p.Mirror = mirror
 	p.UploadOrder = order
-	s.log.Info("backup provider updated", "id", id, "enabled", enabled, "mirror", mirror, "uploadOrder", order)
+	p.MediaScope = scope
+	s.log.Info("backup provider updated", "id", id, "enabled", enabled, "mirror", mirror, "uploadOrder", order, "mediaScope", scope)
 	// The returned DTO carries the current missing-job count so the UI can offer to
 	// queue them after an enable (a disabled→enabled flip surfaces the whole gap).
 	return s.withMissingCount(ctx, toProviderDTO(p)), nil

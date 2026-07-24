@@ -19,21 +19,22 @@ function configure() {
         "backup:progress": $$createType4,
         "backup:provider-failing": $$createType5,
         "backup:queue-changed": $$createType6,
-        "cleanup:completed": $$createType7,
-        "cleanup:progress": $$createType8,
-        "duplicate:progress": $$createType9,
-        "import:completed": $$createType10,
-        "import:progress": $$createType11,
-        "library:progress": $$createType12,
-        "log:export-progress": $$createType13,
-        "reorganize:plan-progress": $$createType14,
-        "source:cleared": $$createType15,
-        "source:evaluated": $$createType16,
-        "source:identified": $$createType17,
-        "source:progress": $$createType18,
-        "thumbs:progress": $$createType19,
-        "volume:mounted": $$createType20,
-        "volume:unmounted": $$createType20,
+        "backup:reconcile-completed": $$createType7,
+        "cleanup:completed": $$createType8,
+        "cleanup:progress": $$createType9,
+        "duplicate:progress": $$createType10,
+        "import:completed": $$createType11,
+        "import:progress": $$createType12,
+        "library:progress": $$createType13,
+        "log:export-progress": $$createType14,
+        "reorganize:plan-progress": $$createType15,
+        "source:cleared": $$createType16,
+        "source:evaluated": $$createType17,
+        "source:identified": $$createType18,
+        "source:progress": $$createType19,
+        "thumbs:progress": $$createType20,
+        "volume:mounted": $$createType21,
+        "volume:unmounted": $$createType21,
     }));
 }
 
@@ -45,19 +46,20 @@ const $$createType3 = services$0.BackupBackfillProgress.createFrom;
 const $$createType4 = services$0.BackupProgress.createFrom;
 const $$createType5 = services$0.BackupProviderFailing.createFrom;
 const $$createType6 = services$0.BackupQueueChanged.createFrom;
-const $$createType7 = services$0.CleanupCompleted.createFrom;
-const $$createType8 = services$0.CleanupProgress.createFrom;
-const $$createType9 = services$0.DuplicateProgress.createFrom;
-const $$createType10 = services$0.ImportCompleted.createFrom;
-const $$createType11 = services$0.ImportProgress.createFrom;
-const $$createType12 = services$0.LibraryProgress.createFrom;
-const $$createType13 = services$0.LogExportProgress.createFrom;
-const $$createType14 = services$0.ReorganizePlanProgress.createFrom;
-const $$createType15 = services$0.SourceCleared.createFrom;
-const $$createType16 = services$0.SourceEvaluated.createFrom;
-const $$createType17 = services$0.SourceIdentified.createFrom;
-const $$createType18 = services$0.SourceProgress.createFrom;
-const $$createType19 = services$0.ThumbsProgress.createFrom;
-const $$createType20 = services$0.VolumeEvent.createFrom;
+const $$createType7 = services$0.BackupReconcileCompleted.createFrom;
+const $$createType8 = services$0.CleanupCompleted.createFrom;
+const $$createType9 = services$0.CleanupProgress.createFrom;
+const $$createType10 = services$0.DuplicateProgress.createFrom;
+const $$createType11 = services$0.ImportCompleted.createFrom;
+const $$createType12 = services$0.ImportProgress.createFrom;
+const $$createType13 = services$0.LibraryProgress.createFrom;
+const $$createType14 = services$0.LogExportProgress.createFrom;
+const $$createType15 = services$0.ReorganizePlanProgress.createFrom;
+const $$createType16 = services$0.SourceCleared.createFrom;
+const $$createType17 = services$0.SourceEvaluated.createFrom;
+const $$createType18 = services$0.SourceIdentified.createFrom;
+const $$createType19 = services$0.SourceProgress.createFrom;
+const $$createType20 = services$0.ThumbsProgress.createFrom;
+const $$createType21 = services$0.VolumeEvent.createFrom;
 
 configure();

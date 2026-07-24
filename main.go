@@ -51,6 +51,7 @@ func init() {
 	application.RegisterEvent[services.BackupQueueChanged](services.EventBackupQueueChanged)
 	application.RegisterEvent[services.BackupBackfillProgress](services.EventBackupBackfillProgress)
 	application.RegisterEvent[services.BackupBackfillCompleted](services.EventBackupBackfillCompleted)
+	application.RegisterEvent[services.BackupReconcileCompleted](services.EventBackupReconcileCompleted)
 	application.RegisterEvent[services.BackupProviderFailing](services.EventBackupProviderFailing)
 	application.RegisterEvent[services.VolumeEvent](services.EventVolumeMounted)
 	application.RegisterEvent[services.VolumeEvent](services.EventVolumeUnmounted)
@@ -264,6 +265,10 @@ func run() error {
 	// flight (renaming under a running move is unsafe), so it reads the same
 	// activity tracker the quit guard uses.
 	comp.browserSvc.SetActivity(tracker)
+
+	// The coverage view's bulk "Queue N to <provider>" action emits
+	// backup:queue-changed so the Backup Queue and provider cards refresh.
+	comp.browserSvc.SetEmitter(emitter)
 
 	// After an import/adopt session completes, warm that session's thumbnails when
 	// the setting is on (default). This runs after completion — never inline during

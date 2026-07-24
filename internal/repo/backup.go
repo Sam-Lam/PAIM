@@ -280,6 +280,57 @@ func (r *BackupRepo) RequeueOptedOut(ctx context.Context, destination, sessionID
 	return res.RowsAffected, nil
 }
 
+// CountOutOfScopePending counts this provider's pending or paused jobs whose
+// asset's file extension falls OUTSIDE the given in-scope extension whitelist —
+// the jobs a scope-narrowing reconcile would cancel. scopedExts is the whitelist
+// of in-scope extensions (mediatype.ScopedExtensions of the provider's new scope);
+// an empty whitelist means the scope imposes no restriction, so nothing is out of
+// scope and the count is 0. Only non-deleted assets are considered. Completed,
+// failed, cancelled, and opted-out jobs are untouched — a reconcile only reclaims
+// still-queued work.
+func (r *BackupRepo) CountOutOfScopePending(ctx context.Context, destination string, scopedExts []string) (int64, error) {
+	if len(scopedExts) == 0 {
+		return 0, nil
+	}
+	var n int64
+	err := r.db.WithContext(ctx).
+		Model(&domain.BackupJob{}).
+		Where("destination = ? AND status IN ?", destination,
+			[]domain.JobStatus{domain.JobStatusPending, domain.JobStatusPaused}).
+		Where("asset_id IN (SELECT id FROM assets WHERE deleted_at IS NULL AND lower(original_extension) NOT IN ?)", scopedExts).
+		Count(&n).Error
+	if err != nil {
+		return 0, fmt.Errorf("repo: count out-of-scope pending jobs (dest %q): %w", destination, err)
+	}
+	return n, nil
+}
+
+// CancelOutOfScopePending transitions this provider's pending/paused jobs whose
+// asset is out of scope (see CountOutOfScopePending) to cancelled in one UPDATE,
+// stamping note into ErrorMessage, and returns the number cancelled. The status
+// guard keeps it a valid pending|paused -> cancelled transition for every row. A
+// cancelled job is excluded from an asset's aggregate BackupStatus, so the derived
+// scope exclusion is honored downstream. scopedExts empty -> no-op (nothing out of
+// scope).
+func (r *BackupRepo) CancelOutOfScopePending(ctx context.Context, destination, note string, scopedExts []string) (int64, error) {
+	if len(scopedExts) == 0 {
+		return 0, nil
+	}
+	res := r.db.WithContext(ctx).
+		Model(&domain.BackupJob{}).
+		Where("destination = ? AND status IN ?", destination,
+			[]domain.JobStatus{domain.JobStatusPending, domain.JobStatusPaused}).
+		Where("asset_id IN (SELECT id FROM assets WHERE deleted_at IS NULL AND lower(original_extension) NOT IN ?)", scopedExts).
+		Updates(map[string]any{
+			"status":        domain.JobStatusCancelled,
+			"error_message": note,
+		})
+	if res.Error != nil {
+		return 0, fmt.Errorf("repo: cancel out-of-scope pending jobs (dest %q): %w", destination, res.Error)
+	}
+	return res.RowsAffected, nil
+}
+
 // Pause transitions a pending job to paused.
 func (r *BackupRepo) Pause(ctx context.Context, id string) error {
 	return r.transition(ctx, id, []domain.JobStatus{domain.JobStatusPending}, domain.JobStatusPaused, nil)
